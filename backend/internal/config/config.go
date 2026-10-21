@@ -1,12 +1,24 @@
 package config
 
 import (
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
+	"log"
+	"net"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
+	mysqlDriver "github.com/go-sql-driver/mysql"
 	"github.com/joho/godotenv"
+	"gopkg.in/yaml.v3"
 )
+
+const defaultMasterKey = "dev-smartdoc-vision-master-key-change-me"
+const defaultJWTSecret = "dev-smartdoc-vision-change-me"
 
 type Config struct {
 	AppEnv        string
@@ -30,35 +42,143 @@ type Config struct {
 
 	JEVBaseURL string
 	JEVModel   string
+
+	// Sources is for diagnostics only and is safe to log.
+	ConfigFile string
+	EnvFile    string
+}
+
+type yamlConfig struct {
+	HTTP struct {
+		Port *int `yaml:"port"`
+	} `yaml:"http"`
+	MySQL struct {
+		DSN      *string `yaml:"dsn"`
+		Host     *string `yaml:"host"`
+		Port     *int    `yaml:"port"`
+		User     *string `yaml:"user"`
+		Password *string `yaml:"password"`
+		Database *string `yaml:"database"`
+		Charset  *string `yaml:"charset"`
+	} `yaml:"mysql"`
+	Redis struct {
+		Addr     *string `yaml:"addr"`
+		Host     *string `yaml:"host"`
+		Port     *int    `yaml:"port"`
+		Password *string `yaml:"password"`
+		DB       *int    `yaml:"db"`
+	} `yaml:"redis"`
+	Security struct {
+		JWTSecret *string `yaml:"jwt_secret"`
+		MasterKey *string `yaml:"master_key"`
+	} `yaml:"security"`
+	Admin struct {
+		Username *string `yaml:"username"`
+		Password *string `yaml:"password"`
+	} `yaml:"admin"`
+	CORS struct {
+		Origins []string `yaml:"origins"`
+	} `yaml:"cors"`
+	WorkerCount *int `yaml:"worker_count"`
+	Media       struct {
+		AllowPrivate *bool `yaml:"allow_private"`
+	} `yaml:"media"`
+	AI struct {
+		DefaultBaseURL        *string `yaml:"openai_base_url"`
+		DefaultModel          *string `yaml:"openai_model"`
+		DefaultAPIKey         *string `yaml:"openai_api_key"`
+		DefaultSupportsVision *bool   `yaml:"openai_supports_vision"`
+		JEVBaseURL            *string `yaml:"jev_base_url"`
+		JEVModel              *string `yaml:"jev_model"`
+	} `yaml:"ai"`
 }
 
 func Load() Config {
-	for _, path := range []string{".env", "../.env", "../../.env"} {
-		if _, err := os.Stat(path); err == nil {
-			_ = godotenv.Load(path)
+	envPath := findConfigFile(".env")
+	yamlPath := findConfigFile("config.yml")
+
+	if envPath == "" && yamlPath == "" && !hasConfigEnv() {
+		envPath = ".env"
+		if err := writeDefaultEnv(envPath); err != nil {
+			log.Printf("config: cannot generate %s: %v", envPath, err)
+		} else {
+			log.Printf("config: generated default %s (edit it before production)", envPath)
 		}
 	}
 
+	dotenvValues := map[string]string{}
+	if envPath != "" {
+		values, err := godotenv.Read(envPath)
+		if err != nil {
+			log.Printf("config: cannot read %s: %v", envPath, err)
+		} else {
+			dotenvValues = values
+		}
+	}
+
+	fileCfg := yamlConfig{}
+	if yamlPath != "" {
+		raw, err := os.ReadFile(yamlPath)
+		if err != nil {
+			log.Printf("config: cannot read %s: %v", yamlPath, err)
+		} else if err := yaml.Unmarshal(raw, &fileCfg); err != nil {
+			log.Printf("config: cannot parse %s, using defaults/env: %v", yamlPath, err)
+			fileCfg = yamlConfig{}
+		}
+	}
+
+	serverPort := pickInt("SERVER_PORT", fileCfg.HTTP.Port, dotenvValues, 8080)
+	if serverPort <= 0 || serverPort > 65535 {
+		serverPort = 8080
+	}
+
+	mysqlHost := fallbackString(pickString("MYSQL_HOST", fileCfg.MySQL.Host, dotenvValues, "127.0.0.1"), "127.0.0.1")
+	mysqlPort := pickInt("MYSQL_PORT", fileCfg.MySQL.Port, dotenvValues, 3306)
+	if mysqlPort <= 0 || mysqlPort > 65535 {
+		mysqlPort = 3306
+	}
+	mysqlUser := fallbackString(pickString("MYSQL_USER", fileCfg.MySQL.User, dotenvValues, "root"), "root")
+	mysqlPassword := pickString("MYSQL_PASSWORD", fileCfg.MySQL.Password, dotenvValues, "")
+	mysqlDatabase := fallbackString(pickString("MYSQL_DATABASE", fileCfg.MySQL.Database, dotenvValues, "smart-doc-vision"), "smart-doc-vision")
+	mysqlCharset := fallbackString(pickString("MYSQL_CHARSET", fileCfg.MySQL.Charset, dotenvValues, "utf8mb4"), "utf8mb4")
+	mysqlDSN := resolveMySQLDSN(fileCfg, dotenvValues, mysqlHost, mysqlPort, mysqlUser, mysqlPassword, mysqlDatabase, mysqlCharset)
+
+	redisHost := fallbackString(pickString("REDIS_HOST", fileCfg.Redis.Host, dotenvValues, "127.0.0.1"), "127.0.0.1")
+	redisPort := pickInt("REDIS_PORT", fileCfg.Redis.Port, dotenvValues, 6379)
+	if redisPort <= 0 || redisPort > 65535 {
+		redisPort = 6379
+	}
+	redisAddr := resolveRedisAddr(fileCfg, dotenvValues, redisHost, redisPort)
+
+	jwtSecret := fallbackString(pickString("JWT_SECRET", fileCfg.Security.JWTSecret, dotenvValues, defaultJWTSecret), defaultJWTSecret)
+	masterKey := fallbackString(pickString("MASTER_KEY", fileCfg.Security.MasterKey, dotenvValues, defaultMasterKey), defaultMasterKey)
+	if len(masterKey) < 16 {
+		log.Printf("config: MASTER_KEY is shorter than 16 characters; using development default")
+		masterKey = defaultMasterKey
+	}
+
 	cfg := Config{
-		AppEnv:                  env("APP_ENV", "development"),
-		ServerPort:              env("SERVER_PORT", "8080"),
-		MySQLDSN:                env("MYSQL_DSN", "root:your_password@tcp(127.0.0.1:3306)/smart-doc-vision?charset=utf8mb4&parseTime=True&loc=Local"),
-		RedisAddr:               env("REDIS_ADDR", "127.0.0.1:6379"),
-		RedisPassword:           env("REDIS_PASSWORD", ""),
-		RedisDB:                 envInt("REDIS_DB", 3),
-		JWTSecret:               env("JWT_SECRET", "dev-smartdoc-vision-change-me"),
-		MasterKey:               env("MASTER_KEY", "dev-smartdoc-vision-master-key-change-me"),
-		AdminUsername:           env("ADMIN_USERNAME", "admin"),
-		AdminPassword:           env("ADMIN_PASSWORD", "Admin@123456"),
-		CORSOrigins:             splitCSV(env("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")),
-		WorkerCount:             envInt("WORKER_COUNT", 4),
-		AllowPrivate:            envBool("MEDIA_ALLOW_PRIVATE", false),
-		DefaultAIBaseURL:        env("DEFAULT_AI_BASE_URL", "https://api.openai.com/v1"),
-		DefaultAIModel:          env("DEFAULT_AI_MODEL", "gpt-4o-mini"),
-		DefaultAIAPIKey:         env("DEFAULT_AI_API_KEY", ""),
-		DefaultAISupportsVision: envBool("DEFAULT_AI_SUPPORTS_VISION", false),
-		JEVBaseURL:              env("JEV_BASE_URL", "https://api.typesafe.ai/v1"),
-		JEVModel:                env("JEV_MODEL", "jev-latest"),
+		AppEnv:                  pickString("APP_ENV", nil, dotenvValues, "development"),
+		ServerPort:              strconv.Itoa(serverPort),
+		MySQLDSN:                ensureMySQLCharset(mysqlDSN),
+		RedisAddr:               redisAddr,
+		RedisPassword:           pickString("REDIS_PASSWORD", fileCfg.Redis.Password, dotenvValues, ""),
+		RedisDB:                 pickInt("REDIS_DB", fileCfg.Redis.DB, dotenvValues, 3),
+		JWTSecret:               jwtSecret,
+		MasterKey:               masterKey,
+		AdminUsername:           fallbackString(pickString("ADMIN_USERNAME", fileCfg.Admin.Username, dotenvValues, "admin"), "admin"),
+		AdminPassword:           fallbackString(pickString("ADMIN_PASSWORD", fileCfg.Admin.Password, dotenvValues, "Admin@123456"), "Admin@123456"),
+		CORSOrigins:             pickList("CORS_ORIGINS", fileCfg.CORS.Origins, dotenvValues, []string{"http://localhost:5173", "http://127.0.0.1:5173"}),
+		WorkerCount:             pickInt("WORKER_COUNT", fileCfg.WorkerCount, dotenvValues, 4),
+		AllowPrivate:            pickBool("MEDIA_ALLOW_PRIVATE", fileCfg.Media.AllowPrivate, dotenvValues, false),
+		DefaultAIBaseURL:        fallbackString(pickString("DEFAULT_AI_BASE_URL", fileCfg.AI.DefaultBaseURL, dotenvValues, "https://api.openai.com/v1"), "https://api.openai.com/v1"),
+		DefaultAIModel:          fallbackString(pickString("DEFAULT_AI_MODEL", fileCfg.AI.DefaultModel, dotenvValues, "gpt-4o-mini"), "gpt-4o-mini"),
+		DefaultAIAPIKey:         pickString("DEFAULT_AI_API_KEY", fileCfg.AI.DefaultAPIKey, dotenvValues, ""),
+		DefaultAISupportsVision: pickBool("DEFAULT_AI_SUPPORTS_VISION", fileCfg.AI.DefaultSupportsVision, dotenvValues, false),
+		JEVBaseURL:              fallbackString(pickString("JEV_BASE_URL", fileCfg.AI.JEVBaseURL, dotenvValues, "https://api.typesafe.ai/v1"), "https://api.typesafe.ai/v1"),
+		JEVModel:                fallbackString(pickString("JEV_MODEL", fileCfg.AI.JEVModel, dotenvValues, "jev-latest"), "jev-latest"),
+		ConfigFile:              yamlPath,
+		EnvFile:                 envPath,
 	}
 
 	if cfg.WorkerCount < 1 {
@@ -67,8 +187,171 @@ func Load() Config {
 	if cfg.WorkerCount > 32 {
 		cfg.WorkerCount = 32
 	}
-	cfg.MySQLDSN = ensureMySQLCharset(cfg.MySQLDSN)
+	if cfg.RedisDB < 0 {
+		cfg.RedisDB = 0
+	}
 	return cfg
+}
+
+func findConfigFile(name string) string {
+	for _, dir := range []string{".", "..", "../.."} {
+		path := filepath.Join(dir, name)
+		if stat, err := os.Stat(path); err == nil && !stat.IsDir() {
+			return path
+		}
+	}
+	return ""
+}
+
+func hasConfigEnv() bool {
+	for _, key := range []string{
+		"SERVER_PORT", "MYSQL_DSN", "MYSQL_HOST", "MYSQL_USER", "MYSQL_DATABASE",
+		"REDIS_ADDR", "REDIS_HOST", "REDIS_DB", "JWT_SECRET", "MASTER_KEY",
+		"ADMIN_USERNAME", "ADMIN_PASSWORD",
+	} {
+		if strings.TrimSpace(os.Getenv(key)) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func resolveMySQLDSN(fileCfg yamlConfig, dotenv map[string]string, host string, port int, user, password, database, charset string) string {
+	if value, ok := os.LookupEnv("MYSQL_DSN"); ok && strings.TrimSpace(value) != "" {
+		return strings.TrimSpace(value)
+	}
+	if fileCfg.MySQL.DSN != nil && strings.TrimSpace(*fileCfg.MySQL.DSN) != "" {
+		return strings.TrimSpace(*fileCfg.MySQL.DSN)
+	}
+	// config.yml fields intentionally beat a full DSN copied into .env.
+	if yamlMySQLConfigured(fileCfg) || envHas("MYSQL_HOST", "MYSQL_PORT", "MYSQL_USER", "MYSQL_PASSWORD", "MYSQL_DATABASE", "MYSQL_CHARSET") {
+		return buildMySQLDSN(host, port, user, password, database, charset)
+	}
+	if value := strings.TrimSpace(dotenv["MYSQL_DSN"]); value != "" {
+		return value
+	}
+	return buildMySQLDSN(host, port, user, password, database, charset)
+}
+
+func resolveRedisAddr(fileCfg yamlConfig, dotenv map[string]string, host string, port int) string {
+	if value, ok := os.LookupEnv("REDIS_ADDR"); ok && strings.TrimSpace(value) != "" {
+		return strings.TrimSpace(value)
+	}
+	if fileCfg.Redis.Addr != nil && strings.TrimSpace(*fileCfg.Redis.Addr) != "" {
+		return strings.TrimSpace(*fileCfg.Redis.Addr)
+	}
+	if yamlRedisConfigured(fileCfg) || envHas("REDIS_HOST", "REDIS_PORT") {
+		return net.JoinHostPort(host, strconv.Itoa(port))
+	}
+	if value := strings.TrimSpace(dotenv["REDIS_ADDR"]); value != "" {
+		return value
+	}
+	return net.JoinHostPort(host, strconv.Itoa(port))
+}
+
+func yamlMySQLConfigured(cfg yamlConfig) bool {
+	return cfg.MySQL.Host != nil || cfg.MySQL.Port != nil || cfg.MySQL.User != nil ||
+		cfg.MySQL.Password != nil || cfg.MySQL.Database != nil || cfg.MySQL.Charset != nil
+}
+
+func yamlRedisConfigured(cfg yamlConfig) bool {
+	return cfg.Redis.Host != nil || cfg.Redis.Port != nil || cfg.Redis.Password != nil || cfg.Redis.DB != nil
+}
+
+func envHas(keys ...string) bool {
+	for _, key := range keys {
+		if value, ok := os.LookupEnv(key); ok && strings.TrimSpace(value) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func pickString(key string, yamlValue *string, dotenv map[string]string, fallback string) string {
+	if value, ok := os.LookupEnv(key); ok && strings.TrimSpace(value) != "" {
+		return strings.TrimSpace(value)
+	}
+	if yamlValue != nil {
+		return strings.TrimSpace(*yamlValue)
+	}
+	if value, ok := dotenv[key]; ok {
+		return strings.TrimSpace(value)
+	}
+	return fallback
+}
+
+func pickInt(key string, yamlValue *int, dotenv map[string]string, fallback int) int {
+	if value, ok := os.LookupEnv(key); ok && strings.TrimSpace(value) != "" {
+		if number, err := strconv.Atoi(strings.TrimSpace(value)); err == nil {
+			return number
+		}
+	}
+	if yamlValue != nil {
+		return *yamlValue
+	}
+	if value, ok := dotenv[key]; ok && strings.TrimSpace(value) != "" {
+		if number, err := strconv.Atoi(strings.TrimSpace(value)); err == nil {
+			return number
+		}
+	}
+	return fallback
+}
+
+func pickBool(key string, yamlValue *bool, dotenv map[string]string, fallback bool) bool {
+	if value, ok := os.LookupEnv(key); ok && strings.TrimSpace(value) != "" {
+		return parseBool(value, fallback)
+	}
+	if yamlValue != nil {
+		return *yamlValue
+	}
+	if value, ok := dotenv[key]; ok && strings.TrimSpace(value) != "" {
+		return parseBool(value, fallback)
+	}
+	return fallback
+}
+
+func pickList(key string, yamlValue []string, dotenv map[string]string, fallback []string) []string {
+	if value, ok := os.LookupEnv(key); ok && strings.TrimSpace(value) != "" {
+		return splitCSV(value)
+	}
+	if len(yamlValue) > 0 {
+		return yamlValue
+	}
+	if value, ok := dotenv[key]; ok && strings.TrimSpace(value) != "" {
+		return splitCSV(value)
+	}
+	return fallback
+}
+
+func parseBool(value string, fallback bool) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return fallback
+	}
+}
+
+func fallbackString(value, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
+}
+
+func buildMySQLDSN(host string, port int, user, password, database, charset string) string {
+	cfg := mysqlDriver.NewConfig()
+	cfg.User = user
+	cfg.Passwd = password
+	cfg.Net = "tcp"
+	cfg.Addr = net.JoinHostPort(host, strconv.Itoa(port))
+	cfg.DBName = database
+	cfg.ParseTime = true
+	cfg.Loc = time.Local
+	cfg.Params = map[string]string{"charset": fallbackString(charset, "utf8mb4")}
+	return cfg.FormatDSN()
 }
 
 func ensureMySQLCharset(dsn string) string {
@@ -81,40 +364,67 @@ func ensureMySQLCharset(dsn string) string {
 	return dsn + "?charset=utf8mb4"
 }
 
-func env(key, fallback string) string {
-	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
-		return v
-	}
-	return fallback
-}
-
-func envInt(key string, fallback int) int {
-	v := strings.TrimSpace(os.Getenv(key))
-	if v == "" {
-		return fallback
-	}
-	n, err := strconv.Atoi(v)
-	if err != nil {
-		return fallback
-	}
-	return n
-}
-
-func envBool(key string, fallback bool) bool {
-	v := strings.TrimSpace(strings.ToLower(os.Getenv(key)))
-	if v == "" {
-		return fallback
-	}
-	return v == "1" || v == "true" || v == "yes" || v == "on"
-}
-
-func splitCSV(v string) []string {
-	parts := strings.Split(v, ",")
+func splitCSV(value string) []string {
+	parts := strings.Split(value, ",")
 	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		if p = strings.TrimSpace(p); p != "" {
-			out = append(out, p)
+	for _, part := range parts {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
 		}
 	}
 	return out
+}
+
+func writeDefaultEnv(path string) error {
+	jwtSecret := randomHex(32)
+	masterKey := randomHex(32)
+	content := fmt.Sprintf(`# SmartDoc Vision configuration
+# Generated automatically on first run. Edit before production.
+# Precedence: OS environment > config.yml > .env > built-in defaults.
+APP_ENV=development
+SERVER_PORT=8080
+# Admin UI: http://127.0.0.1:8080/admin
+
+MYSQL_HOST=127.0.0.1
+MYSQL_PORT=3306
+MYSQL_USER=root
+MYSQL_PASSWORD=
+MYSQL_DATABASE=smart-doc-vision
+MYSQL_CHARSET=utf8mb4
+# Full DSN takes precedence over the MYSQL_* fields above:
+# MYSQL_DSN=root:your_password@tcp(127.0.0.1:3306)/smart-doc-vision?charset=utf8mb4&parseTime=True&loc=Local
+
+REDIS_HOST=127.0.0.1
+REDIS_PORT=6379
+REDIS_PASSWORD=
+REDIS_DB=3
+# REDIS_ADDR=127.0.0.1:6379
+
+JWT_SECRET=%s
+MASTER_KEY=%s
+
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=Admin@123456
+
+CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
+WORKER_COUNT=4
+MEDIA_ALLOW_PRIVATE=false
+
+DEFAULT_AI_BASE_URL=https://api.openai.com/v1
+DEFAULT_AI_MODEL=gpt-4o-mini
+DEFAULT_AI_API_KEY=
+DEFAULT_AI_SUPPORTS_VISION=false
+
+JEV_BASE_URL=https://api.typesafe.ai/v1
+JEV_MODEL=jev-latest
+`, jwtSecret, masterKey)
+	return os.WriteFile(path, []byte(content), 0o600)
+}
+
+func randomHex(size int) string {
+	buf := make([]byte, size)
+	if _, err := rand.Read(buf); err != nil {
+		return hex.EncodeToString([]byte(strconv.FormatInt(time.Now().UnixNano(), 10)))
+	}
+	return hex.EncodeToString(buf)
 }

@@ -23,6 +23,12 @@ import (
 func main() {
 	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
 	cfg := config.Load()
+	if cfg.ConfigFile != "" {
+		log.Printf("config: using %s", cfg.ConfigFile)
+	}
+	if cfg.EnvFile != "" {
+		log.Printf("config: using %s", cfg.EnvFile)
+	}
 
 	cipher, err := security.NewCipher(cfg.MasterKey)
 	if err != nil {

@@ -102,26 +102,61 @@ CREATE DATABASE IF NOT EXISTS `smart-doc-vision`
 
 表结构由 GORM 在启动时自动迁移。首次启动会创建管理员、演示项目、默认审核配置，以及通用大模型 / JEV 两个供应商占位。
 
-### 3. 配置环境变量
+### 3. 配置文件
 
-```bash
-cp .env.example .env
+支持 `.env` 和 `config.yml` 两种方式，加载优先级为：
+
+```text
+操作系统环境变量  >  config.yml  >  .env  >  内置默认值
 ```
 
-至少修改：
+- 管理后台固定入口：`http://127.0.0.1:<SERVER_PORT>/admin`，根路径 `/` 会自动跳转。
+- `.env` 可用 MySQL 独立字段，也可使用完整 `MYSQL_DSN`；Redis 可用 `REDIS_ADDR` 或 `REDIS_HOST` + `REDIS_PORT`。
+- `config.yml` 结构和示例见 [config.yml.example](config.yml.example)。
+- 如果当前目录及其上级目录既没有 `.env` 也没有 `config.yml`，程序首次启动会自动生成一个带默认值和随机 JWT/MASTER 密钥的 `.env`。
+- `build.ps1` 会把 `.env.example` 复制为 `dist/.env`（仅在不存在时），并复制 `dist/config.yml.example`；把示例重命名为 `config.yml` 后优先于 `.env` 生效。
+
+`.env` 至少修改：
 
 ```dotenv
-MYSQL_DSN=root:你的密码@tcp(127.0.0.1:3306)/smart-doc-vision?charset=utf8mb4&parseTime=True&loc=Local
-REDIS_ADDR=127.0.0.1:6379
+SERVER_PORT=8080
+
+MYSQL_HOST=127.0.0.1
+MYSQL_PORT=3306
+MYSQL_USER=root
+MYSQL_PASSWORD=你的密码
+MYSQL_DATABASE=smart-doc-vision
+MYSQL_CHARSET=utf8mb4
+
+REDIS_HOST=127.0.0.1
+REDIS_PORT=6379
+REDIS_PASSWORD=
 REDIS_DB=3
+
 JWT_SECRET=一段足够长的随机字符串
 MASTER_KEY=至少 32 字符的密钥
 ADMIN_PASSWORD=你的管理员密码
+```
 
-# 可选：初始化时自动创建通用大模型供应商
-DEFAULT_AI_BASE_URL=https://api.openai.com/v1
-DEFAULT_AI_MODEL=gpt-4o-mini
-DEFAULT_AI_API_KEY=sk-...
+`config.yml` 示例：
+
+```yaml
+http:
+  port: 8080
+
+mysql:
+  host: 127.0.0.1
+  port: 3306
+  user: root
+  password: "你的密码"
+  database: smart-doc-vision
+  charset: utf8mb4
+
+redis:
+  host: 127.0.0.1
+  port: 6379
+  password: ""
+  db: 3
 ```
 
 > 当前工作区的本地 `.env` 已按本机 MySQL / Redis 配置好，且被 `.gitignore` 忽略。`dbhub.toml` 也已被忽略，避免数据库口令进入版本库。
@@ -210,7 +245,11 @@ cd web && npm run build
 ```text
 dist/smartdoc-vision-windows-amd64.exe
 dist/smartdoc-vision-linux-amd64
+dist/.env
+dist/config.yml.example
 ```
+
+构建时会生成 `dist/.env` 配置模板（已存在则不覆盖），并复制 `config.yml.example`。把示例重命名为 `config.yml` 后，其显式配置优先于 `.env`；操作系统环境变量优先级最高。首次运行如果当前目录既没有 `.env` 也没有 `config.yml`，程序会自动生成带默认值和随机密钥的 `.env`。
 
 运行（需要同目录或当前工作目录存在 `.env`）：
 
