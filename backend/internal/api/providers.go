@@ -79,7 +79,7 @@ func (s *Server) getProvider(c *gin.Context) {
 
 func (s *Server) createProvider(c *gin.Context) {
 	user := currentUser(c)
-	if !canManage(user.Role) {
+	if !s.hasPermission(user.Role, "provider:write") {
 		forbidden(c, "当前角色无权配置模型")
 		return
 	}
@@ -146,7 +146,7 @@ func (s *Server) createProvider(c *gin.Context) {
 
 func (s *Server) updateProvider(c *gin.Context) {
 	user := currentUser(c)
-	if !canManage(user.Role) {
+	if !s.hasPermission(user.Role, "provider:write") {
 		forbidden(c, "当前角色无权配置模型")
 		return
 	}
@@ -212,7 +212,7 @@ func (s *Server) updateProvider(c *gin.Context) {
 
 func (s *Server) deleteProvider(c *gin.Context) {
 	user := currentUser(c)
-	if !canManage(user.Role) {
+	if !s.hasPermission(user.Role, "provider:write") {
 		forbidden(c, "当前角色无权删除模型配置")
 		return
 	}
@@ -237,7 +237,7 @@ func (s *Server) deleteProvider(c *gin.Context) {
 
 func (s *Server) testProvider(c *gin.Context) {
 	user := currentUser(c)
-	if !canManage(user.Role) {
+	if !s.hasPermission(user.Role, "provider:write") {
 		forbidden(c, "当前角色无权测试模型连接")
 		return
 	}

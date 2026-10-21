@@ -234,6 +234,14 @@ func (e *Engine) process(taskID uint64) {
 		finalResult = model.ResultReview
 	}
 
+	routeResults, routeOverride := e.runRoutes(audit, task, finalResult, input, map[string]any{
+		"summary": verdict.Summary, "reasons": verdict.Reasons, "labels": verdict.Labels,
+	})
+	if routeOverride != "" {
+		finalResult = routeOverride
+		verdict.Reasons = append(verdict.Reasons, "结果动作失败，已按路由策略转人工复核")
+	}
+
 	resultDetail := map[string]any{
 		"summary":             verdict.Summary,
 		"reasons":             verdict.Reasons,
@@ -247,6 +255,7 @@ func (e *Engine) process(taskID uint64) {
 		"category_name":       verdict.CategoryName,
 		"category_confidence": verdict.CategoryConfidence,
 		"rule":                ruleResult,
+		"routes":              routeResults,
 		"media_type":          task.MediaType,
 		"callback":            nil,
 	}

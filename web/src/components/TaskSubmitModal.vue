@@ -8,7 +8,7 @@ import {
   NSpace,
   useMessage,
 } from 'naive-ui'
-import { FlashOutline, ImagesOutline, TextOutline, WarningOutline } from '@vicons/ionicons5'
+import { CloseOutline, CloudUploadOutline, FlashOutline, ImagesOutline, TextOutline, WarningOutline } from '@vicons/ionicons5'
 import { auditApi, taskApi } from '@/api'
 import type { Audit, Task } from '@/api/types'
 
@@ -36,6 +36,72 @@ const form = reactive({
   callbackUrl: '',
   ext: '',
 })
+const fileInput = ref<HTMLInputElement | null>(null)
+const localImages = ref<Array<{ id: string; name: string; dataUrl: string }>>([])
+const MAX_LOCAL_IMAGES = 6
+
+function compressImage(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const objectURL = URL.createObjectURL(file)
+    const image = new Image()
+    image.onload = () => {
+      URL.revokeObjectURL(objectURL)
+      const maxSide = 1600
+      const scale = Math.min(1, maxSide / Math.max(image.width, image.height))
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.max(1, Math.round(image.width * scale))
+      canvas.height = Math.max(1, Math.round(image.height * scale))
+      const context = canvas.getContext('2d')
+      if (!context) {
+        reject(new Error('浏览器无法处理该图片'))
+        return
+      }
+      context.fillStyle = '#ffffff'
+      context.fillRect(0, 0, canvas.width, canvas.height)
+      context.drawImage(image, 0, 0, canvas.width, canvas.height)
+      resolve(canvas.toDataURL('image/jpeg', 0.82))
+    }
+    image.onerror = () => {
+      URL.revokeObjectURL(objectURL)
+      reject(new Error('图片读取失败'))
+    }
+    image.src = objectURL
+  })
+}
+
+async function onFilesPicked(event: Event) {
+  const input = event.target as HTMLInputElement
+  const files = Array.from(input.files || [])
+  input.value = ''
+  for (const file of files) {
+    if (localImages.value.length >= MAX_LOCAL_IMAGES) {
+      message.warning(`最多上传 ${MAX_LOCAL_IMAGES} 张本地图片`)
+      break
+    }
+    if (!['image/png', 'image/jpeg'].includes(file.type)) {
+      message.warning(`${file.name} 不是 PNG/JPEG，已跳过`)
+      continue
+    }
+    if (file.size > 20 * 1024 * 1024) {
+      message.warning(`${file.name} 超过 20MB，已跳过`)
+      continue
+    }
+    try {
+      const dataUrl = await compressImage(file)
+      localImages.value.push({
+        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        name: file.name,
+        dataUrl,
+      })
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '图片处理失败')
+    }
+  }
+}
+
+function removeLocalImage(id: string) {
+  localImages.value = localImages.value.filter((image) => image.id !== id)
+}
 
 const auditOptions = computed(() =>
   audits.value.map((a) => ({
@@ -76,6 +142,7 @@ watch(
       form.images = ''
       form.callbackUrl = ''
       form.ext = ''
+      localImages.value = []
       form.auditId = props.defaultAuditId || null
       errorText.value = ''
       loadAudits()
@@ -184,7 +251,7 @@ async function submit() {
           <div v-if="selectedAudit" class="audit-hint">
             <span class="hint-dot"></span>
             {{ selectedAudit.provider_name }} ·
-            {{ selectedAudit.provider_kind === 'JEV' ? 'JEV System One 结构化裁决' : selectedAudit.provider_kind === 'ANTHROPIC' ? 'Anthropic Messages 结构化输出' : 'OpenAI 兼容结构化输出' }}
+            {{ selectedAudit.provider_kind === 'JEV' ? 'JEV System One 结构化裁决' : selectedAudit.provider_kind === 'ANTHROPIC' ? '通用大模型 · Anthropic 协议' : '通用大模型 · OpenAI 协议' }}
           </div>
           <div v-else-if="!loadingAudits && audits.length === 0" class="form-hint warn">
             <WarningOutline /> 当前项目还没有启用的审核配置，请先创建。
@@ -208,12 +275,36 @@ async function submit() {
         </div>
 
         <div class="field">
-          <label><ImagesOutline class="label-icon" /> 图片 URL</label>
+          <label><ImagesOutline class="label-icon" /> 图档图片</label>
+          <div class="image-upload-row">
+            <n-button size="small" secondary @click="fileInput?.click()">
+              <template #icon><CloudUploadOutline /></template>
+              本地上传
+            </n-button>
+            <span>PNG / JPEG，自动压缩至最长边 1600px，最多 {{ MAX_LOCAL_IMAGES }} 张</span>
+            <input
+              ref="fileInput"
+              type="file"
+              accept="image/png,image/jpeg"
+              multiple
+              hidden
+              @change="onFilesPicked"
+            />
+          </div>
+          <div v-if="localImages.length" class="image-preview-grid">
+            <figure v-for="image in localImages" :key="image.id">
+              <img :src="image.dataUrl" :alt="image.name" />
+              <figcaption>{{ image.name }}</figcaption>
+              <button type="button" title="移除图片" @click="removeLocalImage(image.id)">
+                <CloseOutline />
+              </button>
+            </figure>
+          </div>
           <n-input
             v-model:value="form.images"
             type="textarea"
             :autosize="{ minRows: 2, maxRows: 5 }"
-            placeholder="每行一个图档图片地址（PNG / JPEG）&#10;https://example.com/archive/page-01.jpg"
+            placeholder="也可以每行填写一个图档图片地址（PNG / JPEG）&#10;https://example.com/archive/page-01.jpg"
           />
           <div class="form-hint">
             支持多个文本段落 + 多张图片；当前不支持视频/音频。JEV 原生多模态，通用模型需在接入配置中开启图片理解。
@@ -378,6 +469,72 @@ async function submit() {
   background: #fef2f2;
   color: #b91c1c;
   font-size: 12px;
+}
+
+.image-upload-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.image-upload-row > span {
+  color: var(--muted-light);
+  font-size: 9.5px;
+}
+
+.image-preview-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.image-preview-grid figure {
+  position: relative;
+  margin: 0;
+  overflow: hidden;
+  border: 1px solid #e8eef7;
+  border-radius: 9px;
+  background: #f8fafc;
+}
+
+.image-preview-grid img {
+  display: block;
+  width: 100%;
+  height: 68px;
+  object-fit: cover;
+}
+
+.image-preview-grid figcaption {
+  overflow: hidden;
+  padding: 4px 6px;
+  color: var(--muted);
+  font-size: 8.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.image-preview-grid button {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: flex;
+  width: 20px;
+  height: 20px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(15, 23, 42, 0.68);
+  color: #fff;
+  cursor: pointer;
+  padding: 0;
+}
+
+.image-preview-grid button :deep(svg) {
+  width: 12px;
+  height: 12px;
 }
 
 .modal-actions {

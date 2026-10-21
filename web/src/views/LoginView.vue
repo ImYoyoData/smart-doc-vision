@@ -31,6 +31,10 @@ const captchaShow = ref(false)
 const captchaError = ref('')
 const captchaPayload = ref<{ id: string; x: number } | null>(null)
 const captchaRef = ref<InstanceType<typeof SliderCaptcha> | null>(null)
+const mfaShow = ref(false)
+const mfaTicket = ref('')
+const mfaCode = ref('')
+const mfaError = ref('')
 
 onMounted(() => {
   if (auth.isAuthenticated) router.replace('/dashboard')
@@ -60,19 +64,32 @@ function onCaptchaModalChange(value: boolean) {
   if (!value) closeCaptcha()
 }
 
+async function finishLogin() {
+  localStorage.setItem('sdv.last_user', username.value.trim())
+  await workspace.loadProjects(true).catch(() => undefined)
+  message.success('登录成功，欢迎回来')
+  captchaShow.value = false
+  mfaShow.value = false
+  const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/dashboard'
+  router.replace(redirect)
+}
+
 async function submitWithCaptcha(payload: { id: string; x: number }) {
   if (loading.value) return
   loading.value = true
   captchaError.value = ''
   errorText.value = ''
   try {
-    await auth.login(username.value.trim(), password.value, payload)
-    localStorage.setItem('sdv.last_user', username.value.trim())
-    await workspace.loadProjects(true).catch(() => undefined)
-    message.success('登录成功，欢迎回来')
-    captchaShow.value = false
-    const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/dashboard'
-    router.replace(redirect)
+    const result = await auth.login(username.value.trim(), password.value, payload)
+    if ('mfa_required' in result) {
+      captchaShow.value = false
+      mfaTicket.value = result.mfa_ticket
+      mfaCode.value = ''
+      mfaError.value = ''
+      mfaShow.value = true
+      return
+    }
+    await finishLogin()
   } catch (error) {
     const code = (error as { code?: string }).code
     const text = error instanceof Error ? error.message : '登录失败'
@@ -89,6 +106,35 @@ async function submitWithCaptcha(payload: { id: string; x: number }) {
   } finally {
     loading.value = false
   }
+}
+
+async function verifyMFACode() {
+  if (loading.value || !mfaTicket.value) return
+  if (!/^\d{6}$/.test(mfaCode.value.trim())) {
+    mfaError.value = '请输入 6 位动态验证码'
+    return
+  }
+  loading.value = true
+  mfaError.value = ''
+  try {
+    await auth.verifyMFA(mfaTicket.value, mfaCode.value.trim())
+    await finishLogin()
+  } catch (error) {
+    const text = error instanceof Error ? error.message : '动态验证码校验失败'
+    mfaShow.value = false
+    mfaTicket.value = ''
+    errorText.value = `${text}，请重新点击登录并完成滑块验证`
+  } finally {
+    loading.value = false
+  }
+}
+
+function closeMFA() {
+  if (loading.value) return
+  mfaShow.value = false
+  mfaTicket.value = ''
+  mfaCode.value = ''
+  mfaError.value = ''
 }
 
 watch(captchaPayload, (payload) => {
@@ -271,6 +317,39 @@ function forgot() {
         <div class="captcha-modal-foot">
           <span>同一 IP 连续 3 次失败将被封禁 10 分钟</span>
           <n-button size="small" :disabled="loading" @click="closeCaptcha">取消</n-button>
+        </div>
+      </div>
+    </n-modal>
+
+    <n-modal :show="mfaShow" :mask-closable="!loading" @update:show="(value: boolean) => { if (!value) closeMFA() }">
+      <div class="captcha-modal mfa-modal">
+        <div class="captcha-modal-head">
+          <span class="captcha-modal-icon"><ShieldCheckmarkOutline /></span>
+          <div>
+            <div class="captcha-kicker">TWO-FACTOR AUTH</div>
+            <h3>动态验证码</h3>
+            <p>该账号已启用两步验证，请输入身份验证器中的 6 位动态验证码。</p>
+          </div>
+        </div>
+        <div class="captcha-modal-body">
+          <n-input
+            v-model:value="mfaCode"
+            size="large"
+            maxlength="6"
+            placeholder="000000"
+            class="mfa-code-input"
+            :input-props="{ inputmode: 'numeric', autocomplete: 'one-time-code' }"
+            @keyup.enter="verifyMFACode"
+          />
+          <div class="mfa-hint">验证码每 30 秒刷新一次；请确保手机时间与服务器同步。</div>
+          <div v-if="mfaError" class="captcha-error">{{ mfaError }}</div>
+        </div>
+        <div class="captcha-modal-foot">
+          <span>登录票据 5 分钟内有效，且仅可使用一次</span>
+          <div class="mfa-actions">
+            <n-button size="small" :disabled="loading" @click="closeMFA">取消</n-button>
+            <n-button type="primary" size="small" :loading="loading" @click="verifyMFACode">验证并登录</n-button>
+          </div>
         </div>
       </div>
     </n-modal>
@@ -770,6 +849,30 @@ h1 span {
   color: #b0b9c6;
   font-size: 10px;
   text-align: center;
+}
+
+.mfa-modal {
+  width: min(440px, calc(100vw - 30px));
+}
+
+.mfa-code-input :deep(input) {
+  height: 48px;
+  font-family: var(--mono);
+  font-size: 24px;
+  letter-spacing: 0.32em;
+  text-align: center;
+}
+
+.mfa-hint {
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.mfa-actions {
+  display: flex;
+  gap: 8px;
 }
 
 .captcha-modal {

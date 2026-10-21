@@ -15,8 +15,10 @@ import EmptyState from '@/components/EmptyState.vue'
 import { auditApi, projectApi, recycleApi } from '@/api'
 import type { RecycleItem } from '@/api/types'
 import { useWorkspaceStore } from '@/stores/workspace'
+import { useAuthStore } from '@/stores/auth'
 
 const workspace = useWorkspaceStore()
+const auth = useAuthStore()
 const message = useMessage()
 const dialog = useDialog()
 const items = ref<RecycleItem[]>([])
@@ -27,6 +29,8 @@ const objectType = ref<string | null>(null)
 const keyword = ref('')
 const loading = ref(false)
 const restoringId = ref<string | null>(null)
+const purgingId = ref<string | null>(null)
+const canPurge = computed(() => auth.user?.role === 'SUPER_ADMIN')
 
 const pageCount = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
 
@@ -77,6 +81,28 @@ function restore(item: RecycleItem) {
   })
 }
 
+function purge(item: RecycleItem) {
+  dialog.error({
+    title: '永久删除',
+    content: `「${item.name}」及其任务、事件和关联配置将被永久删除，无法恢复。确认继续？`,
+    positiveText: '永久删除',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      const key = `${item.type}:${item.id}`
+      purgingId.value = key
+      try {
+        await recycleApi.purge(item.type, item.id)
+        message.success('已永久删除')
+        await Promise.all([load(), workspace.loadProjects(true)])
+      } catch (error) {
+        message.error(error instanceof Error ? error.message : '永久删除失败', { duration: 6000 })
+      } finally {
+        purgingId.value = null
+      }
+    },
+  })
+}
+
 function remainingClass(days: number) {
   if (days <= 3) return 'danger'
   if (days <= 7) return 'warning'
@@ -101,7 +127,7 @@ onMounted(load)
     <PageHeader
       eyebrow="RECYCLE BIN"
       title="回收站"
-      subtitle="项目与审核配置删除后进入回收站，在保留期内可恢复；业务数据与审计摘要不会被立即清除。"
+      subtitle="项目与审核配置删除后进入回收站，保留期内可恢复；到期自动永久清理，超级管理员也可立即永久删除。"
     >
       <template #actions>
         <n-button quaternary circle :loading="loading" @click="load">
@@ -198,6 +224,16 @@ onMounted(load)
                 >
                   恢复
                 </n-button>
+                <n-button
+                  v-if="canPurge"
+                  size="small"
+                  quaternary
+                  class="purge-btn"
+                  :loading="purgingId === `${item.type}:${item.id}`"
+                  @click="purge(item)"
+                >
+                  永久删除
+                </n-button>
               </td>
             </tr>
           </tbody>
@@ -214,7 +250,7 @@ onMounted(load)
       </EmptyState>
 
       <div class="pagination-row">
-        <span>保留期内可恢复 · 过期对象待管理员清理</span>
+        <span>保留期内可恢复 · 到期对象由后台每 6 小时自动永久清理</span>
         <n-pagination
           v-model:page="page"
           v-model:page-size="pageSize"
@@ -365,6 +401,15 @@ onMounted(load)
 .relation {
   color: var(--muted);
   font-size: 10.5px;
+}
+
+.purge-btn {
+  margin-left: 4px;
+  color: #b0bac8;
+}
+
+.purge-btn:hover {
+  color: var(--red);
 }
 
 @media (max-width: 850px) {

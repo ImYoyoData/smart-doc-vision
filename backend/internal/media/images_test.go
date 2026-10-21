@@ -1,8 +1,12 @@
 package media
 
 import (
+	"bytes"
+	"context"
+	"encoding/base64"
 	"image"
 	"image/color"
+	"image/png"
 	"net"
 	"testing"
 )
@@ -44,5 +48,26 @@ func TestPrivateIPDetection(t *testing.T) {
 		if ip := net.ParseIP(raw); ip == nil || isPrivateIP(ip) {
 			t.Fatalf("expected %s to be public", raw)
 		}
+	}
+}
+
+func TestFetchImageFromDataURL(t *testing.T) {
+	src := image.NewRGBA(image.Rect(0, 0, 640, 480))
+	for y := 0; y < 480; y++ {
+		for x := 0; x < 640; x++ {
+			src.Set(x, y, color.RGBA{R: 200, G: 220, B: 250, A: 255})
+		}
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, src); err != nil {
+		t.Fatal(err)
+	}
+	dataURL := "data:image/png;base64," + base64.StdEncoding.EncodeToString(buf.Bytes())
+	prepared, err := NewFetcher(false).FetchImage(context.Background(), dataURL)
+	if err != nil {
+		t.Fatalf("fetch data URL: %v", err)
+	}
+	if prepared.Format != "png" || prepared.Width != 640 || prepared.Height != 480 {
+		t.Fatalf("unexpected prepared image: %+v", prepared)
 	}
 }

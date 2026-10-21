@@ -2,6 +2,8 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import {
   NButton,
+  NCheckbox,
+  NCheckboxGroup,
   NInput,
   NModal,
   NSelect,
@@ -11,10 +13,12 @@ import {
 import {
   AddOutline,
   CheckmarkCircleOutline,
+  CreateOutline,
   KeyOutline,
   PersonOutline,
   RefreshOutline,
   ShieldCheckmarkOutline,
+  TrashOutline,
   WarningOutline,
 } from '@vicons/ionicons5'
 import PageHeader from '@/components/PageHeader.vue'
@@ -33,6 +37,19 @@ const loading = ref(false)
 const saving = ref(false)
 const users = ref<User[]>([])
 const roles = ref<RoleDefinition[]>([])
+const allPermissions = ref<string[]>([])
+const allMenus = ref<string[]>([])
+const roleModalShow = ref(false)
+const editingRole = ref<RoleDefinition | null>(null)
+const roleSaving = ref(false)
+const roleError = ref('')
+const roleForm = reactive({
+  code: '',
+  name: '',
+  description: '',
+  permissions: [] as string[],
+  menus: [] as string[],
+})
 const modalShow = ref(false)
 const editing = ref<User | null>(null)
 const errorText = ref('')
@@ -56,18 +73,108 @@ const menuLabels: Record<string, string> = {
   logs: '审计日志', recycle: '回收站', users: '用户与权限', help: '对接文档', profile: '个人中心',
 }
 
+const permissionLabels: Record<string, string> = {
+  'project:create': '创建项目', 'project:update': '修改项目', 'project:delete': '删除项目', 'project:restore': '恢复项目',
+  'provider:write': '管理模型接入', 'audit:write': '管理审核配置', 'credential:write': '管理接入凭证',
+  'task:submit': '提交审核任务', 'task:review': '人工复核', 'task:retry': '重试任务', 'user:manage': '管理账号',
+  'log:read': '查看审计日志', 'recycle:write': '回收站操作',
+}
+
 async function load() {
   loading.value = true
   try {
     await workspace.loadProjects(true)
-    const data = await userApi.list()
+    const [data, meta] = await Promise.all([userApi.list(), userApi.roles()])
     users.value = data.items
-    roles.value = data.roles || []
+    roles.value = data.roles || meta.items || []
+    allPermissions.value = meta.all_permissions || []
+    allMenus.value = meta.all_menus || []
   } catch (error) {
     message.error(error instanceof Error ? error.message : '加载账号失败')
   } finally {
     loading.value = false
   }
+}
+
+function openRoleCreate() {
+  editingRole.value = null
+  roleForm.code = ''
+  roleForm.name = ''
+  roleForm.description = ''
+  roleForm.permissions = ['log:read']
+  roleForm.menus = ['dashboard', 'help', 'profile']
+  roleError.value = ''
+  roleModalShow.value = true
+}
+
+function openRoleEdit(role: RoleDefinition) {
+  if (role.builtin) return
+  editingRole.value = role
+  roleForm.code = role.code
+  roleForm.name = role.name
+  roleForm.description = role.description
+  roleForm.permissions = [...role.permissions]
+  roleForm.menus = [...role.menus]
+  roleError.value = ''
+  roleModalShow.value = true
+}
+
+async function saveRole() {
+  roleError.value = ''
+  if (!editingRole.value && !/^[A-Z][A-Z0-9_]{2,31}$/.test(roleForm.code.trim())) {
+    roleError.value = '角色编码需以大写字母开头，3~32 位，仅支持大写字母、数字和下划线'
+    return
+  }
+  if (!roleForm.name.trim()) {
+    roleError.value = '请填写角色名称'
+    return
+  }
+  if (!roleForm.permissions.length || !roleForm.menus.length) {
+    roleError.value = '至少选择一项操作权限和一个可见菜单'
+    return
+  }
+  roleSaving.value = true
+  try {
+    const payload = {
+      code: roleForm.code.trim(),
+      name: roleForm.name.trim(),
+      description: roleForm.description.trim(),
+      permissions: roleForm.permissions,
+      menus: roleForm.menus,
+    }
+    if (editingRole.value) {
+      await userApi.updateRole(editingRole.value.code, payload)
+      message.success('角色已更新')
+    } else {
+      await userApi.createRole(payload)
+      message.success('自定义角色已创建')
+    }
+    roleModalShow.value = false
+    await load()
+  } catch (error) {
+    roleError.value = error instanceof Error ? error.message : '保存角色失败'
+  } finally {
+    roleSaving.value = false
+  }
+}
+
+function deleteRole(role: RoleDefinition) {
+  if (role.builtin) return
+  dialog.warning({
+    title: '删除自定义角色',
+    content: `删除「${role.name}」后不可恢复；仍有账号使用该角色时会被拒绝。`,
+    positiveText: '删除',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        await userApi.deleteRole(role.code)
+        message.success('角色已删除')
+        await load()
+      } catch (error) {
+        message.error(error instanceof Error ? error.message : '删除角色失败')
+      }
+    },
+  })
 }
 
 function openCreate() {
@@ -140,6 +247,24 @@ async function save() {
   }
 }
 
+function resetMfa(user: User) {
+  dialog.warning({
+    title: '重置动态验证码',
+    content: `确认清除「${user.username}」的两步验证配置？该账号现有登录会话也会失效，需使用密码重新登录。`,
+    positiveText: '重置',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        await userApi.resetMfa(user.id)
+        message.success('动态验证码已重置')
+        await load()
+      } catch (error) {
+        message.error(error instanceof Error ? error.message : '重置失败')
+      }
+    },
+  })
+}
+
 function toggleStatus(user: User) {
   if (user.id === auth.user?.id) {
     message.warning('不能停用当前登录账号')
@@ -179,6 +304,10 @@ onMounted(load)
         <n-button quaternary circle :loading="loading" @click="load">
           <template #icon><RefreshOutline /></template>
         </n-button>
+        <n-button quaternary @click="openRoleCreate">
+          <template #icon><CreateOutline /></template>
+          新建角色
+        </n-button>
         <n-button type="primary" @click="openCreate">
           <template #icon><AddOutline /></template>
           新建后台账号
@@ -209,6 +338,7 @@ onMounted(load)
               <span class="mono">@{{ user.username }}</span>
               <StatusTag :status="user.status" type="provider" />
               <span class="role-chip">{{ roles.find((r) => r.code === user.role)?.name || user.role }}</span>
+              <span v-if="user.mfa_enabled" class="mfa-chip">2FA</span>
               <span v-if="user.id === auth.user?.id" class="self-chip">当前账号</span>
             </div>
             <div class="user-meta">
@@ -218,6 +348,7 @@ onMounted(load)
           </div>
           <div class="user-actions">
             <n-button size="small" quaternary @click="openEdit(user)">编辑</n-button>
+            <n-button v-if="user.mfa_enabled" size="small" quaternary @click="resetMfa(user)">重置 2FA</n-button>
             <n-button size="small" quaternary @click="toggleStatus(user)">{{ user.status === 'ACTIVE' ? '停用' : '启用' }}</n-button>
           </div>
         </div>
@@ -229,11 +360,25 @@ onMounted(load)
 
     <section class="panel role-panel">
       <div class="panel-head">
-        <div><h3 class="panel-title">角色与菜单权限</h3><p class="panel-subtitle">固定角色，可创建账号时选择；菜单按角色自动隐藏</p></div>
+        <div><h3 class="panel-title">角色与菜单权限</h3><p class="panel-subtitle">内置角色随版本升级维护；自定义角色可自由组合权限与菜单</p></div>
+        <n-button size="small" secondary @click="openRoleCreate">
+          <template #icon><AddOutline /></template>
+          自定义角色
+        </n-button>
       </div>
       <div class="role-grid">
         <article v-for="role in roles" :key="role.code" class="role-card">
-          <div class="role-head"><strong>{{ role.name }}</strong><code>{{ role.code }}</code></div>
+          <div class="role-head">
+            <div class="role-head-main">
+              <strong>{{ role.name }}</strong>
+              <code>{{ role.code }}</code>
+              <span v-if="role.builtin" class="builtin-chip">内置</span>
+            </div>
+            <div v-if="!role.builtin" class="role-actions">
+              <button type="button" title="编辑角色" @click="openRoleEdit(role)"><CreateOutline /></button>
+              <button type="button" title="删除角色" @click="deleteRole(role)"><TrashOutline /></button>
+            </div>
+          </div>
           <p>{{ role.description }}</p>
           <div class="role-menus">
             <span v-for="menu in role.menus" :key="menu">{{ menuLabels[menu] || menu }}</span>
@@ -417,6 +562,15 @@ onMounted(load)
   font-size: 8.5px;
 }
 
+.mfa-chip {
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: #e9f9ef;
+  color: #15803d;
+  font-family: var(--mono);
+  font-size: 8px;
+}
+
 .self-chip {
   padding: 2px 6px;
   border-radius: 4px;
@@ -456,6 +610,95 @@ onMounted(load)
   border: 1px solid #edf1f7;
   border-radius: 10px;
   background: #fbfcfe;
+}
+
+.role-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.role-head-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.builtin-chip {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: #eef2f7;
+  color: #7c8798;
+  font-size: 8px;
+}
+
+.role-actions {
+  display: flex;
+  gap: 2px;
+}
+
+.role-actions button {
+  display: flex;
+  width: 22px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0;
+}
+
+.role-actions button:hover {
+  background: #f1f5f9;
+  color: var(--brand);
+}
+
+.role-actions :deep(svg) {
+  width: 12px;
+  height: 12px;
+}
+
+.role-modal {
+  width: min(720px, calc(100vw - 30px));
+}
+
+.role-editor-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.check-panel {
+  max-height: 210px;
+  overflow: auto;
+  padding: 9px 10px;
+  border: 1px solid #edf1f7;
+  border-radius: 9px;
+  background: #fbfcfe;
+}
+
+.check-panel :deep(.n-checkbox-group) {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.optional {
+  margin-left: 5px;
+  color: var(--muted-light);
+  font-size: 9px;
+  font-weight: 400;
+}
+
+@media (max-width: 720px) {
+  .role-editor-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .role-head {

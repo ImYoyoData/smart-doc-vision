@@ -49,7 +49,7 @@ const maps: Record<string, Record<string, { label: string; tone: string; pulse?:
   },
   kind: {
     OPENAI_COMPATIBLE: { label: '通用大模型', tone: 'blue' },
-    ANTHROPIC: { label: 'Anthropic Claude', tone: 'green' },
+    ANTHROPIC: { label: '通用大模型', tone: 'green' },
     JEV: { label: 'JEV 决策模型', tone: 'purple' },
   },
   log: {

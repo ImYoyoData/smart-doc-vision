@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { authApi } from '@/api'
 import { REFRESH_KEY, TOKEN_KEY, USER_KEY } from '@/api/http'
-import type { LoginResult, User } from '@/api/types'
+import type { LoginResult, MFAChallenge, User } from '@/api/types'
 
 function readUser(): User | null {
   try {
@@ -62,13 +62,20 @@ export const useAuthStore = defineStore('auth', () => {
     localStorage.setItem(USER_KEY, JSON.stringify(data.user))
   }
 
-  async function login(username: string, password: string, captcha: { id: string; x: number }) {
+  async function login(username: string, password: string, captcha: { id: string; x: number }): Promise<LoginResult | MFAChallenge> {
     const data = await authApi.login({
       username,
       password,
       captcha_id: captcha.id,
       captcha_x: captcha.x,
     })
+    if ('mfa_required' in data) return data
+    applySession(data)
+    return data
+  }
+
+  async function verifyMFA(ticket: string, code: string) {
+    const data = await authApi.verifyMFA(ticket, code)
     applySession(data)
     return data
   }
@@ -111,6 +118,7 @@ export const useAuthStore = defineStore('auth', () => {
     canMenu,
     can,
     login,
+    verifyMFA,
     loadMe,
     hydrate,
     clear,

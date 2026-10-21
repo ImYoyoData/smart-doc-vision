@@ -12,6 +12,7 @@ export interface User {
   display_name: string
   role: string
   status: string
+  mfa_enabled?: boolean
   last_login_at?: string | null
   project_ids?: number[]
   permissions?: string[]
@@ -24,6 +25,7 @@ export interface RoleDefinition {
   description: string
   permissions: string[]
   menus: string[]
+  builtin?: boolean
 }
 
 export interface LoginResult {
@@ -31,6 +33,27 @@ export interface LoginResult {
   refresh_token: string
   expires_in: number
   user: User
+}
+
+export interface MFAChallenge {
+  mfa_required: true
+  mfa_ticket: string
+  expires_in: number
+}
+
+export interface MFAStatus {
+  enabled: boolean
+}
+
+export interface MFASetup {
+  secret: string
+  otpauth_url: string
+  issuer: string
+  account: string
+  expires_in: number
+  digits: number
+  period: number
+  algorithm: string
 }
 
 export interface CaptchaChallenge {
@@ -53,6 +76,8 @@ export interface Project {
   description: string
   owner_id: number
   retention_days: number
+  max_tasks_per_day: number
+  openapi_rate_limit: number
   deleted_at?: string | null
   created_at: string
   updated_at: string
@@ -486,11 +511,42 @@ export interface RecycleItem {
   can_restore: boolean
 }
 
+export interface AuditAssistantMessage {
+  role: 'user' | 'assistant'
+  content: string
+}
+
+export interface AuditAssistantConfig {
+  name: string
+  code: string
+  description: string
+  media_types: string[]
+  decision_mode: string
+  categories: AuditCategory[]
+  provider_id: number
+  review_prompt: string
+  rules: RuleGroup[]
+  routes: Record<string, unknown>
+  default_result: string
+  on_model_fail: string
+  dedupe_window_sec: number
+}
+
+export interface AuditAssistantResult {
+  reply: string
+  ready: boolean
+  model?: string
+  provider_id?: number
+  provider_name?: string
+  config?: AuditAssistantConfig
+}
+
 export interface RuleTemplate {
   key: string
   name: string
   description: string
   kind?: AuditDecisionMode | string
+  rules?: RuleGroup[]
 }
 
 

@@ -27,7 +27,7 @@ type triggerInput struct {
 
 func (s *Server) updateTrigger(c *gin.Context) {
 	user := currentUser(c)
-	if !canManage(user.Role) {
+	if !s.hasPermission(user.Role, "audit:write") {
 		forbidden(c, "当前角色无权配置触发源")
 		return
 	}
@@ -85,7 +85,7 @@ func (s *Server) updateTrigger(c *gin.Context) {
 
 func (s *Server) testTrigger(c *gin.Context) {
 	user := currentUser(c)
-	if !canManage(user.Role) {
+	if !s.hasPermission(user.Role, "audit:write") {
 		forbidden(c, "当前角色无权测试触发源")
 		return
 	}

@@ -41,7 +41,7 @@ type credentialRow struct {
 }
 
 func (s *Server) listCredentials(c *gin.Context) {
-	if !canAdmin(currentUser(c).Role) {
+	if !s.hasPermission(currentUser(c).Role, "credential:write") {
 		forbidden(c, "当前角色无权查看项目凭证")
 		return
 	}
@@ -63,7 +63,7 @@ func (s *Server) listCredentials(c *gin.Context) {
 
 func (s *Server) createCredential(c *gin.Context) {
 	user := currentUser(c)
-	if !canAdmin(user.Role) {
+	if !s.hasPermission(user.Role, "credential:write") {
 		forbidden(c, "当前角色无权创建项目凭证")
 		return
 	}
@@ -110,7 +110,7 @@ func (s *Server) createCredential(c *gin.Context) {
 
 func (s *Server) updateCredential(c *gin.Context) {
 	user := currentUser(c)
-	if !canAdmin(user.Role) {
+	if !s.hasPermission(user.Role, "credential:write") {
 		forbidden(c, "当前角色无权修改项目凭证")
 		return
 	}
@@ -151,7 +151,7 @@ func (s *Server) updateCredential(c *gin.Context) {
 
 func (s *Server) rotateCredential(c *gin.Context) {
 	user := currentUser(c)
-	if !canAdmin(user.Role) {
+	if !s.hasPermission(user.Role, "credential:write") {
 		forbidden(c, "当前角色无权轮换项目凭证")
 		return
 	}
@@ -183,7 +183,7 @@ func (s *Server) rotateCredential(c *gin.Context) {
 
 func (s *Server) deleteCredential(c *gin.Context) {
 	user := currentUser(c)
-	if !canAdmin(user.Role) {
+	if !s.hasPermission(user.Role, "credential:write") {
 		forbidden(c, "当前角色无权删除项目凭证")
 		return
 	}

@@ -5,10 +5,15 @@ import type {
   Audit,
   AuditCategory,
   AuditLog,
+  AuditAssistantResult,
+  AuditAssistantMessage,
   CaptchaChallenge,
   DashboardData,
   IntegrationGuide,
   LoginResult,
+  MFAChallenge,
+  MFASetup,
+  MFAStatus,
   Paged,
   Project,
   Provider,
@@ -26,7 +31,12 @@ import type {
 export const authApi = {
   captcha: () => get<CaptchaChallenge>('/auth/captcha'),
   login: (payload: { username: string; password: string; captcha_id: string; captcha_x: number }) =>
-    post<LoginResult>('/auth/login', payload),
+    post<LoginResult | MFAChallenge>('/auth/login', payload),
+  verifyMFA: (ticket: string, code: string) => post<LoginResult>('/auth/mfa', { ticket, code }),
+  mfaStatus: () => get<MFAStatus>('/auth/mfa'),
+  mfaSetup: () => post<MFASetup>('/auth/mfa/setup'),
+  mfaEnable: (code: string) => post<{ enabled: boolean }>('/auth/mfa/enable', { code }),
+  mfaDisable: (password: string, code: string) => post<{ enabled: boolean }>('/auth/mfa/disable', { password, code }),
   refresh: (refreshToken: string) => post<LoginResult>('/auth/refresh', { refresh_token: refreshToken }),
   me: () => get<{ user: User }>('/auth/me'),
   logout: () => post<{ logged_out: boolean }>('/auth/logout'),
@@ -38,6 +48,11 @@ export const userApi = {
   list: () => get<{ items: User[]; total: number; roles: RoleDefinition[] }>('/users'),
   create: (payload: Record<string, unknown>) => post<User>('/users', payload),
   update: (id: number, payload: Record<string, unknown>) => put<User>(`/users/${id}`, payload),
+  resetMfa: (id: number) => post<{ reset: boolean }>(`/users/${id}/reset-mfa`),
+  roles: () => get<{ items: RoleDefinition[]; all_permissions: string[]; all_menus: string[] }>('/meta/roles'),
+  createRole: (payload: Record<string, unknown>) => post<{ role: RoleDefinition }>('/roles', payload),
+  updateRole: (code: string, payload: Record<string, unknown>) => put<{ updated: boolean }>(`/roles/${code}`, payload),
+  deleteRole: (code: string) => del<{ deleted: boolean }>(`/roles/${code}`),
 }
 
 export const projectApi = {
@@ -76,6 +91,7 @@ export const auditApi = {
   list: (params?: Record<string, unknown>) => get<Paged<Audit>>('/audits', params),
   get: (id: number) => get<{ audit: Audit; triggers: TriggerSource[] }>(`/audits/${id}`),
   create: (payload: Record<string, unknown>) => post<Audit>('/audits', payload),
+  assistant: (payload: Record<string, unknown>) => post<AuditAssistantResult>('/audits/assistant', payload),
   update: (id: number, payload: Record<string, unknown>) => put<Audit>(`/audits/${id}`, payload),
   setStatus: (id: number, status: string) => patch<{ status: string }>(`/audits/${id}/status`, { status }),
   clone: (id: number, payload: { name: string; code: string }) => post<Audit>(`/audits/${id}/clone`, payload),
@@ -120,6 +136,7 @@ export const reviewApi = {
 
 export const recycleApi = {
   list: (params?: Record<string, unknown>) => get<Paged<RecycleItem>>('/recycle-bin', params),
+  purge: (type: string, id: number) => del<{ purged: boolean }>(`/recycle-bin/${type}/${id}`),
 }
 
 export const metaApi = {

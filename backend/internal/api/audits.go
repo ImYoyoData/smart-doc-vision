@@ -110,7 +110,7 @@ func (s *Server) getAudit(c *gin.Context) {
 
 func (s *Server) createAudit(c *gin.Context) {
 	user := currentUser(c)
-	if !canManage(user.Role) {
+	if !s.hasPermission(user.Role, "audit:write") {
 		forbidden(c, "当前角色无权创建审核")
 		return
 	}
@@ -189,7 +189,7 @@ func (s *Server) createAudit(c *gin.Context) {
 
 func (s *Server) updateAudit(c *gin.Context) {
 	user := currentUser(c)
-	if !canManage(user.Role) {
+	if !s.hasPermission(user.Role, "audit:write") {
 		forbidden(c, "当前角色无权修改审核")
 		return
 	}
@@ -312,7 +312,7 @@ func (s *Server) updateAudit(c *gin.Context) {
 
 func (s *Server) updateAuditStatus(c *gin.Context) {
 	user := currentUser(c)
-	if !canManage(user.Role) {
+	if !s.hasPermission(user.Role, "audit:write") {
 		forbidden(c, "当前角色无权变更审核状态")
 		return
 	}
@@ -337,7 +337,7 @@ func (s *Server) updateAuditStatus(c *gin.Context) {
 
 func (s *Server) deleteAudit(c *gin.Context) {
 	user := currentUser(c)
-	if !canManage(user.Role) {
+	if !s.hasPermission(user.Role, "audit:write") {
 		forbidden(c, "当前角色无权删除审核")
 		return
 	}
@@ -359,7 +359,7 @@ func (s *Server) deleteAudit(c *gin.Context) {
 
 func (s *Server) restoreAudit(c *gin.Context) {
 	user := currentUser(c)
-	if !canManage(user.Role) {
+	if !s.hasPermission(user.Role, "audit:write") {
 		forbidden(c, "当前角色无权恢复审核")
 		return
 	}
@@ -405,7 +405,7 @@ func (s *Server) restoreAudit(c *gin.Context) {
 
 func (s *Server) cloneAudit(c *gin.Context) {
 	user := currentUser(c)
-	if !canManage(user.Role) {
+	if !s.hasPermission(user.Role, "audit:write") {
 		forbidden(c, "当前角色无权复制审核")
 		return
 	}

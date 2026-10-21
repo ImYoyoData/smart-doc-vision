@@ -227,19 +227,20 @@ func SeedAuditName(code string) string {
 }
 
 type RuleTemplate struct {
-	Key         string `json:"key"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Kind        string `json:"kind"`
+	Key         string         `json:"key"`
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	Kind        string         `json:"kind"`
+	Rules       model.JSONText `json:"rules"`
 }
 
 func RuleTemplates() []RuleTemplate {
 	return []RuleTemplate{
-		{Key: "standard", Name: "标准审核", Description: "风险分 ≥ 0.85 驳回，< 0.30 通过，其余转人工", Kind: model.DecisionReview},
-		{Key: "strict", Name: "严格审核", Description: "风险分 ≥ 0.72 驳回，< 0.20 通过，适合生产档案", Kind: model.DecisionReview},
-		{Key: "loose", Name: "宽松审核", Description: "风险分 ≥ 0.92 驳回，< 0.40 通过，适合内部资料", Kind: model.DecisionReview},
-		{Key: "classify", Name: "分类标准", Description: "按分类映射结论；置信度 < 0.60 的通过结果转人工", Kind: model.DecisionClassify},
-		{Key: "classify_strict", Name: "分类严格", Description: "按分类映射结论；置信度 < 0.75 的通过结果转人工", Kind: model.DecisionClassify},
-		{Key: "classify_loose", Name: "分类宽松", Description: "按分类映射结论；置信度 < 0.45 的通过结果转人工", Kind: model.DecisionClassify},
+		{Key: "standard", Name: "标准审核", Description: "风险分 ≥ 0.85 驳回，< 0.30 通过，其余转人工", Kind: model.DecisionReview, Rules: RulesPayload("standard")},
+		{Key: "strict", Name: "严格审核", Description: "风险分 ≥ 0.72 驳回，< 0.20 通过，适合生产档案", Kind: model.DecisionReview, Rules: RulesPayload("strict")},
+		{Key: "loose", Name: "宽松审核", Description: "风险分 ≥ 0.92 驳回，< 0.40 通过，适合内部资料", Kind: model.DecisionReview, Rules: RulesPayload("loose")},
+		{Key: "classify", Name: "分类标准", Description: "按分类映射结论；置信度 < 0.60 的通过结果转人工", Kind: model.DecisionClassify, Rules: ClassificationRulesPayload(0.60)},
+		{Key: "classify_strict", Name: "分类严格", Description: "按分类映射结论；置信度 < 0.75 的通过结果转人工", Kind: model.DecisionClassify, Rules: ClassificationRulesPayload(0.75)},
+		{Key: "classify_loose", Name: "分类宽松", Description: "按分类映射结论；置信度 < 0.45 的通过结果转人工", Kind: model.DecisionClassify, Rules: ClassificationRulesPayload(0.45)},
 	}
 }

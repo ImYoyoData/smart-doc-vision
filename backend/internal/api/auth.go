@@ -16,12 +16,12 @@ import (
 	"gorm.io/gorm"
 
 	"smartdoc-vision/backend/internal/captcha"
-	"smartdoc-vision/backend/internal/catalog"
 	"smartdoc-vision/backend/internal/model"
 	"smartdoc-vision/backend/internal/security"
 )
 
 const userContextKey = "current_user"
+const claimsContextKey = "current_claims"
 
 func currentUser(c *gin.Context) *model.User {
 	v, exists := c.Get(userContextKey)
@@ -60,8 +60,14 @@ func (s *Server) authRequired() gin.HandlerFunc {
 			c.Abort()
 			return
 		}
+		if claims.TokenVersion != user.TokenVersion {
+			fail(c, http.StatusUnauthorized, "TOKEN_REVOKED", "登录状态已被撤销，请重新登录", nil)
+			c.Abort()
+			return
+		}
 		s.hydrateUser(&user)
 		c.Set(userContextKey, &user)
+		c.Set(claimsContextKey, claims)
 		c.Next()
 	}
 }
@@ -158,30 +164,52 @@ func (s *Server) login(c *gin.Context) {
 		fail(c, http.StatusForbidden, "ACCOUNT_DISABLED", "账号已被停用", nil)
 		return
 	}
+	if user.TokenVersion == 0 {
+		user.TokenVersion = 1
+		_ = s.db.Model(&user).Update("token_version", 1).Error
+	}
+	if user.MFAEnabled {
+		ticket, err := s.createMFATicket(ctx, &user, ip)
+		if err != nil {
+			serverError(c, err)
+			return
+		}
+		s.createAuditLogNoReq(nil, user.Username, "LOGIN_MFA_CHALLENGE", "USER", fmt.Sprint(user.ID), "SUCCESS",
+			map[string]any{"ip": ip}, c.GetString("trace_id"))
+		ok(c, gin.H{"mfa_required": true, "mfa_ticket": ticket, "expires_in": 300})
+		return
+	}
+	s.issueSession(c, &user, ip)
+}
 
-	access, err := s.tokens.Access(user.ID, user.Username, user.Role)
+// issueSession finalizes a login after password (and MFA, when enabled)
+// verification and returns the access/refresh token pair.
+func (s *Server) issueSession(c *gin.Context, user *model.User, ip string) {
+	access, err := s.tokens.Access(user.ID, user.Username, user.Role, user.TokenVersion)
 	if err != nil {
 		serverError(c, err)
 		return
 	}
-	refresh, err := s.tokens.Refresh(user.ID, user.Username, user.Role)
+	refresh, err := s.tokens.Refresh(user.ID, user.Username, user.Role, user.TokenVersion)
 	if err != nil {
 		serverError(c, err)
 		return
 	}
 	now := time.Now()
-	_ = s.db.Model(&user).Updates(map[string]any{"last_login_at": now, "last_login_ip": ip}).Error
+	_ = s.db.Model(user).Updates(map[string]any{"last_login_at": now, "last_login_ip": ip}).Error
 	user.LastLoginAt = &now
 	user.LastLoginIP = ip
-	s.clearLoginFailure(ctx, req.Username, ip)
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	s.clearLoginFailure(cleanupCtx, user.Username, ip)
 	s.createAuditLogNoReq(nil, user.Username, "LOGIN", "USER", fmt.Sprint(user.ID), "SUCCESS",
 		map[string]any{"ip": ip}, c.GetString("trace_id"))
-	s.hydrateUser(&user)
+	s.hydrateUser(user)
 	ok(c, gin.H{
 		"access_token":  access,
 		"refresh_token": refresh,
 		"expires_in":    24 * 3600,
-		"user":          userView(user),
+		"user":          userView(*user),
 	})
 }
 
@@ -203,10 +231,25 @@ func (s *Server) refresh(c *gin.Context) {
 		fail(c, http.StatusUnauthorized, "UNAUTHORIZED", "用户不可用", nil)
 		return
 	}
+	if claims.TokenVersion != user.TokenVersion {
+		fail(c, http.StatusUnauthorized, "TOKEN_REVOKED", "登录状态已被撤销，请重新登录", nil)
+		return
+	}
 	s.hydrateUser(&user)
-	access, _ := s.tokens.Access(user.ID, user.Username, user.Role)
-	refresh, _ := s.tokens.Refresh(user.ID, user.Username, user.Role)
+	access, _ := s.tokens.Access(user.ID, user.Username, user.Role, user.TokenVersion)
+	refresh, _ := s.tokens.Refresh(user.ID, user.Username, user.Role, user.TokenVersion)
 	ok(c, gin.H{"access_token": access, "refresh_token": refresh, "expires_in": 24 * 3600, "user": userView(user)})
+}
+
+func (s *Server) logout(c *gin.Context) {
+	user := currentUser(c)
+	if user.ID > 0 {
+		// Incrementing the server-side version invalidates this and all older
+		// access/refresh tokens for the account immediately.
+		_ = s.db.Model(&model.User{}).Where("id = ?", user.ID).
+			Update("token_version", gorm.Expr("token_version + 1")).Error
+	}
+	ok(c, gin.H{"logged_out": true})
 }
 
 func (s *Server) me(c *gin.Context) {
@@ -218,13 +261,19 @@ func userView(user model.User) gin.H {
 	return gin.H{
 		"id": user.ID, "username": user.Username, "display_name": user.DisplayName,
 		"role": user.Role, "status": user.Status, "last_login_at": user.LastLoginAt,
+		"mfa_enabled": user.MFAEnabled,
 		"project_ids": user.ProjectIDs, "permissions": user.Permissions, "menus": user.Menus,
 	}
 }
 
 func (s *Server) hydrateUser(user *model.User) {
-	user.Permissions = catalog.RolePermissions(user.Role)
-	user.Menus = catalog.RoleMenus(user.Role)
+	if definition, ok := s.roleDefinition(user.Role); ok {
+		user.Permissions = definition.Permissions
+		user.Menus = definition.Menus
+	} else {
+		user.Permissions = []string{}
+		user.Menus = []string{}
+	}
 	if user.Role == model.RoleSuperAdmin {
 		user.ProjectIDs = nil
 		return

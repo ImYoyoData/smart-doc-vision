@@ -47,6 +47,7 @@ func Open(cfg config.Config) (*gorm.DB, error) {
 		&model.Task{},
 		&model.TaskEvent{},
 		&model.AuditLog{},
+		&model.Role{},
 	); err != nil {
 		return nil, fmt.Errorf("migrate: %w", err)
 	}

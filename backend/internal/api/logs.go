@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -8,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"smartdoc-vision/backend/internal/model"
+	"smartdoc-vision/backend/internal/service"
 )
 
 func (s *Server) listAuditLogs(c *gin.Context) {
@@ -82,9 +84,53 @@ type recycleItem struct {
 	CanRestore    bool      `json:"can_restore"`
 }
 
+func (s *Server) purgeRecycleItem(c *gin.Context) {
+	user := currentUser(c)
+	if !isSuperAdmin(user) {
+		forbidden(c, "仅超级管理员可永久删除")
+		return
+	}
+	objectType := strings.ToUpper(strings.TrimSpace(c.Param("type")))
+	id, okID := parseUint(c.Param("id"))
+	if !okID {
+		badRequest(c, "对象 ID 无效")
+		return
+	}
+	switch objectType {
+	case "PROJECT":
+		var project model.Project
+		if err := s.db.First(&project, id).Error; err != nil || project.DeletedAt == nil {
+			notFound(c, "回收站中的项目不存在")
+			return
+		}
+		if err := service.PurgeProject(s.db, project.ID); err != nil {
+			serverError(c, err)
+			return
+		}
+		s.writeAudit(c, &project.ID, "PROJECT_PURGE", "PROJECT", fmt.Sprint(project.ID), "SUCCESS",
+			map[string]any{"name": project.Name, "code": project.Code})
+		ok(c, gin.H{"purged": true, "type": "PROJECT", "id": project.ID})
+	case "AUDIT":
+		var audit model.Audit
+		if err := s.db.First(&audit, id).Error; err != nil || audit.DeletedAt == nil {
+			notFound(c, "回收站中的审核配置不存在")
+			return
+		}
+		if err := service.PurgeAudit(s.db, audit.ID); err != nil {
+			serverError(c, err)
+			return
+		}
+		s.writeAudit(c, &audit.ProjectID, "AUDIT_PURGE", "AUDIT", fmt.Sprint(audit.ID), "SUCCESS",
+			map[string]any{"name": audit.Name, "code": audit.Code})
+		ok(c, gin.H{"purged": true, "type": "AUDIT", "id": audit.ID})
+	default:
+		badRequest(c, "对象类型需为 PROJECT 或 AUDIT")
+	}
+}
+
 func (s *Server) listRecycleBin(c *gin.Context) {
 	user := currentUser(c)
-	if !canAdmin(user.Role) {
+	if !s.hasPermission(user.Role, "recycle:write") {
 		forbidden(c, "当前角色无权访问回收站")
 		return
 	}

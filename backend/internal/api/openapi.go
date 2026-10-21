@@ -71,6 +71,22 @@ func (s *Server) openSubmit(c *gin.Context) {
 		fail(c, http.StatusForbidden, "TRIGGER_DISABLED", "该审核配置未启用开放 API 触发", nil)
 		return
 	}
+	if project.OpenAPIRateLimit > 0 && s.redis != nil {
+		window := time.Now().Unix() / 60
+		key := fmt.Sprintf("sdv:rate:openapi:%d:%d", project.ID, window)
+		count, rateErr := s.redis.Incr(c.Request.Context(), key).Result()
+		if rateErr == nil {
+			if count == 1 {
+				_ = s.redis.Expire(c.Request.Context(), key, 70*time.Second).Err()
+			}
+			if count > int64(project.OpenAPIRateLimit) {
+				c.Header("Retry-After", "60")
+				fail(c, http.StatusTooManyRequests, "RATE_LIMITED",
+					fmt.Sprintf("开放 API 调用超过项目限制（%d 次/分钟）", project.OpenAPIRateLimit), nil)
+				return
+			}
+		}
+	}
 	var req openSubmitRequest
 	if err := json.Unmarshal(body, &req); err != nil {
 		fail(c, http.StatusBadRequest, "INVALID_PARAM", "请求体必须是合法 JSON", nil)

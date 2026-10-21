@@ -3,6 +3,7 @@ package media
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"image"
@@ -53,39 +54,49 @@ func NewFetcher(allowPrivate bool) *Fetcher {
 }
 
 func (f *Fetcher) FetchImage(ctx context.Context, rawURL string) (*PreparedImage, error) {
-	u, err := url.Parse(strings.TrimSpace(rawURL))
-	if err != nil {
-		return nil, fmt.Errorf("图片地址无效: %w", err)
-	}
-	if !f.AllowPrivate {
-		if err := validatePublicURL(u); err != nil {
+	rawURL = strings.TrimSpace(rawURL)
+	var data []byte
+	if strings.HasPrefix(rawURL, "data:") {
+		inline, err := decodeDataURL(rawURL)
+		if err != nil {
 			return nil, err
 		}
-	}
-	if u.Scheme != "http" && u.Scheme != "https" {
-		return nil, errors.New("仅支持 http/https 图片地址")
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Accept", "image/png,image/jpeg,image/*;q=0.8")
-	req.Header.Set("User-Agent", "SmartDoc-Vision/1.0")
-	resp, err := f.client().Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("下载图片失败: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("下载图片失败: HTTP %d", resp.StatusCode)
-	}
-	limited := io.LimitReader(resp.Body, maxDownloadBytes+1)
-	data, err := io.ReadAll(limited)
-	if err != nil {
-		return nil, err
-	}
-	if len(data) > maxDownloadBytes {
-		return nil, errors.New("图片超过 20MB 上限")
+		data = inline
+	} else {
+		u, err := url.Parse(rawURL)
+		if err != nil {
+			return nil, fmt.Errorf("图片地址无效: %w", err)
+		}
+		if !f.AllowPrivate {
+			if err := validatePublicURL(u); err != nil {
+				return nil, err
+			}
+		}
+		if u.Scheme != "http" && u.Scheme != "https" {
+			return nil, errors.New("仅支持 http/https 图片地址")
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Accept", "image/png,image/jpeg,image/*;q=0.8")
+		req.Header.Set("User-Agent", "SmartDoc-Vision/1.0")
+		resp, err := f.client().Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("下载图片失败: %w", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return nil, fmt.Errorf("下载图片失败: HTTP %d", resp.StatusCode)
+		}
+		limited := io.LimitReader(resp.Body, maxDownloadBytes+1)
+		data, err = io.ReadAll(limited)
+		if err != nil {
+			return nil, err
+		}
+		if len(data) > maxDownloadBytes {
+			return nil, errors.New("图片超过 20MB 上限")
+		}
 	}
 	img, format, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
@@ -115,6 +126,31 @@ func (f *Fetcher) FetchImage(ctx context.Context, rawURL string) (*PreparedImage
 		return nil, errors.New("处理后的图片超过平台 16MB 上限")
 	}
 	return &PreparedImage{Data: out.Bytes(), Format: format, Width: width, Height: height}, nil
+}
+
+// decodeDataURL accepts a base64-encoded image data URL produced by the
+// browser-side local uploader, so local files never have to be hosted publicly.
+func decodeDataURL(raw string) ([]byte, error) {
+	comma := strings.IndexByte(raw, ',')
+	if comma < 0 {
+		return nil, errors.New("图片 data URL 格式无效")
+	}
+	header := strings.ToLower(raw[:comma])
+	if !strings.Contains(header, ";base64") || !strings.HasPrefix(header, "data:image/") {
+		return nil, errors.New("仅支持 base64 编码的 PNG/JPEG data URL")
+	}
+	encoded := raw[comma+1:]
+	if len(encoded) > base64.StdEncoding.EncodedLen(maxDownloadBytes) {
+		return nil, errors.New("图片超过 20MB 上限")
+	}
+	data, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return nil, fmt.Errorf("图片 base64 解码失败: %w", err)
+	}
+	if len(data) > maxDownloadBytes {
+		return nil, errors.New("图片超过 20MB 上限")
+	}
+	return data, nil
 }
 
 func (f *Fetcher) client() *http.Client {

@@ -9,7 +9,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"smartdoc-vision/backend/internal/catalog"
 	"smartdoc-vision/backend/internal/model"
 	"smartdoc-vision/backend/internal/service"
 )
@@ -108,7 +107,7 @@ func (s *Server) getTask(c *gin.Context) {
 
 func (s *Server) submitTask(c *gin.Context) {
 	user := currentUser(c)
-	if !canManage(user.Role) {
+	if !s.hasPermission(user.Role, "task:submit") {
 		forbidden(c, "当前角色无权提交审核任务")
 		return
 	}
@@ -155,7 +154,7 @@ func (s *Server) submitTask(c *gin.Context) {
 
 func (s *Server) retryTask(c *gin.Context) {
 	user := currentUser(c)
-	if !canManage(user.Role) {
+	if !s.hasPermission(user.Role, "task:retry") {
 		forbidden(c, "当前角色无权重试任务")
 		return
 	}
@@ -173,7 +172,7 @@ func (s *Server) retryTask(c *gin.Context) {
 
 func (s *Server) batchRetryTasks(c *gin.Context) {
 	user := currentUser(c)
-	if !canManage(user.Role) {
+	if !s.hasPermission(user.Role, "task:retry") {
 		forbidden(c, "当前角色无权批量重试")
 		return
 	}
@@ -238,7 +237,7 @@ func (s *Server) resetForRetry(task *model.Task) error {
 
 func (s *Server) reviewTask(c *gin.Context) {
 	user := currentUser(c)
-	if !catalog.HasPermission(user.Role, "task:review") {
+	if !s.hasPermission(user.Role, "task:review") {
 		forbidden(c, "当前角色无权进行人工复核")
 		return
 	}
@@ -300,6 +299,7 @@ func (s *Server) reviewTask(c *gin.Context) {
 	s.writeAudit(c, &task.ProjectID, "TASK_REVIEW", "TASK", task.TaskNo, "SUCCESS", map[string]any{
 		"conclusion": req.Conclusion, "reason_code": req.ReasonCode, "remark": req.Remark,
 	})
+	s.engine.ExecuteRoutes(task.ID)
 	s.engine.RunCallback(task.ID)
 	ok(c, gin.H{"task_id": task.ID, "status": model.TaskSuccess, "result": req.Conclusion})
 }

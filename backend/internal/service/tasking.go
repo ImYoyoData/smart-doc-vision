@@ -133,6 +133,22 @@ func (s *TaskService) Submit(ctx context.Context, in SubmitInput) (*SubmitOutcom
 		}
 	}
 
+	if project.MaxTasksPerDay > 0 {
+		now := time.Now()
+		start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+		var used int64
+		_ = s.db.Model(&model.Task{}).
+			Where("project_id = ? AND created_at >= ?", project.ID, start).
+			Count(&used).Error
+		if used >= int64(project.MaxTasksPerDay) {
+			return nil, &SubmitError{
+				Status: http.StatusTooManyRequests, Code: "PROJECT_QUOTA_EXCEEDED",
+				Message: fmt.Sprintf("项目今日任务配额已用完（%d/%d），请明日再试", used, project.MaxTasksPerDay),
+				Data:    map[string]any{"used": used, "limit": project.MaxTasksPerDay},
+			}
+		}
+	}
+
 	task := model.Task{
 		TaskNo:     NewTaskNo(),
 		ProjectID:  in.ProjectID,

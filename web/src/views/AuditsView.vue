@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import dayjs from 'dayjs'
 import {
@@ -7,6 +7,7 @@ import {
   NDatePicker,
   NDrawer,
   NDrawerContent,
+  NSpin,
   NDropdown,
   NInput,
   NInputNumber,
@@ -18,6 +19,7 @@ import {
 import {
   AddOutline,
   CloudOutline,
+  ChatbubbleEllipsesOutline,
   CopyOutline,
   DownloadOutline,
   EllipsisHorizontalOutline,
@@ -36,7 +38,7 @@ import TaskSubmitModal from '@/components/TaskSubmitModal.vue'
 import AuditIntegrationDrawer from '@/components/AuditIntegrationDrawer.vue'
 import { auditApi, metaApi, providerApi } from '@/api'
 import { copyText } from '@/utils/clipboard'
-import type { Audit, AuditCategory, Provider, RuleTemplate, TriggerSource } from '@/api/types'
+import type { Audit, AuditAssistantConfig, AuditAssistantMessage, AuditCategory, Provider, RuleTemplate, TriggerSource } from '@/api/types'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { useAuthStore } from '@/stores/auth'
 
@@ -69,6 +71,18 @@ const decisionFilter = ref<string | null>(null)
 const exportShow = ref(false)
 const exportTarget = ref<Audit | null>(null)
 const exporting = ref(false)
+const assistantShow = ref(false)
+const assistantMode = ref<'create' | 'edit'>('create')
+const assistantMessages = ref<AuditAssistantMessage[]>([])
+const assistantInput = ref('')
+const assistantBusy = ref(false)
+const assistantError = ref('')
+const assistantProviderId = ref<number | null>(null)
+const assistantReadyConfig = ref<AuditAssistantConfig | null>(null)
+const assistantChat = ref<HTMLElement | null>(null)
+const hasGeneralProvider = computed(() =>
+  providers.value.some((p) => p.status === 'ACTIVE' && p.kind !== 'JEV'),
+)
 
 const defaultPrompt =
   '你是“智审图档”平台的档案图档审核专家。请依据档案管理规范、内容安全要求与审核要点，判断文档是否清晰完整、是否存在敏感或违规内容，以及印章、签名、日期等关键要素是否齐全。无法确认时返回 REVIEW。'
@@ -76,6 +90,11 @@ const defaultPrompt =
 const defaultClassifyPrompt = ref(
   '你是“智审图档”平台的档案分类专家。请根据文本、OCR 内容和图片版面，从配置的分类列表中选择唯一最匹配的类别，并给出 0~1 的置信度和判断依据。无法可靠判断时选择其他类别，不要臆测。',
 )
+const defaultRoutesText = JSON.stringify({
+  PASS: { exec_mode: 'sequential', on_error: 'continue', actions: [] },
+  REJECT: { exec_mode: 'sequential', on_error: 'continue', actions: [] },
+  REVIEW: { exec_mode: 'sequential', on_error: 'to_review', actions: [] },
+}, null, 2)
 
 const fallbackCategories: AuditCategory[] = [
   { code: 'contract', name: '合同协议', description: '合同、协议、补充条款、盖章的签约文件', result: 'PASS' },
@@ -95,7 +114,9 @@ const form = reactive({
   categories: [] as AuditCategory[],
   providerId: null as number | null,
   reviewPrompt: defaultPrompt,
-  strictness: 'standard',
+  rulesPreset: 'standard',
+  rulesText: '',
+  routesText: defaultRoutesText,
   defaultResult: 'REVIEW',
   onModelFail: 'REVIEW',
   dedupeWindowSec: 86400,
@@ -166,9 +187,9 @@ const filtered = computed(() => {
 })
 
 function providerKindLabel(kind?: string) {
-  if (kind === 'JEV') return 'JEV'
-  if (kind === 'ANTHROPIC') return 'Anthropic'
-  return '通用大模型'
+  if (kind === 'JEV') return 'JEV 决策模型'
+  if (kind === 'ANTHROPIC') return '通用大模型 · Anthropic 协议'
+  return '通用大模型 · OpenAI 协议'
 }
 
 const providerOptions = computed(() =>
@@ -186,12 +207,22 @@ const templateOptions = computed(() => [
     .map((t) => ({ label: `${t.name} · ${t.description}`, value: t.key })),
 ])
 
+function rulesTextForPreset(key: string) {
+  const template = templates.value.find((t) => t.key === key)
+  return JSON.stringify(template?.rules || [], null, 2)
+}
+
+function applyRulesPreset(key: string) {
+  form.rulesPreset = key
+  if (key !== 'keep') form.rulesText = rulesTextForPreset(key)
+}
+
 const activeCount = computed(() => audits.value.filter((a) => a.status === 'ACTIVE').length)
 const classifyCount = computed(() => audits.value.filter((a) => a.decision_mode === 'CLASSIFY').length)
 const todayCount = computed(() => audits.value.reduce((sum, a) => sum + (a.today_tasks || 0), 0))
 const selectedProvider = computed(() => providers.value.find((p) => p.id === form.providerId))
 const jevProviders = computed(() => providers.value.filter((p) => p.kind === 'JEV' && p.status === 'ACTIVE'))
-const selectedTemplate = computed(() => templates.value.find((t) => t.key === form.strictness))
+const selectedTemplate = computed(() => templates.value.find((t) => t.key === form.rulesPreset))
 const exportSummary = computed(() => {
   const target = exportForm.range
     ? `${dayjs(exportForm.range[0]).format('MM-DD')} 至 ${dayjs(exportForm.range[1]).format('MM-DD')}`
@@ -211,7 +242,9 @@ function resetForm() {
   form.categories = []
   form.providerId = providers.value.find((p) => p.status === 'ACTIVE')?.id || providers.value[0]?.id || null
   form.reviewPrompt = defaultPrompt
-  form.strictness = 'standard'
+  form.rulesPreset = 'standard'
+  form.rulesText = rulesTextForPreset('standard')
+  form.routesText = defaultRoutesText
   form.defaultResult = 'REVIEW'
   form.onModelFail = 'REVIEW'
   form.dedupeWindowSec = 86400
@@ -238,7 +271,9 @@ function openEdit(audit: Audit) {
   form.categories = (audit.categories || []).map((category) => ({ ...category }))
   form.providerId = audit.provider_id
   form.reviewPrompt = audit.review_prompt || defaultPrompt
-  form.strictness = 'keep'
+  form.rulesPreset = 'keep'
+  form.rulesText = JSON.stringify(audit.rules || [], null, 2)
+  form.routesText = JSON.stringify(audit.routes || JSON.parse(defaultRoutesText), null, 2)
   form.defaultResult = audit.default_result
   form.onModelFail = audit.on_model_fail
   form.dedupeWindowSec = audit.dedupe_window_sec
@@ -252,14 +287,16 @@ function setDecisionMode(value: string | number) {
   form.decisionMode = mode
   if (mode === 'CLASSIFY') {
     if (form.categories.length < 2) form.categories = exampleCategories.value.map((category) => ({ ...category }))
-    form.strictness = 'classify'
+    form.rulesPreset = 'classify'
+    form.rulesText = rulesTextForPreset('classify')
     if (!editing.value) {
       form.reviewPrompt = defaultClassifyPrompt.value
       if (jevProviders.value.length) form.providerId = jevProviders.value[0].id
     }
   } else {
     form.categories = []
-    form.strictness = 'standard'
+    form.rulesPreset = 'standard'
+    form.rulesText = rulesTextForPreset('standard')
     if (!editing.value) form.reviewPrompt = defaultPrompt
   }
 }
@@ -424,26 +461,42 @@ async function load() {
   }
 }
 
-async function save() {
+async function save(): Promise<boolean> {
   errorText.value = ''
   if (!form.name.trim() || (!editing.value && !form.code.trim())) {
     errorText.value = '请填写审核名称与编码'
-    return
+    return false
   }
   if (!form.providerId) {
     errorText.value = '请选择模型供应商'
-    return
+    return false
   }
   if (!form.mediaTypes.length) {
     errorText.value = '至少选择一种媒体类型'
-    return
+    return false
   }
   if (form.decisionMode === 'CLASSIFY') {
     const error = validateCategoryForm()
     if (error) {
       errorText.value = error
-      return
+      return false
     }
+  }
+  let rules: unknown
+  let routes: unknown
+  try {
+    rules = JSON.parse(form.rulesText)
+    if (!Array.isArray(rules)) throw new Error('规则组 JSON 必须是数组')
+  } catch (error) {
+    errorText.value = error instanceof Error ? `规则组 JSON 无效：${error.message}` : '规则组 JSON 无效'
+    return false
+  }
+  try {
+    routes = JSON.parse(form.routesText)
+    if (!routes || typeof routes !== 'object' || Array.isArray(routes)) throw new Error('结果动作路由 JSON 必须是对象')
+  } catch (error) {
+    errorText.value = error instanceof Error ? `结果动作路由 JSON 无效：${error.message}` : '结果动作路由 JSON 无效'
+    return false
   }
   const categories = form.categories.map((category) => ({
     code: category.code.trim(),
@@ -464,9 +517,10 @@ async function save() {
     default_result: form.defaultResult,
     on_model_fail: form.onModelFail,
     dedupe_window_sec: form.dedupeWindowSec,
+    rules,
+    routes,
     status: editing.value?.status === 'DRAFT' ? 'DRAFT' : 'ACTIVE',
   }
-  if (form.strictness && form.strictness !== 'keep') payload.strictness = form.strictness
   saving.value = true
   try {
     if (editing.value) {
@@ -484,10 +538,163 @@ async function save() {
     }
   } catch (error) {
     errorText.value = error instanceof Error ? error.message : '保存失败'
+    return false
   } finally {
     saving.value = false
   }
+  return true
 }
+
+function startAssistant(mode: 'create' | 'edit', audit?: Audit) {
+  if (!workspace.currentProjectId) {
+    message.warning('请先选择项目')
+    return
+  }
+  if (!hasGeneralProvider.value) {
+    message.warning('AI 配置助手需要项目中至少有一个启用的通用大模型（OpenAI 兼容或 Anthropic 协议）')
+    return
+  }
+  const general = providers.value.find((p) => p.status === 'ACTIVE' && p.kind !== 'JEV')
+  assistantProviderId.value = general?.id || null
+  assistantMode.value = mode
+  assistantReadyConfig.value = null
+  assistantError.value = ''
+  assistantInput.value = ''
+  if (mode === 'create') {
+    resetForm()
+    editing.value = null
+    if (assistantProviderId.value) form.providerId = assistantProviderId.value
+  } else if (audit) {
+    openEdit(audit)
+    modalShow.value = false
+  }
+  assistantMessages.value = [{
+    role: 'assistant',
+    content: mode === 'create'
+      ? '你好，我是审核配置助手。请告诉我：这次要审核什么类型的档案？哪些情况必须驳回？是否需要按类别分类？我会根据你的回答逐步确认并直接生成配置。'
+      : '你好，我会在当前审核配置的基础上按你的要求调整。请说明要修改的内容，例如审核重点、分类映射、人工复核策略等。',
+  }]
+  assistantShow.value = true
+}
+
+function buildAssistantCurrentConfig() {
+  let rules: unknown = []
+  let routes: unknown = null
+  try {
+    rules = JSON.parse(form.rulesText)
+  } catch {
+    rules = []
+  }
+  try {
+    routes = JSON.parse(form.routesText)
+  } catch {
+    routes = null
+  }
+  return {
+    name: form.name,
+    code: form.code,
+    description: form.description,
+    media_types: form.mediaTypes,
+    decision_mode: form.decisionMode,
+    categories: form.categories,
+    review_prompt: form.reviewPrompt,
+    rules,
+    routes,
+    default_result: form.defaultResult,
+    on_model_fail: form.onModelFail,
+    dedupe_window_sec: form.dedupeWindowSec,
+  }
+}
+
+async function scrollAssistantToBottom() {
+  await nextTick()
+  if (assistantChat.value) {
+    assistantChat.value.scrollTop = assistantChat.value.scrollHeight
+  }
+}
+
+function applyAssistantDraft(config: AuditAssistantConfig) {
+  form.name = config.name || form.name
+  form.code = editing.value?.code || config.code || form.code
+  form.description = config.description || ''
+  form.mediaTypes = (config.media_types || ['text', 'image']).filter((type) => type === 'text' || type === 'image')
+  if (!form.mediaTypes.length) form.mediaTypes = ['text', 'image']
+  form.decisionMode = config.decision_mode === 'CLASSIFY' ? 'CLASSIFY' : 'REVIEW'
+  form.categories = (config.categories || []).map((category) => ({ ...category }))
+  if (editing.value) {
+    form.providerId = editing.value.provider_id
+  } else if (config.provider_id) {
+    form.providerId = config.provider_id
+  }
+  form.reviewPrompt = config.review_prompt || form.reviewPrompt
+  form.rulesPreset = form.decisionMode === 'CLASSIFY' ? 'classify' : 'standard'
+  form.rulesText = JSON.stringify(config.rules || [], null, 2)
+  form.routesText = JSON.stringify(config.routes || JSON.parse(defaultRoutesText), null, 2)
+  form.defaultResult = config.default_result || 'REVIEW'
+  form.onModelFail = config.on_model_fail || 'REVIEW'
+  form.dedupeWindowSec = config.dedupe_window_sec || 86400
+}
+
+async function applyAssistantConfig(config: AuditAssistantConfig) {
+  assistantReadyConfig.value = config
+  applyAssistantDraft(config)
+  await scrollAssistantToBottom()
+  const saved = await save()
+  if (saved) {
+    assistantShow.value = false
+    assistantMessages.value = []
+  } else {
+    assistantError.value = errorText.value || '已应用配置，但保存失败，请检查表单后手动保存'
+    modalShow.value = true
+  }
+}
+
+function handleAssistantKeydown(event: KeyboardEvent) {
+  if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return
+  event.preventDefault()
+  void sendAssistant()
+}
+
+async function sendAssistant() {
+  const text = assistantInput.value.trim()
+  if (!text || assistantBusy.value) return
+  if (!assistantProviderId.value) {
+    assistantError.value = '没有可用的通用大模型，请先到「模型接入」启用一个通用大模型'
+    return
+  }
+  assistantInput.value = ''
+  assistantError.value = ''
+  assistantMessages.value.push({ role: 'user', content: text })
+  await scrollAssistantToBottom()
+  assistantBusy.value = true
+  try {
+    const result = await auditApi.assistant({
+      project_id: workspace.currentProjectId,
+      audit_id: editing.value?.id || 0,
+      provider_id: assistantProviderId.value,
+      messages: assistantMessages.value,
+      current_config: buildAssistantCurrentConfig(),
+    })
+    assistantMessages.value.push({ role: 'assistant', content: result.reply })
+    await scrollAssistantToBottom()
+    if (result.ready && result.config) {
+      await applyAssistantConfig(result.config)
+    }
+  } catch (error) {
+    assistantError.value = error instanceof Error ? error.message : 'AI 配置助手请求失败'
+  } finally {
+    assistantBusy.value = false
+    await scrollAssistantToBottom()
+  }
+}
+
+function closeAssistant() {
+  if (assistantBusy.value || saving.value) return
+  assistantShow.value = false
+  assistantMessages.value = []
+  assistantReadyConfig.value = null
+}
+
 
 async function toggleStatus(audit: Audit) {
   const next = audit.status === 'ACTIVE' ? 'PAUSED' : 'ACTIVE'
@@ -613,6 +820,16 @@ onMounted(async () => {
       <template #actions>
         <n-button quaternary circle :loading="loading" @click="load">
           <template #icon><RefreshOutline /></template>
+        </n-button>
+        <n-button
+          v-if="auth.can('audit:write')"
+          secondary
+          :disabled="!hasGeneralProvider"
+          :title="hasGeneralProvider ? '通过对话生成审核配置' : '请先在模型接入中配置并启用通用大模型'"
+          @click="startAssistant('create')"
+        >
+          <template #icon><SparklesOutline /></template>
+          AI 创建配置
         </n-button>
         <n-button v-if="auth.can('audit:write')" type="primary" @click="openCreate">
           <template #icon><AddOutline /></template>
@@ -858,17 +1075,44 @@ onMounted(async () => {
                 <span>{{ form.decisionMode === 'CLASSIFY' ? '按分类映射结论，并对低置信度的通过结果转人工。' : '决定模型输出后的 PASS / REJECT / REVIEW 阈值。' }}仅支持多文本/多图片，不支持视频。</span>
               </div>
               <n-select
-                v-model:value="form.strictness"
+                :value="form.rulesPreset"
                 :options="templateOptions"
                 size="small"
                 style="width: 190px"
+                @update:value="applyRulesPreset"
               />
             </div>
             <div class="template-desc">
-              <template v-for="t in templates" :key="t.key">
-                <span v-if="form.strictness === t.key">{{ t.description }}</span>
-              </template>
-              <span v-if="form.strictness === 'keep'">保持当前已有规则，不会覆盖自定义条件。</span>
+              <span v-if="selectedTemplate">{{ selectedTemplate.description }}</span>
+              <span v-else-if="form.rulesPreset === 'keep'">保持当前已有规则，不会覆盖自定义条件。</span>
+            </div>
+            <div class="json-editor-grid">
+              <div class="field">
+                <label>规则组 JSON <span>条件按优先级执行，未命中时使用默认结论</span></label>
+                <n-input
+                  v-model:value="form.rulesText"
+                  type="textarea"
+                  :autosize="{ minRows: 6, maxRows: 14 }"
+                  class="code-input"
+                  spellcheck="false"
+                  placeholder='[{"name":"高风险驳回","priority":10,"logic":"OR","enabled":true,"conditions":[...],"result":"REJECT"}]'
+                />
+              </div>
+              <div class="field">
+                <label>结果动作路由 JSON <span>结果落库前执行 HTTP / Redis / MySQL 动作</span></label>
+                <n-input
+                  v-model:value="form.routesText"
+                  type="textarea"
+                  :autosize="{ minRows: 6, maxRows: 14 }"
+                  class="code-input"
+                  spellcheck="false"
+                  placeholder='{"PASS":{"exec_mode":"sequential","on_error":"continue","actions":[]}}'
+                />
+                <div class="form-hint">
+                  动作支持 http（不得访问内网）、redis（publish / set / xadd）、mysql（经 dsn_env 读取 DSN）。
+                  on_error 可选 continue / stop / to_review，支持 ${task_no}、${result}、${score} 等变量。
+                </div>
+              </div>
             </div>
           </div>
           <div class="three-col">
@@ -907,8 +1151,64 @@ onMounted(async () => {
           <div v-if="errorText" class="modal-error">{{ errorText }}</div>
         </div>
         <div class="modal-footer">
+          <n-button v-if="editing && auth.can('audit:write')" secondary :disabled="!hasGeneralProvider" @click="startAssistant('edit', editing)">
+            <template #icon><SparklesOutline /></template>
+            AI 帮我修改
+          </n-button>
           <n-button :disabled="saving" @click="modalShow = false">取消</n-button>
           <n-button v-if="auth.can('audit:write')" type="primary" :loading="saving" @click="save">{{ editing ? '保存修改' : '创建并查看接入方式' }}</n-button>
+        </div>
+      </div>
+    </n-modal>
+
+    <n-modal :show="assistantShow" :mask-closable="!assistantBusy && !saving" @update:show="(value: boolean) => { if (!value) closeAssistant() }">
+      <div class="assistant-modal">
+        <div class="modal-head assistant-head">
+          <div>
+            <div class="modal-kicker">AI CONFIG ASSISTANT</div>
+            <h2>{{ assistantMode === 'edit' ? 'AI 帮我修改审核配置' : 'AI 帮我创建审核配置' }}</h2>
+            <p>通用大模型会先向你提问，信息足够后自动生成并保存配置。</p>
+          </div>
+          <span class="modal-icon"><ChatbubbleEllipsesOutline /></span>
+        </div>
+        <div ref="assistantChat" class="assistant-chat">
+          <div
+            v-for="(item, index) in assistantMessages"
+            :key="index"
+            class="assistant-message"
+            :class="item.role"
+          >
+            <span class="assistant-avatar">{{ item.role === 'user' ? '我' : 'AI' }}</span>
+            <div class="assistant-bubble">{{ item.content }}</div>
+          </div>
+          <div v-if="assistantBusy" class="assistant-message assistant">
+            <span class="assistant-avatar">AI</span>
+            <div class="assistant-bubble assistant-thinking"><n-spin size="small" /> 正在理解并生成配置，请稍候…</div>
+          </div>
+          <div v-if="assistantReadyConfig" class="assistant-ready">
+            <strong>配置已生成并{{ assistantMode === 'edit' ? '更新' : '创建' }}：{{ assistantReadyConfig.name }}</strong>
+            <span>{{ assistantReadyConfig.decision_mode === 'CLASSIFY' ? '分类审核' : '合规审核' }} · {{ assistantReadyConfig.categories.length }} 个分类 · {{ assistantReadyConfig.media_types.join(' + ') }}</span>
+          </div>
+        </div>
+        <div class="assistant-composer">
+          <n-input
+            v-model:value="assistantInput"
+            type="textarea"
+            :autosize="{ minRows: 2, maxRows: 5 }"
+            :disabled="assistantBusy || saving"
+            placeholder="回答 AI 的问题，或直接说「按你的建议生成」；Enter 发送，Shift+Enter 换行"
+            :input-props="{ onKeydown: handleAssistantKeydown }"
+          />
+          <div class="assistant-actions">
+            <span class="assistant-note">
+              {{ hasGeneralProvider ? '使用项目内启用的通用大模型，不会调用 JEV' : '需要先配置通用大模型' }}
+            </span>
+            <n-button :disabled="assistantBusy || saving" @click="closeAssistant">关闭</n-button>
+            <n-button type="primary" :loading="assistantBusy || saving" :disabled="!assistantInput.trim()" @click="sendAssistant">
+              发送
+            </n-button>
+          </div>
+          <div v-if="assistantError" class="modal-error">{{ assistantError }}</div>
         </div>
       </div>
     </n-modal>
@@ -1457,6 +1757,32 @@ onMounted(async () => {
   font-size: 10px;
 }
 
+.json-editor-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.json-editor-grid .field label span {
+  margin-left: 6px;
+  color: var(--muted-light);
+  font-size: 9px;
+  font-weight: 400;
+}
+
+.code-input :deep(textarea) {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  line-height: 1.55;
+}
+
+@media (max-width: 900px) {
+  .json-editor-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .create-hint {
   display: flex;
   align-items: flex-start;
@@ -1485,6 +1811,129 @@ onMounted(async () => {
   background: #fef2f2;
   color: #b91c1c;
   font-size: 11px;
+}
+
+.assistant-modal {
+  display: flex;
+  width: min(720px, calc(100vw - 30px));
+  max-height: min(820px, calc(100vh - 36px));
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 30px 80px -20px rgba(15, 23, 42, 0.35);
+}
+
+.assistant-head {
+  flex-shrink: 0;
+}
+
+.assistant-chat {
+  display: flex;
+  min-height: 260px;
+  flex: 1;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  padding: 18px 20px;
+  background: #f8fafd;
+}
+
+.assistant-message {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.assistant-message.user {
+  flex-direction: row-reverse;
+}
+
+.assistant-avatar {
+  display: flex;
+  width: 26px;
+  height: 26px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: #e8eefb;
+  color: #2854a8;
+  font-family: var(--mono);
+  font-size: 8px;
+  flex-shrink: 0;
+}
+
+.assistant-message.user .assistant-avatar {
+  background: #e7f7ed;
+  color: #18794e;
+}
+
+.assistant-bubble {
+  max-width: 78%;
+  padding: 9px 12px;
+  border: 1px solid #e8eef7;
+  border-radius: 4px 12px 12px;
+  background: #fff;
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1.75;
+  white-space: pre-wrap;
+}
+
+.assistant-message.user .assistant-bubble {
+  border-color: #d9e8ff;
+  border-radius: 12px 4px 12px 12px;
+  background: #f2f7ff;
+}
+
+.assistant-thinking {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+}
+
+.assistant-ready {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid #cdebd9;
+  border-radius: 9px;
+  background: #f2fcf6;
+}
+
+.assistant-ready strong {
+  color: #166534;
+  font-size: 11px;
+}
+
+.assistant-ready span {
+  color: #4b7a5c;
+  font-size: 9.5px;
+}
+
+.assistant-composer {
+  flex-shrink: 0;
+  padding: 12px 16px 16px;
+  border-top: 1px solid #eef2f8;
+}
+
+.assistant-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.assistant-note {
+  flex: 1;
+  color: var(--muted-light);
+  font-size: 9px;
+}
+
+.assistant-composer .modal-error {
+  margin-top: 8px;
 }
 
 .modal-footer {
@@ -1987,12 +2436,258 @@ onMounted(async () => {
 
   .modal-head,
   .modal-body,
-  .modal-footer {
+  .assistant-modal {
+  display: flex;
+  width: min(720px, calc(100vw - 30px));
+  max-height: min(820px, calc(100vh - 36px));
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 30px 80px -20px rgba(15, 23, 42, 0.35);
+}
+
+.assistant-head {
+  flex-shrink: 0;
+}
+
+.assistant-chat {
+  display: flex;
+  min-height: 260px;
+  flex: 1;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  padding: 18px 20px;
+  background: #f8fafd;
+}
+
+.assistant-message {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.assistant-message.user {
+  flex-direction: row-reverse;
+}
+
+.assistant-avatar {
+  display: flex;
+  width: 26px;
+  height: 26px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: #e8eefb;
+  color: #2854a8;
+  font-family: var(--mono);
+  font-size: 8px;
+  flex-shrink: 0;
+}
+
+.assistant-message.user .assistant-avatar {
+  background: #e7f7ed;
+  color: #18794e;
+}
+
+.assistant-bubble {
+  max-width: 78%;
+  padding: 9px 12px;
+  border: 1px solid #e8eef7;
+  border-radius: 4px 12px 12px;
+  background: #fff;
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1.75;
+  white-space: pre-wrap;
+}
+
+.assistant-message.user .assistant-bubble {
+  border-color: #d9e8ff;
+  border-radius: 12px 4px 12px 12px;
+  background: #f2f7ff;
+}
+
+.assistant-thinking {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+}
+
+.assistant-ready {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid #cdebd9;
+  border-radius: 9px;
+  background: #f2fcf6;
+}
+
+.assistant-ready strong {
+  color: #166534;
+  font-size: 11px;
+}
+
+.assistant-ready span {
+  color: #4b7a5c;
+  font-size: 9.5px;
+}
+
+.assistant-composer {
+  flex-shrink: 0;
+  padding: 12px 16px 16px;
+  border-top: 1px solid #eef2f8;
+}
+
+.assistant-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.assistant-note {
+  flex: 1;
+  color: var(--muted-light);
+  font-size: 9px;
+}
+
+.assistant-composer .modal-error {
+  margin-top: 8px;
+}
+
+.modal-footer {
     padding-left: 18px;
     padding-right: 18px;
   }
 
-  .modal-footer {
+  .assistant-modal {
+  display: flex;
+  width: min(720px, calc(100vw - 30px));
+  max-height: min(820px, calc(100vh - 36px));
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 30px 80px -20px rgba(15, 23, 42, 0.35);
+}
+
+.assistant-head {
+  flex-shrink: 0;
+}
+
+.assistant-chat {
+  display: flex;
+  min-height: 260px;
+  flex: 1;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  padding: 18px 20px;
+  background: #f8fafd;
+}
+
+.assistant-message {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.assistant-message.user {
+  flex-direction: row-reverse;
+}
+
+.assistant-avatar {
+  display: flex;
+  width: 26px;
+  height: 26px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: #e8eefb;
+  color: #2854a8;
+  font-family: var(--mono);
+  font-size: 8px;
+  flex-shrink: 0;
+}
+
+.assistant-message.user .assistant-avatar {
+  background: #e7f7ed;
+  color: #18794e;
+}
+
+.assistant-bubble {
+  max-width: 78%;
+  padding: 9px 12px;
+  border: 1px solid #e8eef7;
+  border-radius: 4px 12px 12px;
+  background: #fff;
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1.75;
+  white-space: pre-wrap;
+}
+
+.assistant-message.user .assistant-bubble {
+  border-color: #d9e8ff;
+  border-radius: 12px 4px 12px 12px;
+  background: #f2f7ff;
+}
+
+.assistant-thinking {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+}
+
+.assistant-ready {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid #cdebd9;
+  border-radius: 9px;
+  background: #f2fcf6;
+}
+
+.assistant-ready strong {
+  color: #166534;
+  font-size: 11px;
+}
+
+.assistant-ready span {
+  color: #4b7a5c;
+  font-size: 9.5px;
+}
+
+.assistant-composer {
+  flex-shrink: 0;
+  padding: 12px 16px 16px;
+  border-top: 1px solid #eef2f8;
+}
+
+.assistant-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.assistant-note {
+  flex: 1;
+  color: var(--muted-light);
+  font-size: 9px;
+}
+
+.assistant-composer .modal-error {
+  margin-top: 8px;
+}
+
+.modal-footer {
     flex-wrap: wrap;
   }
 

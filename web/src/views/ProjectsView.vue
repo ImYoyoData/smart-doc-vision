@@ -54,6 +54,8 @@ const form = reactive({
   env: 'dev',
   description: '',
   retentionDays: 30,
+  maxTasksPerDay: 0,
+  openapiRateLimit: 120,
 })
 
 const filtered = computed(() => {
@@ -74,7 +76,15 @@ const stats = computed(() => ({
 
 function openCreate() {
   editing.value = null
-  Object.assign(form, { name: '', code: '', env: 'dev', description: '', retentionDays: 30 })
+  Object.assign(form, {
+    name: '',
+    code: '',
+    env: 'dev',
+    description: '',
+    retentionDays: 30,
+    maxTasksPerDay: 0,
+    openapiRateLimit: 120,
+  })
   errorText.value = ''
   modalShow.value = true
 }
@@ -87,6 +97,8 @@ function openEdit(project: Project) {
     env: project.env,
     description: project.description || '',
     retentionDays: project.retention_days || 30,
+    maxTasksPerDay: project.max_tasks_per_day || 0,
+    openapiRateLimit: project.openapi_rate_limit ?? 120,
   })
   errorText.value = ''
   modalShow.value = true
@@ -121,6 +133,8 @@ async function save() {
         env: form.env,
         description: form.description,
         retention_days: form.retentionDays,
+        max_tasks_per_day: form.maxTasksPerDay,
+        openapi_rate_limit: form.openapiRateLimit,
       })
       message.success('项目已更新')
     } else {
@@ -130,6 +144,8 @@ async function save() {
         env: form.env,
         description: form.description,
         retention_days: form.retentionDays,
+        max_tasks_per_day: form.maxTasksPerDay,
+        openapi_rate_limit: form.openapiRateLimit,
       })
       message.success('项目创建成功')
       workspace.setCurrentProject(created.id)
@@ -371,10 +387,22 @@ onMounted(load)
               show-count
             />
           </div>
+          <div class="two-col">
+            <div class="field">
+              <label>回收站保留天数</label>
+              <n-input-number v-model:value="form.retentionDays" :min="7" :max="365" style="width: 100%" />
+              <div class="form-hint">删除后的项目与审核配置将在回收站保留该天数。</div>
+            </div>
+            <div class="field">
+              <label>每日任务配额</label>
+              <n-input-number v-model:value="form.maxTasksPerDay" :min="0" :max="100000" style="width: 100%" />
+              <div class="form-hint">0 表示不限制；所有触发来源合计计算。</div>
+            </div>
+          </div>
           <div class="field">
-            <label>回收站保留天数</label>
-            <n-input-number v-model:value="form.retentionDays" :min="7" :max="365" style="width: 160px" />
-            <div class="form-hint">删除后的项目与审核配置将在回收站保留该天数。</div>
+            <label>开放 API 限流（次/分钟）</label>
+            <n-input-number v-model:value="form.openapiRateLimit" :min="0" :max="10000" style="width: 160px" />
+            <div class="form-hint">0 表示不限制；仅限制开放 API 提交，Redis/WebSocket/轮询不受此限。</div>
           </div>
           <div v-if="form.env === 'prod'" class="prod-warning">
             <span></span>

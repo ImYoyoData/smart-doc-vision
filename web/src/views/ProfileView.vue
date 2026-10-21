@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { NButton, NInput, useMessage } from 'naive-ui'
 import {
@@ -11,6 +11,7 @@ import {
 } from '@vicons/ionicons5'
 import PageHeader from '@/components/PageHeader.vue'
 import { authApi } from '@/api'
+import type { MFASetup } from '@/api/types'
 import { useAuthStore } from '@/stores/auth'
 import { useWorkspaceStore } from '@/stores/workspace'
 
@@ -21,6 +22,88 @@ const message = useMessage()
 const saving = ref(false)
 const form = reactive({ old: '', next: '', confirm: '' })
 const errorText = ref('')
+const mfaEnabled = ref(Boolean(auth.user?.mfa_enabled))
+const mfaSetupData = ref<MFASetup | null>(null)
+const mfaCode = ref('')
+const mfaPassword = ref('')
+const mfaConfirmCode = ref('')
+const mfaError = ref('')
+const mfaBusy = ref(false)
+
+onMounted(async () => {
+  try {
+    const status = await authApi.mfaStatus()
+    mfaEnabled.value = status.enabled
+    if (auth.user) auth.user.mfa_enabled = status.enabled
+  } catch {
+    // status is non-critical for the rest of the profile page
+  }
+})
+
+async function startMFASetup() {
+  mfaError.value = ''
+  mfaBusy.value = true
+  try {
+    mfaSetupData.value = await authApi.mfaSetup()
+    mfaCode.value = ''
+  } catch (error) {
+    mfaError.value = error instanceof Error ? error.message : '生成动态验证码密钥失败'
+  } finally {
+    mfaBusy.value = false
+  }
+}
+
+async function enableMFA() {
+  mfaError.value = ''
+  if (!/^\d{6}$/.test(mfaCode.value.trim())) {
+    mfaError.value = '请输入 6 位动态验证码'
+    return
+  }
+  mfaBusy.value = true
+  try {
+    await authApi.mfaEnable(mfaCode.value.trim())
+    mfaEnabled.value = true
+    mfaSetupData.value = null
+    mfaCode.value = ''
+    if (auth.user) auth.user.mfa_enabled = true
+    message.success('动态验证码已启用，下次登录需要二次验证')
+  } catch (error) {
+    mfaError.value = error instanceof Error ? error.message : '启用失败'
+  } finally {
+    mfaBusy.value = false
+  }
+}
+
+async function disableMFA() {
+  mfaError.value = ''
+  if (!mfaPassword.value || !/^\d{6}$/.test(mfaConfirmCode.value.trim())) {
+    mfaError.value = '请输入登录密码和 6 位动态验证码'
+    return
+  }
+  mfaBusy.value = true
+  try {
+    await authApi.mfaDisable(mfaPassword.value, mfaConfirmCode.value.trim())
+    mfaEnabled.value = false
+    mfaPassword.value = ''
+    mfaConfirmCode.value = ''
+    if (auth.user) auth.user.mfa_enabled = false
+    message.success('动态验证码已关闭')
+  } catch (error) {
+    mfaError.value = error instanceof Error ? error.message : '关闭失败'
+  } finally {
+    mfaBusy.value = false
+  }
+}
+
+async function copyMFASecret() {
+  if (!mfaSetupData.value) return
+  try {
+    await navigator.clipboard.writeText(mfaSetupData.value.secret)
+    message.success('密钥已复制')
+  } catch {
+    message.warning('浏览器禁止读取剪贴板，请手动选择复制')
+  }
+}
 
 const scopedProjects = computed(() => {
   if (!auth.user) return []
@@ -49,7 +132,9 @@ async function changePassword() {
     form.old = ''
     form.next = ''
     form.confirm = ''
-    message.success('密码已修改')
+    message.success('密码已修改，请重新登录')
+    auth.clear()
+    router.replace('/login')
   } catch (error) {
     errorText.value = error instanceof Error ? error.message : '修改失败'
   } finally {
@@ -109,6 +194,46 @@ async function logout() {
         </form>
       </section>
     </div>
+
+    <section class="panel mfa-panel">
+      <div class="panel-head">
+        <div>
+          <h3 class="panel-title">两步验证（TOTP）</h3>
+          <p class="panel-subtitle">启用后登录需要输入身份验证器生成的 6 位动态验证码；丢失验证器可联系超级管理员重置。</p>
+        </div>
+        <span class="mfa-status" :class="{ on: mfaEnabled }">{{ mfaEnabled ? '已启用' : '未启用' }}</span>
+      </div>
+
+      <div v-if="mfaEnabled" class="mfa-body">
+        <p class="mfa-copy">关闭后该账号仅凭密码登录。为确认是本人操作，需要同时验证当前密码和动态验证码。</p>
+        <form class="mfa-form" @submit.prevent="disableMFA">
+          <n-input v-model:value="mfaPassword" type="password" show-password-on="click" placeholder="当前登录密码" />
+          <n-input v-model:value="mfaConfirmCode" maxlength="6" placeholder="6 位动态验证码" :input-props="{ inputmode: 'numeric' }" />
+          <n-button type="warning" secondary :loading="mfaBusy" attr-type="submit">关闭两步验证</n-button>
+        </form>
+      </div>
+
+      <div v-else class="mfa-body">
+        <template v-if="!mfaSetupData">
+          <p class="mfa-copy">使用 Google Authenticator、Microsoft Authenticator、1Password 等应用扫描或导入密钥，为账号增加一层保护。</p>
+          <n-button type="primary" secondary :loading="mfaBusy" @click="startMFASetup">生成绑定密钥</n-button>
+        </template>
+        <template v-else>
+          <div class="mfa-secret-box">
+            <span>手动密钥</span>
+            <strong class="mono">{{ mfaSetupData.secret }}</strong>
+            <n-button size="tiny" quaternary @click="copyMFASecret">复制密钥</n-button>
+          </div>
+          <div class="mfa-uri mono">{{ mfaSetupData.otpauth_url }}</div>
+          <div class="mfa-form">
+            <n-input v-model:value="mfaCode" maxlength="6" placeholder="输入验证器上的 6 位验证码" :input-props="{ inputmode: 'numeric', autocomplete: 'one-time-code' }" @keyup.enter="enableMFA" />
+            <n-button type="primary" :loading="mfaBusy" @click="enableMFA">验证并启用</n-button>
+            <n-button quaternary :disabled="mfaBusy" @click="mfaSetupData = null">取消</n-button>
+          </div>
+        </template>
+      </div>
+      <div v-if="mfaError" class="form-error mfa-error">{{ mfaError }}</div>
+    </section>
 
     <section class="panel account-note">
       <ShieldCheckmarkOutline />
@@ -275,6 +400,80 @@ async function logout() {
 
 .password-actions {
   padding-top: 2px;
+}
+
+.mfa-panel {
+  margin-top: 14px;
+}
+
+.mfa-status {
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #64748b;
+  font-size: 9.5px;
+}
+
+.mfa-status.on {
+  background: #e9f9ef;
+  color: #15803d;
+}
+
+.mfa-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px 18px 18px;
+}
+
+.mfa-copy {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10.5px;
+  line-height: 1.7;
+}
+
+.mfa-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.mfa-form :deep(.n-input) {
+  width: 210px;
+}
+
+.mfa-secret-box {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 12px;
+  border: 1px solid #e4ecf8;
+  border-radius: 9px;
+  background: #f8fbff;
+}
+
+.mfa-secret-box span {
+  color: var(--muted);
+  font-size: 9.5px;
+}
+
+.mfa-secret-box strong {
+  color: #1e4b9e;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+}
+
+.mfa-uri {
+  overflow-wrap: anywhere;
+  color: var(--muted-light);
+  font-size: 9px;
+}
+
+.mfa-error {
+  margin: 0 18px 16px;
 }
 
 .account-note {

@@ -65,9 +65,9 @@ const baseUrlHint = computed(() => {
 })
 
 function providerKindLabel(kind?: string) {
-  if (kind === 'JEV') return 'JEV'
-  if (kind === 'ANTHROPIC') return 'Anthropic'
-  return '通用大模型'
+  if (kind === 'JEV') return 'JEV 决策模型'
+  if (kind === 'ANTHROPIC') return '通用大模型 · Anthropic 协议'
+  return '通用大模型 · OpenAI 协议'
 }
 
 function resetForm() {
@@ -284,7 +284,7 @@ onMounted(load)
     <PageHeader
       eyebrow="MODEL GATEWAY"
       title="模型接入"
-      subtitle="统一管理 OpenAI 兼容、Anthropic Claude 与 JEV 决策模型，为审核流程提供可切换、可审计的推理能力。"
+      subtitle="统一管理通用大模型（OpenAI 兼容 / Anthropic 协议）与 JEV 决策模型，为审核流程提供可切换、可审计的推理能力。"
     >
       <template #actions>
         <n-button quaternary circle :loading="loading" @click="load">
@@ -301,7 +301,7 @@ onMounted(load)
       <div class="mode-card generic">
         <span class="mode-icon"><CloudOutline /></span>
         <div>
-          <div class="mode-title">通用大模型 <span>OpenAI 兼容协议</span></div>
+          <div class="mode-title">通用大模型 <span>OpenAI 协议 · Chat Completions</span></div>
           <p>适合文本审核、文档语义分析与多模态视觉模型。按模型能力决定是否开启图片理解。</p>
         </div>
         <span class="mode-badge">CHAT COMPLETIONS</span>
@@ -309,7 +309,7 @@ onMounted(load)
       <div class="mode-card anthropic">
         <span class="mode-icon"><LinkOutline /></span>
         <div>
-          <div class="mode-title">Anthropic Claude <span>Messages API</span></div>
+          <div class="mode-title">通用大模型 <span>Anthropic 协议 · Messages API</span></div>
           <p>原生兼容 Claude 的 /v1/messages 协议，文本与 base64 图片块一起提交，适合多模态审核。</p>
         </div>
         <span class="mode-badge">/v1/messages</span>
@@ -427,7 +427,7 @@ onMounted(load)
       <EmptyState
         v-if="!loading && providers.length === 0"
         title="还没有模型接入"
-        description="接入 OpenAI 兼容、Anthropic Claude 或 JEV 决策模型，AI 审核流程才能运行。"
+        description="接入通用大模型（OpenAI 兼容 / Anthropic 协议）或 JEV 决策模型，AI 审核流程才能运行。"
         action="新增模型接入"
         @action="openCreate"
       />
@@ -454,8 +454,8 @@ onMounted(load)
             >
               <span class="kind-icon generic"><CloudOutline /></span>
               <span>
-                <strong>通用大模型</strong>
-                <small>OpenAI 兼容 /v1/chat/completions</small>
+                <strong>通用大模型 · OpenAI 协议</strong>
+                <small>兼容 /v1/chat/completions</small>
               </span>
               <span v-if="form.kind === 'OPENAI_COMPATIBLE'" class="kind-check">✓</span>
             </button>
@@ -467,7 +467,7 @@ onMounted(load)
             >
               <span class="kind-icon anthropic"><LinkOutline /></span>
               <span>
-                <strong>Anthropic Claude</strong>
+                <strong>通用大模型 · Anthropic 协议</strong>
                 <small>Messages API · /v1/messages</small>
               </span>
               <span v-if="form.kind === 'ANTHROPIC'" class="kind-check">✓</span>

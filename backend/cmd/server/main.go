@@ -58,6 +58,11 @@ func main() {
 	triggerManager.Start()
 	defer triggerManager.Stop()
 
+	retentionCtx, retentionCancel := context.WithCancel(context.Background())
+	retentionService := service.NewRetentionService(db)
+	go retentionService.Run(retentionCtx)
+	defer retentionCancel()
+
 	server := api.NewServer(cfg, db, cache, cipher, eng, tasks)
 	httpServer := &http.Server{
 		Addr:              ":" + cfg.ServerPort,

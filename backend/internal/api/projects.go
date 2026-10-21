@@ -16,12 +16,14 @@ import (
 var projectCodePattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{2,31}$`)
 
 type projectInput struct {
-	Name          string `json:"name"`
-	Code          string `json:"code"`
-	Env           string `json:"env"`
-	Description   string `json:"description"`
-	OwnerID       uint64 `json:"owner_id"`
-	RetentionDays int    `json:"retention_days"`
+	Name             string `json:"name"`
+	Code             string `json:"code"`
+	Env              string `json:"env"`
+	Description      string `json:"description"`
+	OwnerID          uint64 `json:"owner_id"`
+	RetentionDays    int    `json:"retention_days"`
+	MaxTasksPerDay   *int   `json:"max_tasks_per_day"`
+	OpenAPIRateLimit *int   `json:"openapi_rate_limit"`
 }
 
 func isSuperAdmin(user *model.User) bool {
@@ -143,6 +145,22 @@ func (s *Server) createProject(c *gin.Context) {
 		badRequest(c, "回收站保留天数需在 7~365 之间")
 		return
 	}
+	maxTasksPerDay := 0
+	if req.MaxTasksPerDay != nil {
+		maxTasksPerDay = *req.MaxTasksPerDay
+	}
+	rateLimit := 120
+	if req.OpenAPIRateLimit != nil {
+		rateLimit = *req.OpenAPIRateLimit
+	}
+	if maxTasksPerDay < 0 || maxTasksPerDay > 100000 {
+		badRequest(c, "每日任务配额需在 0~100000 之间（0 表示不限制）")
+		return
+	}
+	if rateLimit < 0 || rateLimit > 10000 {
+		badRequest(c, "开放 API 每分钟限流需在 0~10000 之间（0 表示不限制）")
+		return
+	}
 	var count int64
 	_ = s.db.Model(&model.Project{}).Where("code = ?", req.Code).Count(&count).Error
 	if count > 0 {
@@ -156,7 +174,8 @@ func (s *Server) createProject(c *gin.Context) {
 	project := model.Project{
 		Name: req.Name, Code: req.Code, Env: req.Env, Status: model.ProjectActive,
 		Description: strings.TrimSpace(req.Description), OwnerID: ownerID,
-		RetentionDays: req.RetentionDays, CreatedBy: user.ID,
+		RetentionDays: req.RetentionDays, MaxTasksPerDay: maxTasksPerDay,
+		OpenAPIRateLimit: rateLimit, CreatedBy: user.ID,
 	}
 	if err := s.db.Create(&project).Error; err != nil {
 		serverError(c, err)
@@ -169,7 +188,7 @@ func (s *Server) createProject(c *gin.Context) {
 
 func (s *Server) updateProject(c *gin.Context) {
 	user := currentUser(c)
-	if !canAdmin(user.Role) {
+	if !s.hasPermission(user.Role, "project:update") {
 		forbidden(c, "当前角色无权修改项目")
 		return
 	}
@@ -209,6 +228,20 @@ func (s *Server) updateProject(c *gin.Context) {
 	if req.OwnerID != 0 {
 		project.OwnerID = req.OwnerID
 	}
+	if req.MaxTasksPerDay != nil {
+		if *req.MaxTasksPerDay < 0 || *req.MaxTasksPerDay > 100000 {
+			badRequest(c, "每日任务配额需在 0~100000 之间（0 表示不限制）")
+			return
+		}
+		project.MaxTasksPerDay = *req.MaxTasksPerDay
+	}
+	if req.OpenAPIRateLimit != nil {
+		if *req.OpenAPIRateLimit < 0 || *req.OpenAPIRateLimit > 10000 {
+			badRequest(c, "开放 API 每分钟限流需在 0~10000 之间（0 表示不限制）")
+			return
+		}
+		project.OpenAPIRateLimit = *req.OpenAPIRateLimit
+	}
 	if err := s.db.Save(project).Error; err != nil {
 		serverError(c, err)
 		return
@@ -220,7 +253,7 @@ func (s *Server) updateProject(c *gin.Context) {
 
 func (s *Server) updateProjectStatus(c *gin.Context) {
 	user := currentUser(c)
-	if !canAdmin(user.Role) {
+	if !s.hasPermission(user.Role, "project:update") {
 		forbidden(c, "当前角色无权变更项目状态")
 		return
 	}
@@ -391,14 +424,6 @@ func projectOrder(sort string) string {
 		dir = "ASC"
 	}
 	return field + " " + dir
-}
-
-func canManage(role string) bool {
-	return role == model.RoleSuperAdmin || role == model.RoleAdmin || role == model.RoleAuditor
-}
-
-func canAdmin(role string) bool {
-	return role == model.RoleSuperAdmin || role == model.RoleAdmin
 }
 
 func pagination(c *gin.Context) (int, int) {

@@ -3,9 +3,12 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   NButton,
+  NCheckbox,
+  NCheckboxGroup,
   NDatePicker,
   NInput,
   NPagination,
+  NPopover,
   NSelect,
   useDialog,
   useMessage,
@@ -14,11 +17,14 @@ import dayjs from 'dayjs'
 import {
   AddOutline,
   ArrowForwardOutline,
+  BookmarkOutline,
   DocumentTextOutline,
   FlashOutline,
   ImagesOutline,
   RefreshOutline,
   SearchOutline,
+  SettingsOutline,
+  TrashOutline,
 } from '@vicons/ionicons5'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
@@ -53,7 +59,123 @@ const submitShow = ref(false)
 const detailShow = ref(false)
 const selectedTaskId = ref<number | null>(null)
 const retryingId = ref<number | null>(null)
+const savedViews = ref<SavedView[]>([])
+const savedViewId = ref<string | null>(null)
+const newViewName = ref('')
+const showSaveView = ref(false)
+const visibleColumnKeys = ref<string[]>([])
+const ALL_COLUMNS = [
+  { key: 'task', label: '任务' },
+  { key: 'audit', label: '审核配置' },
+  { key: 'media', label: '媒体' },
+  { key: 'status', label: '状态' },
+  { key: 'result', label: '结论' },
+  { key: 'model', label: '模型' },
+  { key: 'duration', label: '耗时' },
+  { key: 'created', label: '创建时间' },
+]
+const VIEW_STORAGE = 'sdv:task-views:v1'
+const COLUMN_STORAGE = 'sdv:task-columns:v1'
 let searchTimer: ReturnType<typeof setTimeout> | null = null
+
+interface SavedView {
+  id: string
+  name: string
+  projectId: number
+  keyword: string
+  auditId: number | null
+  statuses: string[]
+  results: string[]
+  sources: string[]
+  dateRange: [number, number] | null
+}
+
+const savedViewOptions = computed(() =>
+  savedViews.value
+    .filter((view) => view.projectId === workspace.currentProjectId)
+    .map((view) => ({ label: view.name, value: view.id })),
+)
+
+function isColumnVisible(key: string) {
+  return visibleColumnKeys.value.includes(key)
+}
+
+function loadLayout() {
+  try {
+    const rawViews = localStorage.getItem(VIEW_STORAGE)
+    if (rawViews) savedViews.value = JSON.parse(rawViews) as SavedView[]
+    const rawColumns = localStorage.getItem(COLUMN_STORAGE)
+    if (rawColumns) {
+      const parsed = JSON.parse(rawColumns) as string[]
+      visibleColumnKeys.value = Array.isArray(parsed)
+        ? ALL_COLUMNS.map((c) => c.key).filter((key) => parsed.includes(key))
+        : ALL_COLUMNS.map((c) => c.key)
+    } else {
+      visibleColumnKeys.value = ALL_COLUMNS.map((c) => c.key)
+    }
+  } catch {
+    visibleColumnKeys.value = ALL_COLUMNS.map((c) => c.key)
+  }
+  if (!visibleColumnKeys.value.length) visibleColumnKeys.value = ['task', 'status', 'result']
+}
+
+function persistLayout() {
+  try {
+    localStorage.setItem(VIEW_STORAGE, JSON.stringify(savedViews.value))
+    localStorage.setItem(COLUMN_STORAGE, JSON.stringify(visibleColumnKeys.value))
+  } catch {
+    // storage may be unavailable in private mode; layout is best effort
+  }
+}
+
+function saveCurrentView() {
+  const name = newViewName.value.trim()
+  if (!name) {
+    message.warning('请填写视图名称')
+    return
+  }
+  if (!workspace.currentProjectId) return
+  const view: SavedView = {
+    id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    name,
+    projectId: workspace.currentProjectId,
+    keyword: keyword.value,
+    auditId: auditId.value,
+    statuses: [...statuses.value],
+    results: [...results.value],
+    sources: [...sources.value],
+    dateRange: dateRange.value ? [dateRange.value[0], dateRange.value[1]] : null,
+  }
+  savedViews.value = [view, ...savedViews.value].slice(0, 30)
+  savedViewId.value = view.id
+  newViewName.value = ''
+  showSaveView.value = false
+  persistLayout()
+  message.success(`已保存视图「${name}」`)
+}
+
+function applySavedView(id: string | null) {
+  savedViewId.value = id
+  if (!id) return
+  const view = savedViews.value.find((item) => item.id === id)
+  if (!view) return
+  keyword.value = view.keyword
+  auditId.value = view.auditId
+  statuses.value = [...view.statuses]
+  results.value = [...view.results]
+  sources.value = [...view.sources]
+  dateRange.value = view.dateRange ? [view.dateRange[0], view.dateRange[1]] : null
+  page.value = 1
+  load()
+}
+
+function deleteSavedView() {
+  if (!savedViewId.value) return
+  savedViews.value = savedViews.value.filter((view) => view.id !== savedViewId.value)
+  savedViewId.value = null
+  persistLayout()
+  message.success('视图已删除')
+}
 
 const pageCount = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
 const auditOptions = computed(() => audits.value.map((a) => ({ label: a.name, value: a.id })))
@@ -206,9 +328,11 @@ function applyRouteQuery() {
   }
 }
 
+watch(visibleColumnKeys, persistLayout, { deep: true })
 watch(() => workspace.currentProjectId, async () => {
   page.value = 1
   auditId.value = null
+  savedViewId.value = null
   await Promise.all([load(), loadAudits()])
   applyRouteQuery()
 })
@@ -225,6 +349,7 @@ watch(pageSize, () => {
 })
 
 onMounted(async () => {
+  loadLayout()
   await Promise.all([load(), loadAudits()])
   applyRouteQuery()
 })
@@ -308,6 +433,42 @@ onBeforeUnmount(() => {
           style="width: 245px"
         />
         <button class="reset-btn" type="button" @click="resetFilters">重置</button>
+        <n-select
+          :value="savedViewId"
+          :options="savedViewOptions"
+          clearable
+          placeholder="已保存视图"
+          style="width: 150px"
+          @update:value="applySavedView"
+        />
+        <n-popover v-model:show="showSaveView" trigger="click" placement="bottom-end" raw>
+          <template #trigger>
+            <n-button quaternary size="small" title="保存当前筛选视图">
+              <template #icon><BookmarkOutline /></template>
+            </n-button>
+          </template>
+          <div class="save-view-pop">
+            <strong>保存当前视图</strong>
+            <n-input v-model:value="newViewName" size="small" placeholder="例如：待复核的合同审核" @keyup.enter="saveCurrentView" />
+            <n-button type="primary" size="small" block @click="saveCurrentView">保存</n-button>
+          </div>
+        </n-popover>
+        <n-button v-if="savedViewId" quaternary size="small" title="删除当前视图" @click="deleteSavedView">
+          <template #icon><TrashOutline /></template>
+        </n-button>
+        <n-popover trigger="click" placement="bottom-end" :width="180">
+          <template #trigger>
+            <n-button quaternary size="small" title="显示列">
+              <template #icon><SettingsOutline /></template>
+            </n-button>
+          </template>
+          <div class="column-settings">
+            <strong>显示列</strong>
+            <n-checkbox-group v-model:value="visibleColumnKeys">
+              <n-checkbox v-for="column in ALL_COLUMNS" :key="column.key" :value="column.key" :label="column.label" />
+            </n-checkbox-group>
+          </div>
+        </n-popover>
         <div class="toolbar-spacer"></div>
         <span class="total-badge">共 <strong>{{ total }}</strong> 条任务</span>
       </div>
@@ -316,28 +477,28 @@ onBeforeUnmount(() => {
         <table class="data-table task-table">
           <thead>
             <tr>
-              <th>任务</th>
-              <th>审核配置</th>
-              <th>媒体</th>
-              <th>状态</th>
-              <th>结论</th>
-              <th>模型</th>
-              <th>耗时</th>
-              <th>创建时间</th>
+              <th v-if="isColumnVisible('task')">任务</th>
+              <th v-if="isColumnVisible('audit')">审核配置</th>
+              <th v-if="isColumnVisible('media')">媒体</th>
+              <th v-if="isColumnVisible('status')">状态</th>
+              <th v-if="isColumnVisible('result')">结论</th>
+              <th v-if="isColumnVisible('model')">模型</th>
+              <th v-if="isColumnVisible('duration')">耗时</th>
+              <th v-if="isColumnVisible('created')">创建时间</th>
               <th class="action-col" style="text-align: right">操作</th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="task in tasks" :key="task.id" class="clickable" @click="openTask(task)">
-              <td>
+              <td v-if="isColumnVisible('task')">
                 <div class="cell-title mono">{{ task.task_no }}</div>
                 <div class="cell-sub">{{ task.biz_key || '无业务键' }}</div>
               </td>
-              <td>
+              <td v-if="isColumnVisible('audit')">
                 <div class="cell-title">{{ task.audit_name || '—' }}</div>
                 <div class="cell-sub">{{ sourceLabel(task.source_type) }}</div>
               </td>
-              <td>
+              <td v-if="isColumnVisible('media')">
                 <span class="media-chip">
                   <DocumentTextOutline v-if="task.media_type === 'text'" />
                   <ImagesOutline v-else-if="task.media_type === 'image'" />
@@ -345,13 +506,13 @@ onBeforeUnmount(() => {
                   {{ task.media_type }}
                 </span>
               </td>
-              <td><StatusTag :status="task.status" type="task" /></td>
-              <td><StatusTag :status="task.result" type="result" /></td>
-              <td>
+              <td v-if="isColumnVisible('status')"><StatusTag :status="task.status" type="task" /></td>
+              <td v-if="isColumnVisible('result')"><StatusTag :status="task.result" type="result" /></td>
+              <td v-if="isColumnVisible('model')">
                 <div class="cell-title model-cell">{{ task.provider_name || '—' }}</div>
               </td>
-              <td><span class="duration mono">{{ task.duration_ms ? `${(task.duration_ms / 1000).toFixed(2)}s` : '—' }}</span></td>
-              <td><span class="task-time">{{ task.created_at?.replace('T', ' ').slice(0, 19) }}</span></td>
+              <td v-if="isColumnVisible('duration')"><span class="duration mono">{{ task.duration_ms ? `${(task.duration_ms / 1000).toFixed(2)}s` : '—' }}</span></td>
+              <td v-if="isColumnVisible('created')"><span class="task-time">{{ task.created_at?.replace('T', ' ').slice(0, 19) }}</span></td>
               <td class="action-col" style="text-align: right" @click.stop>
                 <n-button size="tiny" quaternary @click="openTask(task)">查看</n-button>
                 <n-button
@@ -435,6 +596,32 @@ onBeforeUnmount(() => {
 
 .reset-btn:hover {
   color: var(--brand);
+}
+
+.save-view-pop {
+  display: flex;
+  width: 230px;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+}
+
+.save-view-pop strong,
+.column-settings strong {
+  color: var(--text);
+  font-size: 11px;
+}
+
+.column-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.column-settings :deep(.n-checkbox-group) {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
 }
 
 .toolbar-spacer {
@@ -538,7 +725,33 @@ onBeforeUnmount(() => {
     width: 100%;
   }
 
-  .toolbar-spacer {
+  .save-view-pop {
+  display: flex;
+  width: 230px;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+}
+
+.save-view-pop strong,
+.column-settings strong {
+  color: var(--text);
+  font-size: 11px;
+}
+
+.column-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.column-settings :deep(.n-checkbox-group) {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.toolbar-spacer {
     display: none;
   }
 }

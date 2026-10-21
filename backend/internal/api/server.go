@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-contrib/cors"
@@ -29,10 +30,14 @@ type Server struct {
 	tokens *security.TokenManager
 	engine *engine.Engine
 	tasks  *service.TaskService
+
+	rolesMu   sync.RWMutex
+	roles     map[string]catalog.RoleDefinition
+	rolesList []catalog.RoleDefinition
 }
 
 func NewServer(cfg config.Config, db *gorm.DB, cache *redis.Client, cipher *security.Cipher, eng *engine.Engine, tasks *service.TaskService) *Server {
-	return &Server{
+	server := &Server{
 		cfg:    cfg,
 		db:     db,
 		redis:  cache,
@@ -40,7 +45,15 @@ func NewServer(cfg config.Config, db *gorm.DB, cache *redis.Client, cipher *secu
 		tokens: security.NewTokenManager(cfg.JWTSecret),
 		engine: eng,
 		tasks:  tasks,
+		roles:  map[string]catalog.RoleDefinition{},
 	}
+	if err := server.refreshRoleCache(); err != nil {
+		for _, definition := range catalog.Roles() {
+			server.roles[definition.Code] = definition
+			server.rolesList = append(server.rolesList, definition)
+		}
+	}
+	return server
 }
 
 func (s *Server) registerAdminUI(r *gin.Engine) {
@@ -62,7 +75,7 @@ func (s *Server) Router() *gin.Engine {
 		gin.SetMode(gin.ReleaseMode)
 	}
 	r := gin.New()
-	r.Use(gin.Logger(), gin.Recovery(), traceMiddleware())
+	r.Use(gin.Logger(), gin.Recovery(), traceMiddleware(), metricsMiddleware(), bodyLimitMiddleware(40<<20))
 	r.Use(cors.New(cors.Config{
 		AllowOrigins:     s.cfg.CORSOrigins,
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
@@ -72,6 +85,7 @@ func (s *Server) Router() *gin.Engine {
 		MaxAge:           12 * time.Hour,
 	}))
 	r.GET("/health", s.health)
+	r.GET("/metrics", s.prometheusMetrics)
 	s.registerAdminUI(r)
 
 	open := r.Group("/open/v1")
@@ -86,12 +100,17 @@ func (s *Server) Router() *gin.Engine {
 		admin.GET("/auth/captcha", s.captchaChallenge)
 		admin.POST("/auth/login", s.login)
 		admin.POST("/auth/refresh", s.refresh)
+		admin.POST("/auth/mfa", s.verifyMFA)
 		auth := admin.Group("")
 		auth.Use(s.authRequired())
 		{
 			auth.GET("/auth/me", s.me)
-			auth.POST("/auth/logout", func(c *gin.Context) { ok(c, gin.H{"logged_out": true}) })
+			auth.POST("/auth/logout", s.logout)
 			auth.POST("/auth/change-password", s.changePassword)
+			auth.GET("/auth/mfa", s.mfaStatus)
+			auth.POST("/auth/mfa/setup", s.mfaSetup)
+			auth.POST("/auth/mfa/enable", s.mfaEnable)
+			auth.POST("/auth/mfa/disable", s.mfaDisable)
 
 			auth.GET("/projects", s.listProjects)
 			auth.POST("/projects", s.createProject)
@@ -115,6 +134,7 @@ func (s *Server) Router() *gin.Engine {
 
 			auth.GET("/audits", s.listAudits)
 			auth.POST("/audits", s.createAudit)
+			auth.POST("/audits/assistant", s.auditAssistant)
 			auth.GET("/audits/:id", s.getAudit)
 			auth.PUT("/audits/:id", s.updateAudit)
 			auth.DELETE("/audits/:id", s.deleteAudit)
@@ -138,12 +158,17 @@ func (s *Server) Router() *gin.Engine {
 			auth.GET("/analytics", s.analytics)
 			auth.GET("/audit-logs", s.listAuditLogs)
 			auth.GET("/recycle-bin", s.listRecycleBin)
+			auth.DELETE("/recycle-bin/:type/:id", s.purgeRecycleItem)
 			auth.GET("/meta/rule-templates", s.ruleTemplates)
 			auth.GET("/meta/roles", s.roleDefinitions)
+			auth.POST("/roles", s.createRole)
+			auth.PUT("/roles/:code", s.updateRole)
+			auth.DELETE("/roles/:code", s.deleteRole)
 			auth.GET("/meta/system", s.systemInfo)
 			auth.GET("/users", s.listUsers)
 			auth.POST("/users", s.createUser)
 			auth.PUT("/users/:id", s.updateUser)
+			auth.POST("/users/:id/reset-mfa", s.resetUserMFA)
 		}
 	}
 
@@ -151,6 +176,21 @@ func (s *Server) Router() *gin.Engine {
 		fail(c, http.StatusNotFound, "NOT_FOUND", "接口不存在", nil)
 	})
 	return r
+}
+
+// bodyLimitMiddleware caps JSON uploads (including browser-compressed local
+// images embedded as data URLs) while leaving GET/HEAD and WebSocket upgrades
+// untouched.
+func bodyLimitMiddleware(maxBytes int64) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		switch c.Request.Method {
+		case http.MethodPost, http.MethodPut, http.MethodPatch:
+			if c.Request.Body != nil && (strings.HasPrefix(c.Request.URL.Path, "/api/") || strings.HasPrefix(c.Request.URL.Path, "/open/")) {
+				c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBytes)
+			}
+		}
+		c.Next()
+	}
 }
 
 func traceMiddleware() gin.HandlerFunc {

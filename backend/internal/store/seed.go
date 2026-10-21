@@ -21,6 +21,9 @@ type Seeder struct {
 }
 
 func (s *Seeder) Run() error {
+	if err := s.ensureRoles(); err != nil {
+		return err
+	}
 	admin, err := s.ensureAdmin()
 	if err != nil {
 		return err
@@ -46,6 +49,36 @@ func (s *Seeder) Run() error {
 		return err
 	}
 	return s.ensureAuditTriggers()
+}
+
+func (s *Seeder) ensureRoles() error {
+	for _, role := range catalog.Roles() {
+		var existing model.Role
+		err := s.DB.Where("code = ?", role.Code).First(&existing).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			record := model.Role{
+				Code: role.Code, Name: role.Name, Description: role.Description,
+				Permissions: model.JSONBytes(role.Permissions), Menus: model.JSONBytes(role.Menus),
+				Builtin: true,
+			}
+			if err := s.DB.Create(&record).Error; err != nil {
+				return err
+			}
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		// Built-in role definitions follow the application catalog on upgrade.
+		if err := s.DB.Model(&model.Role{}).Where("id = ?", existing.ID).Updates(map[string]any{
+			"name": role.Name, "description": role.Description,
+			"permissions": model.JSONBytes(role.Permissions), "menus": model.JSONBytes(role.Menus),
+			"builtin": true,
+		}).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Seeder) ensureDefaultAPICredentials() error {

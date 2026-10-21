@@ -9,7 +9,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
-	"smartdoc-vision/backend/internal/catalog"
 	"smartdoc-vision/backend/internal/model"
 	"smartdoc-vision/backend/internal/security"
 )
@@ -23,10 +22,6 @@ type userInput struct {
 	Role        string    `json:"role"`
 	Status      string    `json:"status"`
 	ProjectIDs  *[]uint64 `json:"project_ids"`
-}
-
-func (s *Server) roleDefinitions(c *gin.Context) {
-	ok(c, gin.H{"items": catalog.Roles()})
 }
 
 func (s *Server) listUsers(c *gin.Context) {
@@ -44,7 +39,7 @@ func (s *Server) listUsers(c *gin.Context) {
 		s.hydrateUser(&users[i])
 		items = append(items, userView(users[i]))
 	}
-	ok(c, gin.H{"items": items, "total": len(items), "roles": catalog.Roles()})
+	ok(c, gin.H{"items": items, "total": len(items), "roles": s.roleDefinitionsList()})
 }
 
 func (s *Server) createUser(c *gin.Context) {
@@ -76,7 +71,7 @@ func (s *Server) createUser(c *gin.Context) {
 		badRequest(c, err.Error())
 		return
 	}
-	if !catalog.ValidRole(req.Role) {
+	if !s.validRole(req.Role) {
 		badRequest(c, "角色不合法")
 		return
 	}
@@ -155,7 +150,7 @@ func (s *Server) updateUser(c *gin.Context) {
 	newRole := user.Role
 	if strings.TrimSpace(req.Role) != "" {
 		newRole = strings.ToUpper(strings.TrimSpace(req.Role))
-		if !catalog.ValidRole(newRole) {
+		if !s.validRole(newRole) {
 			badRequest(c, "角色不合法")
 			return
 		}
@@ -212,6 +207,10 @@ func (s *Server) updateUser(c *gin.Context) {
 			return
 		}
 		user.PasswordHash = hash
+		user.TokenVersion++
+	}
+	if user.Role != newRole || user.Status != newStatus {
+		user.TokenVersion++
 	}
 	user.Role = newRole
 	user.Status = newStatus
@@ -265,7 +264,10 @@ func (s *Server) changePassword(c *gin.Context) {
 		serverError(c, err)
 		return
 	}
-	if err := s.db.Model(&model.User{}).Where("id = ?", user.ID).Update("password_hash", hash).Error; err != nil {
+	if err := s.db.Model(&model.User{}).Where("id = ?", user.ID).Updates(map[string]any{
+		"password_hash": hash,
+		"token_version": gorm.Expr("token_version + 1"),
+	}).Error; err != nil {
 		serverError(c, err)
 		return
 	}
