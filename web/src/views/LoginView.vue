@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { NButton, NInput, useMessage } from 'naive-ui'
+import { NButton, NInput, NModal, NSpin, useMessage } from 'naive-ui'
 import {
   ArrowForwardOutline,
   CheckmarkCircleOutline,
@@ -27,6 +27,8 @@ const username = ref(localStorage.getItem('sdv.last_user') || '')
 const password = ref('')
 const loading = ref(false)
 const errorText = ref('')
+const captchaShow = ref(false)
+const captchaError = ref('')
 const captchaPayload = ref<{ id: string; x: number } | null>(null)
 const captchaRef = ref<InstanceType<typeof SliderCaptcha> | null>(null)
 
@@ -34,32 +36,66 @@ onMounted(() => {
   if (auth.isAuthenticated) router.replace('/dashboard')
 })
 
-async function submit() {
+function submit() {
   if (!username.value.trim() || !password.value) {
     errorText.value = '请输入账号和密码'
     return
   }
-  if (!captchaPayload.value) {
-    errorText.value = '请先拖动滑块完成安全验证'
-    return
-  }
+  if (loading.value) return
+  errorText.value = ''
+  captchaError.value = ''
+  captchaPayload.value = null
+  // The slider is intentionally hidden until the user asks to sign in.
+  captchaShow.value = true
+}
+
+function closeCaptcha() {
+  if (loading.value) return
+  captchaShow.value = false
+  captchaError.value = ''
+  captchaPayload.value = null
+}
+
+function onCaptchaModalChange(value: boolean) {
+  if (!value) closeCaptcha()
+}
+
+async function submitWithCaptcha(payload: { id: string; x: number }) {
+  if (loading.value) return
   loading.value = true
+  captchaError.value = ''
   errorText.value = ''
   try {
-    await auth.login(username.value.trim(), password.value, captchaPayload.value)
+    await auth.login(username.value.trim(), password.value, payload)
     localStorage.setItem('sdv.last_user', username.value.trim())
     await workspace.loadProjects(true).catch(() => undefined)
     message.success('登录成功，欢迎回来')
+    captchaShow.value = false
     const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/dashboard'
     router.replace(redirect)
   } catch (error) {
-    errorText.value = error instanceof Error ? error.message : '登录失败'
-    // A captcha is one-time use and is consumed even when the password is wrong.
+    const code = (error as { code?: string }).code
+    const text = error instanceof Error ? error.message : '登录失败'
+    if (code === 'IP_BLOCKED' || code === 'LOGIN_LOCKED') {
+      captchaShow.value = false
+      errorText.value = text
+      return
+    }
+    captchaError.value = code === 'CAPTCHA_INVALID' ? '拼图未对齐或验证码已过期，请重新拖动' : text
+    captchaPayload.value = null
+    // The captcha is consumed by the backend on every attempt, including a
+    // wrong password. Always issue a fresh challenge before the next try.
     captchaRef.value?.refresh()
   } finally {
     loading.value = false
   }
 }
+
+watch(captchaPayload, (payload) => {
+  if (payload && captchaShow.value && !loading.value) {
+    void submitWithCaptcha(payload)
+  }
+})
 
 function forgot() {
   message.info('请联系系统管理员重置密码。管理员可在服务端通过 ADMIN_PASSWORD 重新初始化。')
@@ -188,8 +224,6 @@ function forgot() {
             </n-input>
           </label>
 
-          <SliderCaptcha ref="captchaRef" v-model="captchaPayload" />
-
           <div v-if="errorText" class="login-error">{{ errorText }}</div>
 
           <n-button type="primary" size="large" block :loading="loading" attr-type="submit" class="login-button">
@@ -210,6 +244,36 @@ function forgot() {
       </div>
       <div class="form-footer">智审图档 SmartDoc Vision · 让审核可追溯、可复用、可进化</div>
     </section>
+
+    <n-modal :show="captchaShow" :mask-closable="!loading" @update:show="onCaptchaModalChange">
+      <div class="captcha-modal">
+        <div class="captcha-modal-head">
+          <span class="captcha-modal-icon"><ShieldCheckmarkOutline /></span>
+          <div>
+            <div class="captcha-kicker">SECURITY CHECK</div>
+            <h3>安全验证</h3>
+            <p>拖动滑块把拼图对齐到缺口，松开后由后端校验；校验通过才会登录。</p>
+          </div>
+        </div>
+        <div class="captcha-modal-body">
+          <SliderCaptcha
+            v-if="captchaShow"
+            ref="captchaRef"
+            v-model="captchaPayload"
+            :disabled="loading"
+          />
+          <div v-if="loading" class="captcha-verifying">
+            <n-spin size="small" />
+            <span>正在向后端校验滑块与账号...</span>
+          </div>
+          <div v-if="captchaError" class="captcha-error">{{ captchaError }}</div>
+        </div>
+        <div class="captcha-modal-foot">
+          <span>同一 IP 连续 3 次失败将被封禁 10 分钟</span>
+          <n-button size="small" :disabled="loading" @click="closeCaptcha">取消</n-button>
+        </div>
+      </div>
+    </n-modal>
   </div>
 </template>
 
@@ -706,6 +770,111 @@ h1 span {
   color: #b0b9c6;
   font-size: 10px;
   text-align: center;
+}
+
+.captcha-modal {
+  width: min(440px, calc(100vw - 24px));
+  overflow: hidden;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 30px 80px -20px rgba(15, 23, 42, 0.38);
+}
+
+.captcha-modal-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 20px 22px 15px;
+  border-bottom: 1px solid #eef2f8;
+  background: linear-gradient(130deg, #f7faff, #fff);
+}
+
+.captcha-modal-icon {
+  display: flex;
+  width: 38px;
+  height: 38px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: var(--brand-soft);
+  color: var(--brand);
+  flex-shrink: 0;
+}
+
+.captcha-modal-icon :deep(svg) {
+  width: 18px;
+  height: 18px;
+}
+
+.captcha-kicker {
+  color: var(--brand);
+  font-family: var(--mono);
+  font-size: 8.5px;
+  font-weight: 650;
+  letter-spacing: 0.12em;
+}
+
+.captcha-modal-head h3 {
+  margin: 3px 0 4px;
+  color: var(--ink);
+  font-size: 19px;
+  font-weight: 660;
+}
+
+.captcha-modal-head p {
+  max-width: 330px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 10.5px;
+  line-height: 1.65;
+}
+
+.captcha-modal-body {
+  padding: 18px 22px 10px;
+}
+
+.captcha-verifying {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 9px;
+  color: var(--brand);
+  font-size: 10px;
+}
+
+.captcha-error {
+  margin-top: 9px;
+  padding: 8px 10px;
+  border: 1px solid #fee2e2;
+  border-radius: 8px;
+  background: #fef2f2;
+  color: #b91c1c;
+  font-size: 10.5px;
+  line-height: 1.55;
+}
+
+.captcha-modal-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 22px 15px;
+  border-top: 1px solid #f0f3f8;
+  color: var(--muted-light);
+  font-size: 9px;
+}
+
+@media (max-width: 560px) {
+  .captcha-modal-head,
+  .captcha-modal-body,
+  .captcha-modal-foot {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .captcha-modal-foot > span {
+    max-width: 220px;
+  }
 }
 
 @media (max-width: 980px) {

@@ -7,6 +7,7 @@ import type { CaptchaChallenge } from '@/api/types'
 
 const HANDLE_SIZE = 42
 
+const props = withDefaults(defineProps<{ disabled?: boolean }>(), { disabled: false })
 const model = defineModel<{ id: string; x: number } | null>({ default: null })
 const challenge = ref<CaptchaChallenge | null>(null)
 const loading = ref(false)
@@ -68,7 +69,7 @@ function syncModel() {
 }
 
 function onPointerDown(event: PointerEvent) {
-  if (!challenge.value || loading.value) return
+  if (!challenge.value || loading.value || props.disabled) return
   dragging.value = true
   startX = event.clientX
   startLeft = handleLeft.value
@@ -77,7 +78,7 @@ function onPointerDown(event: PointerEvent) {
 }
 
 function onPointerMove(event: PointerEvent) {
-  if (!dragging.value) return
+  if (!dragging.value || props.disabled) return
   handleLeft.value = clamp(startLeft + event.clientX - startX, 0, maxHandleLeft.value)
 }
 
@@ -91,13 +92,17 @@ function onPointerUp(event: PointerEvent) {
 }
 
 function onKeydown(event: KeyboardEvent) {
-  if (!challenge.value || loading.value) return
+  if (!challenge.value || loading.value || props.disabled) return
+  if (event.key === 'Enter' || event.key === ' ') {
+    event.preventDefault()
+    if (handleLeft.value > 2) syncModel()
+    return
+  }
   if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return
   event.preventDefault()
   const delta = event.key === 'ArrowRight' ? 6 : -6
   handleLeft.value = clamp(handleLeft.value + delta, 0, maxHandleLeft.value)
   model.value = null
-  if (handleLeft.value > 2) syncModel()
 }
 
 async function refresh() {
@@ -132,7 +137,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="slider-captcha" :class="{ ready }">
+  <div class="slider-captcha" :class="{ ready, disabled: props.disabled }">
     <div ref="stageRef" class="captcha-stage">
       <img v-if="challenge" class="captcha-bg" :src="challenge.background" alt="滑块验证背景" draggable="false" />
       <img
@@ -151,19 +156,19 @@ onBeforeUnmount(() => {
         <span>{{ errorText }}</span>
         <button type="button" class="captcha-retry" @click="refresh">重新加载</button>
       </div>
-      <button type="button" class="captcha-refresh" title="换一张" :disabled="loading" @click="refresh">
+      <button type="button" class="captcha-refresh" title="换一张" :disabled="loading || props.disabled" @click="refresh">
         <RefreshOutline />
       </button>
       <div v-if="ready && !dragging" class="captcha-done">
         <CheckmarkCircleOutline />
-        拼图已对齐
+        已对齐，等待后端验证
       </div>
     </div>
 
     <div class="slider-track" :class="{ aligning: dragging, ready }">
       <div class="slider-fill" :style="{ width: `${handleLeft + HANDLE_SIZE / 2}px` }"></div>
-      <span v-if="!dragging" class="slider-hint">{{ ready ? '已完成拼图，点击下方登录验证' : '向右拖动滑块完成拼图' }}</span>
-      <span v-else class="slider-hint">松开滑块完成对齐</span>
+      <span v-if="!dragging" class="slider-hint">{{ ready ? '已对齐，正在提交后端校验' : '向右拖动滑块完成拼图' }}</span>
+      <span v-else class="slider-hint">松开滑块后由后端校验</span>
       <div
         class="slider-handle"
         :style="{ transform: `translateX(${handleLeft}px)` }"
@@ -185,8 +190,8 @@ onBeforeUnmount(() => {
     </div>
 
     <div class="captcha-meta">
-      <span>安全验证 · 拖动对齐缺口，120 秒内有效</span>
-      <button type="button" :disabled="loading" @click="refresh">换一张</button>
+      <span>服务端校验 · 拖动对齐缺口，120 秒内有效</span>
+      <button type="button" :disabled="loading || props.disabled" @click="refresh">换一张</button>
     </div>
   </div>
 </template>
