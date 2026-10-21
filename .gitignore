@@ -40,3 +40,6 @@ embedded-ui-test.log
 .token
 dbhub.toml
 gui-test-screenshots/
+
+# vite cache
+web/.vite/
