@@ -87,9 +87,11 @@ func (s *Server) auditAssistant(c *gin.Context) {
 	var currentAudit *model.Audit
 	if req.AuditID > 0 {
 		var audit model.Audit
-		if err := s.db.Where("id = ? AND project_id = ? AND deleted_at IS NULL", req.AuditID, req.ProjectID).First(&audit).Error; err == nil {
-			currentAudit = &audit
+		if err := s.db.Where("id = ? AND project_id = ? AND deleted_at IS NULL", req.AuditID, req.ProjectID).First(&audit).Error; err != nil {
+			notFound(c, "要编辑的审核配置不存在或不属于当前项目")
+			return
 		}
+		currentAudit = &audit
 	}
 
 	currentJSON := "无（新建审核配置）"
@@ -143,6 +145,10 @@ func (s *Server) auditAssistant(c *gin.Context) {
 	response := gin.H{
 		"reply": reply, "ready": ready, "model": result.Model,
 		"provider_id": provider.ID, "provider_name": provider.Name,
+		"mode": map[bool]string{true: "edit", false: "create"}[currentAudit != nil],
+	}
+	if currentAudit != nil {
+		response["target"] = gin.H{"id": currentAudit.ID, "name": currentAudit.Name, "code": currentAudit.Code}
 	}
 	if ready {
 		if req.AuditID == 0 {

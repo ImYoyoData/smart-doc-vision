@@ -21,6 +21,7 @@ import {
   CloudOutline,
   ChatbubbleEllipsesOutline,
   CopyOutline,
+  CreateOutline,
   DownloadOutline,
   EllipsisHorizontalOutline,
   FlashOutline,
@@ -79,6 +80,10 @@ const assistantBusy = ref(false)
 const assistantError = ref('')
 const assistantProviderId = ref<number | null>(null)
 const assistantReadyConfig = ref<AuditAssistantConfig | null>(null)
+const assistantChanges = ref<string[]>([])
+const assistantSaved = ref(false)
+const assistantPickShow = ref(false)
+const assistantPickId = ref<number | null>(null)
 const assistantChat = ref<HTMLElement | null>(null)
 const hasGeneralProvider = computed(() =>
   providers.value.some((p) => p.status === 'ACTIVE' && p.kind !== 'JEV'),
@@ -545,6 +550,40 @@ async function save(): Promise<boolean> {
   return true
 }
 
+function describeAudit(audit: Audit) {
+  const mode = audit.decision_mode === 'CLASSIFY' ? '分类审核' : '合规审核'
+  const media = (audit.media_types || []).join(' + ') || '文本'
+  const categories = audit.categories?.length || 0
+  return `${mode} · ${media} · 默认结论 ${audit.default_result}${mode === '分类审核' ? ` · ${categories} 个分类` : ''}`
+}
+
+function openAssistantEditPicker() {
+  if (!workspace.currentProjectId) {
+    message.warning('请先选择项目')
+    return
+  }
+  if (!hasGeneralProvider.value) {
+    message.warning('AI 配置助手需要项目中至少有一个启用的通用大模型（OpenAI 兼容或 Anthropic 协议）')
+    return
+  }
+  if (!audits.value.length) {
+    message.warning('当前项目还没有可编辑的审核配置')
+    return
+  }
+  assistantPickId.value = null
+  assistantPickShow.value = true
+}
+
+function confirmAssistantEditPick() {
+  const audit = audits.value.find((item) => item.id === assistantPickId.value)
+  if (!audit) {
+    message.warning('请选择要编辑的审核配置')
+    return
+  }
+  assistantPickShow.value = false
+  startAssistant('edit', audit)
+}
+
 function startAssistant(mode: 'create' | 'edit', audit?: Audit) {
   if (!workspace.currentProjectId) {
     message.warning('请先选择项目')
@@ -558,6 +597,8 @@ function startAssistant(mode: 'create' | 'edit', audit?: Audit) {
   assistantProviderId.value = general?.id || null
   assistantMode.value = mode
   assistantReadyConfig.value = null
+  assistantChanges.value = []
+  assistantSaved.value = false
   assistantError.value = ''
   assistantInput.value = ''
   if (mode === 'create') {
@@ -572,7 +613,7 @@ function startAssistant(mode: 'create' | 'edit', audit?: Audit) {
     role: 'assistant',
     content: mode === 'create'
       ? '你好，我是审核配置助手。请告诉我：这次要审核什么类型的档案？哪些情况必须驳回？是否需要按类别分类？我会根据你的回答逐步确认并直接生成配置。'
-      : '你好，我会在当前审核配置的基础上按你的要求调整。请说明要修改的内容，例如审核重点、分类映射、人工复核策略等。',
+      : `当前正在编辑「${audit?.name || form.name}」（${audit?.code || form.code}）。它现在是${audit ? describeAudit(audit) : '当前表单中的配置'}。请告诉我：目前哪里不符合要求、你希望改成什么？例如“把默认结论改成 REVIEW”“新增发票分类并映射为通过”。我会只修改你指定的部分，其余配置保持不变。`,
   }]
   assistantShow.value = true
 }
@@ -635,14 +676,39 @@ function applyAssistantDraft(config: AuditAssistantConfig) {
   form.dedupeWindowSec = config.dedupe_window_sec || 86400
 }
 
+function summarizeAssistantChanges(config: AuditAssistantConfig) {
+  const before = buildAssistantCurrentConfig()
+  const changes: string[] = []
+  if (config.name && config.name !== before.name) changes.push(`名称：${before.name || '未命名'} → ${config.name}`)
+  if (config.description !== before.description) changes.push('简介已更新')
+  const beforeMedia = [...(before.media_types || [])].sort().join('+')
+  const afterMedia = [...(config.media_types || [])].sort().join('+')
+  if (beforeMedia !== afterMedia) changes.push(`媒体类型：${beforeMedia || '无'} → ${afterMedia || '无'}`)
+  if (config.decision_mode !== before.decision_mode) changes.push(`审核模式：${before.decision_mode === 'CLASSIFY' ? '分类审核' : '合规审核'} → ${config.decision_mode === 'CLASSIFY' ? '分类审核' : '合规审核'}`)
+  const beforeCategories = (before.categories || []).map((item) => `${item.code}:${item.name}:${item.result}`).join('|')
+  const afterCategories = (config.categories || []).map((item) => `${item.code}:${item.name}:${item.result}`).join('|')
+  if (beforeCategories !== afterCategories) changes.push(`分类映射：${(before.categories || []).length} 个 → ${(config.categories || []).length} 个`)
+  if (config.review_prompt !== before.review_prompt) changes.push('审核要求 Prompt 已更新')
+  if (config.default_result !== before.default_result) changes.push(`默认结论：${before.default_result} → ${config.default_result}`)
+  if (config.on_model_fail !== before.on_model_fail) changes.push(`模型失败兜底：${before.on_model_fail} → ${config.on_model_fail}`)
+  if (Number(config.dedupe_window_sec) !== Number(before.dedupe_window_sec)) changes.push(`去重窗口：${before.dedupe_window_sec}s → ${config.dedupe_window_sec}s`)
+  if (JSON.stringify(config.rules || []) !== JSON.stringify(before.rules || [])) changes.push('规则组已更新')
+  if (JSON.stringify(config.routes || {}) !== JSON.stringify(before.routes || {})) changes.push('结果动作路由已更新')
+  return changes
+}
+
 async function applyAssistantConfig(config: AuditAssistantConfig) {
+  assistantChanges.value = assistantMode.value === 'edit' ? summarizeAssistantChanges(config) : []
   assistantReadyConfig.value = config
   applyAssistantDraft(config)
   await scrollAssistantToBottom()
   const saved = await save()
   if (saved) {
-    assistantShow.value = false
-    assistantMessages.value = []
+    assistantSaved.value = true
+    if (assistantMode.value === 'create') {
+      assistantShow.value = false
+      assistantMessages.value = []
+    }
   } else {
     assistantError.value = errorText.value || '已应用配置，但保存失败，请检查表单后手动保存'
     modalShow.value = true
@@ -693,6 +759,8 @@ function closeAssistant() {
   assistantShow.value = false
   assistantMessages.value = []
   assistantReadyConfig.value = null
+  assistantChanges.value = []
+  assistantSaved.value = false
 }
 
 
@@ -820,6 +888,16 @@ onMounted(async () => {
       <template #actions>
         <n-button quaternary circle :loading="loading" @click="load">
           <template #icon><RefreshOutline /></template>
+        </n-button>
+        <n-button
+          v-if="auth.can('audit:write')"
+          secondary
+          :disabled="!hasGeneralProvider || !audits.length"
+          :title="hasGeneralProvider ? '选择一条配置，让 AI 在现有配置上修改' : '请先在模型接入中配置并启用通用大模型'"
+          @click="openAssistantEditPicker"
+        >
+          <template #icon><CreateOutline /></template>
+          AI 编辑配置
         </n-button>
         <n-button
           v-if="auth.can('audit:write')"
@@ -1161,15 +1239,60 @@ onMounted(async () => {
       </div>
     </n-modal>
 
+    <n-modal v-model:show="assistantPickShow">
+      <div class="clone-modal assistant-pick-modal">
+        <div class="modal-head">
+          <div>
+            <div class="modal-kicker">AI EDIT TARGET</div>
+            <h2>选择要编辑的审核配置</h2>
+            <p>AI 会先读取这条配置的当前模型、分类、规则和 Prompt，再确认要改成什么。</p>
+          </div>
+          <span class="modal-icon"><CreateOutline /></span>
+        </div>
+        <div class="modal-body">
+          <div class="field">
+            <label>编辑目标 <span class="required">*</span></label>
+            <div class="assistant-pick-list">
+              <button
+                v-for="audit in audits"
+                :key="audit.id"
+                type="button"
+                class="assistant-pick-item"
+                :class="{ active: assistantPickId === audit.id }"
+                @click="assistantPickId = audit.id"
+              >
+                <span class="assistant-pick-main">
+                  <strong>{{ audit.name }}</strong>
+                  <code>{{ audit.code }}</code>
+                </span>
+                <span class="assistant-pick-desc">{{ describeAudit(audit) }}</span>
+                <span class="assistant-pick-provider">{{ audit.provider_name || '未绑定模型' }}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <n-button @click="assistantPickShow = false">取消</n-button>
+          <n-button type="primary" :disabled="!assistantPickId" @click="confirmAssistantEditPick">开始修改</n-button>
+        </div>
+      </div>
+    </n-modal>
+
     <n-modal :show="assistantShow" :mask-closable="!assistantBusy && !saving" @update:show="(value: boolean) => { if (!value) closeAssistant() }">
       <div class="assistant-modal">
         <div class="modal-head assistant-head">
           <div>
             <div class="modal-kicker">AI CONFIG ASSISTANT</div>
             <h2>{{ assistantMode === 'edit' ? 'AI 帮我修改审核配置' : 'AI 帮我创建审核配置' }}</h2>
-            <p>通用大模型会先向你提问，信息足够后自动生成并保存配置。</p>
+            <p>{{ assistantMode === 'edit' ? 'AI 会读取当前配置，确认“现在是什么、要改成什么”后只修改你指定的部分。' : '通用大模型会先向你提问，信息足够后自动生成并保存配置。' }}</p>
           </div>
           <span class="modal-icon"><ChatbubbleEllipsesOutline /></span>
+        </div>
+        <div v-if="assistantMode === 'edit' && editing" class="assistant-target">
+          <span class="assistant-target-label">正在编辑</span>
+          <strong>{{ editing.name }}</strong>
+          <code>{{ editing.code }}</code>
+          <span class="assistant-target-current">当前：{{ describeAudit(editing) }}</span>
         </div>
         <div ref="assistantChat" class="assistant-chat">
           <div
@@ -1186,8 +1309,12 @@ onMounted(async () => {
             <div class="assistant-bubble assistant-thinking"><n-spin size="small" /> 正在理解并生成配置，请稍候…</div>
           </div>
           <div v-if="assistantReadyConfig" class="assistant-ready">
-            <strong>配置已生成并{{ assistantMode === 'edit' ? '更新' : '创建' }}：{{ assistantReadyConfig.name }}</strong>
+            <strong>{{ assistantMode === 'edit' ? '已按你的要求更新并保存' : '配置已生成并创建' }}：{{ assistantReadyConfig.name }}</strong>
             <span>{{ assistantReadyConfig.decision_mode === 'CLASSIFY' ? '分类审核' : '合规审核' }} · {{ assistantReadyConfig.categories.length }} 个分类 · {{ assistantReadyConfig.media_types.join(' + ') }}</span>
+            <ul v-if="assistantMode === 'edit' && assistantChanges.length" class="assistant-changes">
+              <li v-for="change in assistantChanges" :key="change">{{ change }}</li>
+            </ul>
+            <span v-else-if="assistantMode === 'edit'">未检测到与当前配置的字段差异。</span>
           </div>
         </div>
         <div class="assistant-composer">
@@ -1201,7 +1328,7 @@ onMounted(async () => {
           />
           <div class="assistant-actions">
             <span class="assistant-note">
-              {{ hasGeneralProvider ? '使用项目内启用的通用大模型，不会调用 JEV' : '需要先配置通用大模型' }}
+              {{ assistantSaved && assistantMode === 'edit' ? '修改已保存；可以继续描述调整，或关闭窗口' : hasGeneralProvider ? '使用项目内启用的通用大模型，不会调用 JEV' : '需要先配置通用大模型' }}
             </span>
             <n-button :disabled="assistantBusy || saving" @click="closeAssistant">关闭</n-button>
             <n-button type="primary" :loading="assistantBusy || saving" :disabled="!assistantInput.trim()" @click="sendAssistant">
@@ -1828,6 +1955,116 @@ onMounted(async () => {
   flex-shrink: 0;
 }
 
+.assistant-target {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 20px;
+  border-bottom: 1px solid #e8eef7;
+  background: #f6f9ff;
+}
+
+.assistant-target-label {
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: #e3ecff;
+  color: #2854a8;
+  font-size: 8.5px;
+}
+
+.assistant-target strong {
+  color: var(--text);
+  font-size: 11px;
+}
+
+.assistant-target code {
+  color: var(--muted-light);
+  font-family: var(--mono);
+  font-size: 9px;
+}
+
+.assistant-target-current {
+  width: 100%;
+  color: var(--muted);
+  font-size: 9.5px;
+}
+
+.assistant-pick-modal {
+  width: min(560px, calc(100vw - 30px));
+}
+
+.assistant-pick-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.assistant-pick-item {
+  display: flex;
+  width: 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid #e6ecf6;
+  border-radius: 9px;
+  background: #fff;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.assistant-pick-item:hover {
+  border-color: #c9daf7;
+  background: #f8fbff;
+}
+
+.assistant-pick-item.active {
+  border-color: var(--brand);
+  background: #f2f7ff;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.08);
+}
+
+.assistant-pick-main {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+}
+
+.assistant-pick-main strong {
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.assistant-pick-main code {
+  color: var(--muted-light);
+  font-family: var(--mono);
+  font-size: 9px;
+}
+
+.assistant-pick-desc {
+  flex: 1;
+  color: var(--muted);
+  font-size: 9.5px;
+}
+
+.assistant-pick-provider {
+  color: var(--muted-light);
+  font-size: 9px;
+}
+
+.assistant-changes {
+  margin: 5px 0 0;
+  padding-left: 16px;
+  color: #3f6b50;
+  font-size: 9.5px;
+  line-height: 1.75;
+}
+
 .assistant-chat {
   display: flex;
   min-height: 260px;
@@ -2451,6 +2688,116 @@ onMounted(async () => {
   flex-shrink: 0;
 }
 
+.assistant-target {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 20px;
+  border-bottom: 1px solid #e8eef7;
+  background: #f6f9ff;
+}
+
+.assistant-target-label {
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: #e3ecff;
+  color: #2854a8;
+  font-size: 8.5px;
+}
+
+.assistant-target strong {
+  color: var(--text);
+  font-size: 11px;
+}
+
+.assistant-target code {
+  color: var(--muted-light);
+  font-family: var(--mono);
+  font-size: 9px;
+}
+
+.assistant-target-current {
+  width: 100%;
+  color: var(--muted);
+  font-size: 9.5px;
+}
+
+.assistant-pick-modal {
+  width: min(560px, calc(100vw - 30px));
+}
+
+.assistant-pick-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.assistant-pick-item {
+  display: flex;
+  width: 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid #e6ecf6;
+  border-radius: 9px;
+  background: #fff;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.assistant-pick-item:hover {
+  border-color: #c9daf7;
+  background: #f8fbff;
+}
+
+.assistant-pick-item.active {
+  border-color: var(--brand);
+  background: #f2f7ff;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.08);
+}
+
+.assistant-pick-main {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+}
+
+.assistant-pick-main strong {
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.assistant-pick-main code {
+  color: var(--muted-light);
+  font-family: var(--mono);
+  font-size: 9px;
+}
+
+.assistant-pick-desc {
+  flex: 1;
+  color: var(--muted);
+  font-size: 9.5px;
+}
+
+.assistant-pick-provider {
+  color: var(--muted-light);
+  font-size: 9px;
+}
+
+.assistant-changes {
+  margin: 5px 0 0;
+  padding-left: 16px;
+  color: #3f6b50;
+  font-size: 9.5px;
+  line-height: 1.75;
+}
+
 .assistant-chat {
   display: flex;
   min-height: 260px;
@@ -2577,6 +2924,116 @@ onMounted(async () => {
 
 .assistant-head {
   flex-shrink: 0;
+}
+
+.assistant-target {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 20px;
+  border-bottom: 1px solid #e8eef7;
+  background: #f6f9ff;
+}
+
+.assistant-target-label {
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: #e3ecff;
+  color: #2854a8;
+  font-size: 8.5px;
+}
+
+.assistant-target strong {
+  color: var(--text);
+  font-size: 11px;
+}
+
+.assistant-target code {
+  color: var(--muted-light);
+  font-family: var(--mono);
+  font-size: 9px;
+}
+
+.assistant-target-current {
+  width: 100%;
+  color: var(--muted);
+  font-size: 9.5px;
+}
+
+.assistant-pick-modal {
+  width: min(560px, calc(100vw - 30px));
+}
+
+.assistant-pick-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.assistant-pick-item {
+  display: flex;
+  width: 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid #e6ecf6;
+  border-radius: 9px;
+  background: #fff;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.assistant-pick-item:hover {
+  border-color: #c9daf7;
+  background: #f8fbff;
+}
+
+.assistant-pick-item.active {
+  border-color: var(--brand);
+  background: #f2f7ff;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.08);
+}
+
+.assistant-pick-main {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+}
+
+.assistant-pick-main strong {
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.assistant-pick-main code {
+  color: var(--muted-light);
+  font-family: var(--mono);
+  font-size: 9px;
+}
+
+.assistant-pick-desc {
+  flex: 1;
+  color: var(--muted);
+  font-size: 9.5px;
+}
+
+.assistant-pick-provider {
+  color: var(--muted-light);
+  font-size: 9px;
+}
+
+.assistant-changes {
+  margin: 5px 0 0;
+  padding-left: 16px;
+  color: #3f6b50;
+  font-size: 9.5px;
+  line-height: 1.75;
 }
 
 .assistant-chat {
