@@ -1,7 +1,8 @@
 ﻿[CmdletBinding()]
 param(
-    [ValidateSet('win', 'linux', 'both')]
-    [string]$Target = ''
+    [ValidateSet('win', 'linux', 'linux-arm64', 'both', 'all')]
+    [string]$Target = '',
+    [string]$Version = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -21,23 +22,36 @@ function Require-Command([string]$Name, [string]$Hint) {
     return $command
 }
 
+if ([string]::IsNullOrWhiteSpace($Version)) {
+    $versionFile = Join-Path $Root 'VERSION'
+    if (Test-Path $versionFile) {
+        $Version = (Get-Content $versionFile -Raw).Trim()
+    }
+}
+if ([string]::IsNullOrWhiteSpace($Version)) {
+    $Version = '1.0.0'
+}
+$Version = $Version.Trim().TrimStart('v')
+
 Write-Host "SmartDoc Vision 单文件构建" -ForegroundColor Green
 Write-Host "项目目录：$Root"
+Write-Host "版本：$Version"
 
 if ([string]::IsNullOrWhiteSpace($Target)) {
     Write-Host ""
     Write-Host "请选择编译目标："
-    Write-Host "  1. Windows (amd64)"
-    Write-Host "  2. Linux   (amd64)"
-    Write-Host "  3. Windows + Linux"
+    Write-Host "  1. Windows  amd64"
+    Write-Host "  2. Linux    amd64"
+    Write-Host "  3. Linux    arm64"
+    Write-Host "  4. 全部：Windows amd64 + Linux amd64 + Linux arm64"
     do {
-        $choice = Read-Host "输入 1 / 2 / 3"
+        $choice = Read-Host "输入 1 / 2 / 3 / 4"
         $choice = $choice.Trim()
-        if ($choice -notin @('1', '2', '3')) {
-            Write-Host "请输入 1、2 或 3。" -ForegroundColor Yellow
+        if ($choice -notin @('1', '2', '3', '4')) {
+            Write-Host "请输入 1、2、3 或 4。" -ForegroundColor Yellow
         }
-    } while ($choice -notin @('1', '2', '3'))
-    $Target = @{ '1' = 'win'; '2' = 'linux'; '3' = 'both' }[$choice]
+    } while ($choice -notin @('1', '2', '3', '4'))
+    $Target = @{ '1' = 'win'; '2' = 'linux'; '3' = 'linux-arm64'; '4' = 'all' }[$choice]
 }
 
 $go = Require-Command 'go' '请先安装 Go 并加入 PATH。'
@@ -48,12 +62,20 @@ if (-not $npmCommand) {
 }
 
 $targets = switch ($Target) {
-    'win' { @(@{ Name = 'windows'; GOOS = 'windows'; File = 'smartdoc-vision-windows-amd64.exe' }) }
-    'linux' { @(@{ Name = 'linux'; GOOS = 'linux'; File = 'smartdoc-vision-linux-amd64' }) }
+    'win' { @(@{ Name = 'Windows amd64'; GOOS = 'windows'; GOARCH = 'amd64'; File = "smartdoc-vision-$Version-windows-amd64.exe" }) }
+    'linux' { @(@{ Name = 'Linux amd64'; GOOS = 'linux'; GOARCH = 'amd64'; File = "smartdoc-vision-$Version-linux-amd64" }) }
+    'linux-arm64' { @(@{ Name = 'Linux arm64'; GOOS = 'linux'; GOARCH = 'arm64'; File = "smartdoc-vision-$Version-linux-arm64" }) }
     'both' {
         @(
-            @{ Name = 'windows'; GOOS = 'windows'; File = 'smartdoc-vision-windows-amd64.exe' },
-            @{ Name = 'linux'; GOOS = 'linux'; File = 'smartdoc-vision-linux-amd64' }
+            @{ Name = 'Windows amd64'; GOOS = 'windows'; GOARCH = 'amd64'; File = "smartdoc-vision-$Version-windows-amd64.exe" },
+            @{ Name = 'Linux amd64'; GOOS = 'linux'; GOARCH = 'amd64'; File = "smartdoc-vision-$Version-linux-amd64" }
+        )
+    }
+    'all' {
+        @(
+            @{ Name = 'Windows amd64'; GOOS = 'windows'; GOARCH = 'amd64'; File = "smartdoc-vision-$Version-windows-amd64.exe" },
+            @{ Name = 'Linux amd64'; GOOS = 'linux'; GOARCH = 'amd64'; File = "smartdoc-vision-$Version-linux-amd64" },
+            @{ Name = 'Linux arm64'; GOOS = 'linux'; GOARCH = 'arm64'; File = "smartdoc-vision-$Version-linux-arm64" }
         )
     }
 }
@@ -102,13 +124,13 @@ $oldGOOS = $env:GOOS
 $oldGOARCH = $env:GOARCH
 $oldCGO = $env:CGO_ENABLED
 try {
-    $env:GOARCH = 'amd64'
     $env:CGO_ENABLED = '0'
     foreach ($item in $targets) {
         $env:GOOS = $item.GOOS
+        $env:GOARCH = $item.GOARCH
         $output = Join-Path $outputDir $item.File
         Write-Host "  -> $($item.Name) : $output"
-        & $go.Source build -trimpath -ldflags "-s -w" -o $output ./cmd/server
+        & $go.Source build -trimpath -ldflags "-s -w -X smartdoc-vision/backend/internal/version.Version=$Version" -o $output ./cmd/server
         if ($LASTEXITCODE -ne 0) {
             throw "$($item.Name) 编译失败，退出码 $LASTEXITCODE"
         }

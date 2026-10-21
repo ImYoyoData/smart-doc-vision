@@ -1,0 +1,141 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version, for example v1.0.0'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build and publish release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve version
+        id: version
+        env:
+          RAW_VERSION: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.version || github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${RAW_VERSION#v}"
+          if [ -z "$VERSION" ]; then
+            echo "Release version is empty" >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build web UI
+        working-directory: web
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+
+      - name: Embed web UI
+        run: |
+          set -euo pipefail
+          rm -rf backend/internal/webui/dist
+          mkdir -p backend/internal/webui/dist
+          cp -R web/dist/. backend/internal/webui/dist/
+          touch backend/internal/webui/dist/.gitkeep
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+
+      - name: Run backend tests
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          go vet ./...
+          go test ./...
+
+      - name: Build release binaries
+        working-directory: backend
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p ../dist
+          LDFLAGS="-s -w -X smartdoc-vision/backend/internal/version.Version=${VERSION}"
+
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 \
+            go build -trimpath -ldflags "$LDFLAGS" \
+            -o "../dist/smartdoc-vision-${VERSION}-windows-amd64.exe" ./cmd/server
+
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+            go build -trimpath -ldflags "$LDFLAGS" \
+            -o "../dist/smartdoc-vision-${VERSION}-linux-amd64" ./cmd/server
+
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
+            go build -trimpath -ldflags "$LDFLAGS" \
+            -o "../dist/smartdoc-vision-${VERSION}-linux-arm64" ./cmd/server
+
+          cd ../dist
+          sha256sum smartdoc-vision-* > SHA256SUMS.txt
+          ls -lh
+
+      - name: Prepare release notes
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          import re
+
+          version = os.environ['VERSION']
+          text = open('CHANGELOG.md', encoding='utf-8').read()
+          match = re.search(r'^##\s+\[?' + re.escape(version) + r'\]?.*$', text, re.MULTILINE)
+          if not match:
+              raise SystemExit(f'CHANGELOG.md does not contain a section for {version}')
+          start = match.end()
+          next_heading = re.search(r'^##\s+', text[start:], re.MULTILINE)
+          section = text[start:start + next_heading.start()] if next_heading else text[start:]
+          with open('release-notes.md', 'w', encoding='utf-8') as output:
+              output.write(f'# SmartDoc Vision v{version}\n\n')
+              output.write(section.strip())
+              output.write('\n')
+          PY
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: SmartDoc Vision ${{ steps.version.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          body_path: release-notes.md
+          fail_on_unmatched_files: true
+          make_latest: true
+          files: |
+            dist/smartdoc-vision-${{ steps.version.outputs.version }}-windows-amd64.exe
+            dist/smartdoc-vision-${{ steps.version.outputs.version }}-linux-amd64
+            dist/smartdoc-vision-${{ steps.version.outputs.version }}-linux-arm64
+            dist/SHA256SUMS.txt

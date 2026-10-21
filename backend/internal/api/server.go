@@ -17,6 +17,7 @@ import (
 	"smartdoc-vision/backend/internal/model"
 	"smartdoc-vision/backend/internal/security"
 	"smartdoc-vision/backend/internal/service"
+	appversion "smartdoc-vision/backend/internal/version"
 	"smartdoc-vision/backend/internal/webui"
 )
 
@@ -197,7 +198,7 @@ func (s *Server) systemInfo(c *gin.Context) {
 	ok(c, gin.H{
 		"name":         "智审图档",
 		"name_en":      "SmartDoc Vision",
-		"version":      "1.0.0",
+		"version":      appversion.Version,
 		"redis_db":     s.cfg.RedisDB,
 		"worker_count": s.cfg.WorkerCount,
 		"provider_kinds": []gin.H{

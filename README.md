@@ -213,9 +213,9 @@ cd backend && go test ./...
 cd web && npm run build
 ```
 
-## 单文件构建（Windows / Linux）
+## 单文件构建与发布（Windows / Linux）
 
-除了前后端分离开发模式，项目支持把 **Vue 生产资源嵌入 Go 二进制**，生成一个可直接运行的执行文件。
+除了前后端分离开发模式，项目支持把 **Vue 生产资源嵌入 Go 二进制**，生成一个可直接运行的执行文件。支持 Windows amd64、Linux amd64 和 Linux arm64。
 
 在项目根目录执行：
 
@@ -226,9 +226,10 @@ cd web && npm run build
 脚本会询问编译目标：
 
 ```text
-1. Windows (amd64)
-2. Linux   (amd64)
-3. Windows + Linux
+1. Windows  amd64
+2. Linux    amd64
+3. Linux    arm64
+4. 全部：Windows amd64 + Linux amd64 + Linux arm64
 ```
 
 也可以非交互指定：
@@ -236,8 +237,12 @@ cd web && npm run build
 ```powershell
 .\build.ps1 -Target win
 .\build.ps1 -Target linux
-.\build.ps1 -Target both
+.\build.ps1 -Target linux-arm64
+.\build.ps1 -Target all
+.\build.ps1 -Target all -Version 1.2.0
 ```
+
+版本号默认读取根目录 [VERSION](VERSION)，并会通过 `-ldflags -X` 写入程序；后台「模型接入」等页面显示的版本号来自 `/meta/system`。
 
 构建流程：
 
@@ -250,8 +255,9 @@ cd web && npm run build
 生成文件示例：
 
 ```text
-dist/smartdoc-vision-windows-amd64.exe
-dist/smartdoc-vision-linux-amd64
+dist/smartdoc-vision-1.0.0-windows-amd64.exe
+dist/smartdoc-vision-1.0.0-linux-amd64
+dist/smartdoc-vision-1.0.0-linux-arm64
 dist/.env
 dist/config.yml.example
 ```
@@ -261,14 +267,18 @@ dist/config.yml.example
 运行（需要同目录或当前工作目录存在 `.env`）：
 
 ```powershell
-.\dist\smartdoc-vision-windows-amd64.exe
+.\dist\smartdoc-vision-1.0.0-windows-amd64.exe
 ```
 
 Linux：
 
 ```bash
-chmod +x dist/smartdoc-vision-linux-amd64
-./dist/smartdoc-vision-linux-amd64
+chmod +x dist/smartdoc-vision-1.0.0-linux-amd64
+./dist/smartdoc-vision-1.0.0-linux-amd64
+
+# ARM64
+chmod +x dist/smartdoc-vision-1.0.0-linux-arm64
+./dist/smartdoc-vision-1.0.0-linux-arm64
 ```
 
 启动后打开：
@@ -280,6 +290,41 @@ http://127.0.0.1:8080/admin
 根路径 `/` 会自动跳转到 `/admin/`；前端静态资源、SPA 路由、管理 API（`/api/admin/v1`）和开放 API（`/open/v1`）都由同一个进程提供，不再需要单独部署前端或 Nginx。
 
 > 单文件包含的是程序与前端页面，不包含数据库口令等敏感配置。MySQL、Redis、JWT_SECRET、MASTER_KEY 仍通过 `.env` 或环境变量注入。直接 `go run` 且未执行 `build.ps1` 时，`/admin` 会提示前端资源未打包，开发者继续使用 Vite `5173` 即可。
+
+### GitHub Release 自动发布
+
+发布流程位于 [.github/workflows/release.yml](.github/workflows/release.yml)，支持两种触发方式：
+
+1. 推送 `v*` 标签；
+2. 在 GitHub Actions 页面手动运行 `Release` 并填写版本号。
+
+发布新版本：
+
+```bash
+# 同步更新 CHANGELOG.md 和 VERSION
+git tag v1.0.0
+git push origin main
+git push origin v1.0.0
+```
+
+工作流会：
+
+- 安装前端依赖并构建 Vue；
+- 将前端资源嵌入 Go 程序；
+- 执行 `go vet` 和 `go test`；
+- 构建 Windows amd64、Linux amd64、Linux arm64；
+- 生成 `SHA256SUMS.txt`；
+- 从 [CHANGELOG.md](CHANGELOG.md) 提取对应版本更新内容；
+- 创建或更新 GitHub Release，并上传三个可执行文件和校验和。
+
+发布资产命名：
+
+```text
+smartdoc-vision-<version>-windows-amd64.exe
+smartdoc-vision-<version>-linux-amd64
+smartdoc-vision-<version>-linux-arm64
+SHA256SUMS.txt
+```
 
 ## Docker 部署
 
