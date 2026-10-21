@@ -33,6 +33,17 @@ export interface LoginResult {
   user: User
 }
 
+export interface CaptchaChallenge {
+  id: string
+  background: string
+  piece: string
+  width: number
+  height: number
+  piece_size: number
+  piece_y: number
+  expires_in: number
+}
+
 export interface Project {
   id: number
   name: string

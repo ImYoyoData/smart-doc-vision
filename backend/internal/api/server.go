@@ -82,6 +82,7 @@ func (s *Server) Router() *gin.Engine {
 
 	admin := r.Group("/api/admin/v1")
 	{
+		admin.GET("/auth/captcha", s.captchaChallenge)
 		admin.POST("/auth/login", s.login)
 		admin.POST("/auth/refresh", s.refresh)
 		auth := admin.Group("")

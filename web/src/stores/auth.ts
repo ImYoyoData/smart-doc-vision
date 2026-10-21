@@ -62,8 +62,13 @@ export const useAuthStore = defineStore('auth', () => {
     localStorage.setItem(USER_KEY, JSON.stringify(data.user))
   }
 
-  async function login(username: string, password: string) {
-    const data = await authApi.login({ username, password })
+  async function login(username: string, password: string, captcha: { id: string; x: number }) {
+    const data = await authApi.login({
+      username,
+      password,
+      captcha_id: captcha.id,
+      captcha_x: captcha.x,
+    })
     applySession(data)
     return data
   }

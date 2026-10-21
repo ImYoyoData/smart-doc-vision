@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -10,8 +12,10 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 
+	"smartdoc-vision/backend/internal/captcha"
 	"smartdoc-vision/backend/internal/catalog"
 	"smartdoc-vision/backend/internal/model"
 	"smartdoc-vision/backend/internal/security"
@@ -63,8 +67,51 @@ func (s *Server) authRequired() gin.HandlerFunc {
 }
 
 type loginRequest struct {
-	Username string `json:"username" binding:"required"`
-	Password string `json:"password" binding:"required"`
+	Username  string `json:"username" binding:"required"`
+	Password  string `json:"password" binding:"required"`
+	CaptchaID string `json:"captcha_id"`
+	CaptchaX  int    `json:"captcha_x"`
+}
+
+func (s *Server) captchaChallenge(c *gin.Context) {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
+	defer cancel()
+	if s.redis == nil {
+		fail(c, http.StatusServiceUnavailable, "DEPENDENCY_MISSING", "验证码服务不可用", nil)
+		return
+	}
+	ip := c.ClientIP()
+	rateKey := "sdv:captcha:rate:" + strings.ToLower(ip)
+	if count, err := s.redis.Incr(ctx, rateKey).Result(); err == nil {
+		if count == 1 {
+			_ = s.redis.Expire(ctx, rateKey, time.Minute).Err()
+		}
+		if count > 30 {
+			fail(c, http.StatusTooManyRequests, "CAPTCHA_RATE_LIMITED", "验证码请求过于频繁，请稍后重试", nil)
+			return
+		}
+	}
+	challenge, answerX, err := captcha.Generate()
+	if err != nil {
+		serverError(c, err)
+		return
+	}
+	id := uuid.NewString()
+	payload, _ := json.Marshal(map[string]any{"x": answerX, "ip": ip})
+	if err := s.redis.Set(ctx, captchaKey(id), payload, 2*time.Minute).Err(); err != nil {
+		serverError(c, err)
+		return
+	}
+	ok(c, gin.H{
+		"id":         id,
+		"background": "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(challenge.Background),
+		"piece":      "data:image/png;base64," + base64.StdEncoding.EncodeToString(challenge.Piece),
+		"width":      challenge.Width,
+		"height":     challenge.Height,
+		"piece_size": challenge.PieceSize,
+		"piece_y":    challenge.PieceY,
+		"expires_in": challenge.ExpiresIn,
+	})
 }
 
 func (s *Server) login(c *gin.Context) {
@@ -76,23 +123,34 @@ func (s *Server) login(c *gin.Context) {
 	req.Username = strings.TrimSpace(req.Username)
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
 	defer cancel()
+	ip := c.ClientIP()
 
-	if retry, locked := s.loginLocked(ctx, req.Username, c.ClientIP()); locked {
-		retryAfter := int(time.Until(retry).Seconds())
-		if retryAfter < 1 {
-			retryAfter = 1
+	if retry, code := s.loginLocked(ctx, req.Username, ip); code != "" {
+		s.writeLoginBlocked(c, time.Until(retry), code)
+		return
+	}
+	if !s.verifyCaptcha(ctx, req.CaptchaID, req.CaptchaX, ip) {
+		blocked, retry := s.recordLoginFailure(ctx, req.Username, ip)
+		if blocked {
+			s.writeLoginBlocked(c, retry, "IP_BLOCKED")
+			return
 		}
-		c.Header("Retry-After", strconv.Itoa(retryAfter))
-		fail(c, http.StatusTooManyRequests, "LOGIN_LOCKED", fmt.Sprintf("失败次数过多，请 %d 秒后重试", retryAfter), nil)
+		s.createAuditLogNoReq(nil, req.Username, "LOGIN_CAPTCHA_FAILED", "USER", req.Username, "FAILED",
+			map[string]any{"ip": ip}, c.GetString("trace_id"))
+		fail(c, http.StatusBadRequest, "CAPTCHA_INVALID", "滑块验证失败或已过期，请重新拖动", nil)
 		return
 	}
 
 	var user model.User
 	err := s.db.Where("username = ?", req.Username).First(&user).Error
 	if err != nil || !security.CheckPassword(user.PasswordHash, req.Password) {
-		s.recordLoginFailure(ctx, req.Username, c.ClientIP())
+		blocked, retry := s.recordLoginFailure(ctx, req.Username, ip)
+		if blocked {
+			s.writeLoginBlocked(c, retry, "IP_BLOCKED")
+			return
+		}
 		s.createAuditLogNoReq(nil, req.Username, "LOGIN_FAILED", "USER", req.Username, "FAILED",
-			map[string]any{"ip": c.ClientIP()}, c.GetString("trace_id"))
+			map[string]any{"ip": ip}, c.GetString("trace_id"))
 		fail(c, http.StatusUnauthorized, "INVALID_CREDENTIALS", "账号或密码错误", nil)
 		return
 	}
@@ -112,7 +170,6 @@ func (s *Server) login(c *gin.Context) {
 		return
 	}
 	now := time.Now()
-	ip := c.ClientIP()
 	_ = s.db.Model(&user).Updates(map[string]any{"last_login_at": now, "last_login_ip": ip}).Error
 	user.LastLoginAt = &now
 	user.LastLoginIP = ip
@@ -177,41 +234,72 @@ func (s *Server) hydrateUser(user *model.User) {
 	user.ProjectIDs = ids
 }
 
-func (s *Server) loginLocked(ctx context.Context, username, ip string) (time.Time, bool) {
+func (s *Server) loginLocked(ctx context.Context, username, ip string) (time.Time, string) {
+	if s.redis == nil {
+		return time.Time{}, ""
+	}
+	if retry, blocked := s.ipBlocked(ctx, ip); blocked {
+		return retry, "IP_BLOCKED"
+	}
+	value, err := s.redis.Get(ctx, loginFailKey("user", username)).Result()
+	if err != nil {
+		return time.Time{}, ""
+	}
+	count, _ := strconv.Atoi(value)
+	if count < 5 {
+		return time.Time{}, ""
+	}
+	ttl, err := s.redis.TTL(ctx, loginFailKey("user", username)).Result()
+	if err == nil && ttl > 0 {
+		return time.Now().Add(ttl), "LOGIN_LOCKED"
+	}
+	return time.Time{}, ""
+}
+
+func (s *Server) ipBlocked(ctx context.Context, ip string) (time.Time, bool) {
 	if s.redis == nil {
 		return time.Time{}, false
 	}
-	keys := []string{loginFailKey("user", username), loginFailKey("ip", ip)}
-	for _, key := range keys {
-		val, err := s.redis.Get(ctx, key).Result()
-		if err != nil {
-			continue
-		}
-		count, _ := strconv.Atoi(val)
-		limit := 5
-		if strings.HasPrefix(key, "sdv:login:fail:ip:") {
-			limit = 30
-		}
-		if count >= limit {
-			ttl, err := s.redis.TTL(ctx, key).Result()
-			if err == nil && ttl > 0 {
-				return time.Now().Add(ttl), true
-			}
-		}
+	ttl, err := s.redis.TTL(ctx, ipBlockKey(ip)).Result()
+	if err == nil && ttl > 0 {
+		return time.Now().Add(ttl), true
 	}
 	return time.Time{}, false
 }
 
-func (s *Server) recordLoginFailure(ctx context.Context, username, ip string) {
+func (s *Server) recordLoginFailure(ctx context.Context, username, ip string) (bool, time.Duration) {
 	if s.redis == nil {
-		return
+		return false, 0
 	}
-	for _, key := range []string{loginFailKey("user", username), loginFailKey("ip", ip)} {
-		pipe := s.redis.TxPipeline()
-		pipe.Incr(ctx, key)
-		pipe.Expire(ctx, key, 15*time.Minute)
-		_, _ = pipe.Exec(ctx)
+	pipe := s.redis.TxPipeline()
+	userCmd := pipe.Incr(ctx, loginFailKey("user", username))
+	pipe.Expire(ctx, loginFailKey("user", username), 15*time.Minute)
+	ipCmd := pipe.Incr(ctx, loginFailKey("ip", ip))
+	pipe.Expire(ctx, loginFailKey("ip", ip), 10*time.Minute)
+	if _, err := pipe.Exec(ctx); err != nil {
+		return false, 0
 	}
+	_ = userCmd
+	if ipCmd.Val() >= 3 {
+		blockFor := 10 * time.Minute
+		_ = s.redis.Set(ctx, ipBlockKey(ip), "1", blockFor).Err()
+		_ = s.redis.Del(ctx, loginFailKey("ip", ip)).Err()
+		return true, blockFor
+	}
+	return false, 0
+}
+
+func (s *Server) writeLoginBlocked(c *gin.Context, retry time.Duration, code string) {
+	retryAfter := int(retry.Seconds())
+	if retryAfter < 1 {
+		retryAfter = 1
+	}
+	c.Header("Retry-After", strconv.Itoa(retryAfter))
+	message := fmt.Sprintf("登录失败次数过多，请 %d 秒后重试", retryAfter)
+	if code == "IP_BLOCKED" {
+		message = fmt.Sprintf("连续 3 次登录失败，该 IP 已被封禁，请 %d 秒后重试", retryAfter)
+	}
+	fail(c, http.StatusTooManyRequests, code, message, gin.H{"retry_after": retryAfter})
 }
 
 func (s *Server) clearLoginFailure(ctx context.Context, username, ip string) {
@@ -221,8 +309,42 @@ func (s *Server) clearLoginFailure(ctx context.Context, username, ip string) {
 	_ = s.redis.Del(ctx, loginFailKey("user", username), loginFailKey("ip", ip)).Err()
 }
 
+func (s *Server) verifyCaptcha(ctx context.Context, id string, x int, ip string) bool {
+	if s.redis == nil || strings.TrimSpace(id) == "" || x < 0 {
+		return false
+	}
+	raw, err := s.redis.Get(ctx, captchaKey(id)).Result()
+	if err != nil {
+		return false
+	}
+	_ = s.redis.Del(ctx, captchaKey(id)).Err()
+	var stored struct {
+		X  int    `json:"x"`
+		IP string `json:"ip"`
+	}
+	if err := json.Unmarshal([]byte(raw), &stored); err != nil {
+		return false
+	}
+	if stored.IP != "" && stored.IP != ip {
+		return false
+	}
+	diff := x - stored.X
+	if diff < 0 {
+		diff = -diff
+	}
+	return diff <= 8
+}
+
 func loginFailKey(scope, value string) string {
 	return "sdv:login:fail:" + scope + ":" + strings.ToLower(value)
+}
+
+func ipBlockKey(ip string) string {
+	return "sdv:login:block:ip:" + strings.ToLower(ip)
+}
+
+func captchaKey(id string) string {
+	return "sdv:auth:captcha:" + id
 }
 
 func isNotFound(err error) bool { return errors.Is(err, gorm.ErrRecordNotFound) }

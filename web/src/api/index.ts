@@ -5,6 +5,7 @@ import type {
   Audit,
   AuditCategory,
   AuditLog,
+  CaptchaChallenge,
   DashboardData,
   IntegrationGuide,
   LoginResult,
@@ -23,7 +24,9 @@ import type {
 } from './types'
 
 export const authApi = {
-  login: (payload: { username: string; password: string }) => post<LoginResult>('/auth/login', payload),
+  captcha: () => get<CaptchaChallenge>('/auth/captcha'),
+  login: (payload: { username: string; password: string; captcha_id: string; captcha_x: number }) =>
+    post<LoginResult>('/auth/login', payload),
   refresh: (refreshToken: string) => post<LoginResult>('/auth/refresh', { refresh_token: refreshToken }),
   me: () => get<{ user: User }>('/auth/me'),
   logout: () => post<{ logged_out: boolean }>('/auth/logout'),

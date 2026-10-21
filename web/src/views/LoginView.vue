@@ -13,6 +13,7 @@ import {
   SparklesOutline,
 } from '@vicons/ionicons5'
 import BrandMark from '@/components/BrandMark.vue'
+import SliderCaptcha from '@/components/SliderCaptcha.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useWorkspaceStore } from '@/stores/workspace'
 
@@ -26,6 +27,8 @@ const username = ref(localStorage.getItem('sdv.last_user') || '')
 const password = ref('')
 const loading = ref(false)
 const errorText = ref('')
+const captchaPayload = ref<{ id: string; x: number } | null>(null)
+const captchaRef = ref<InstanceType<typeof SliderCaptcha> | null>(null)
 
 onMounted(() => {
   if (auth.isAuthenticated) router.replace('/dashboard')
@@ -36,10 +39,14 @@ async function submit() {
     errorText.value = '请输入账号和密码'
     return
   }
+  if (!captchaPayload.value) {
+    errorText.value = '请先拖动滑块完成安全验证'
+    return
+  }
   loading.value = true
   errorText.value = ''
   try {
-    await auth.login(username.value.trim(), password.value)
+    await auth.login(username.value.trim(), password.value, captchaPayload.value)
     localStorage.setItem('sdv.last_user', username.value.trim())
     await workspace.loadProjects(true).catch(() => undefined)
     message.success('登录成功，欢迎回来')
@@ -47,6 +54,8 @@ async function submit() {
     router.replace(redirect)
   } catch (error) {
     errorText.value = error instanceof Error ? error.message : '登录失败'
+    // A captcha is one-time use and is consumed even when the password is wrong.
+    captchaRef.value?.refresh()
   } finally {
     loading.value = false
   }
@@ -179,6 +188,8 @@ function forgot() {
             </n-input>
           </label>
 
+          <SliderCaptcha ref="captchaRef" v-model="captchaPayload" />
+
           <div v-if="errorText" class="login-error">{{ errorText }}</div>
 
           <n-button type="primary" size="large" block :loading="loading" attr-type="submit" class="login-button">
@@ -194,7 +205,7 @@ function forgot() {
 
         <div class="secure-note">
           <ShieldCheckmarkOutline />
-          <span>密钥加密存储 · 登录失败锁定 · 全量操作审计</span>
+          <span>滑块验证 · 同一 IP 连续 3 次失败封禁 10 分钟 · 全量操作审计</span>
         </div>
       </div>
       <div class="form-footer">智审图档 SmartDoc Vision · 让审核可追溯、可复用、可进化</div>
