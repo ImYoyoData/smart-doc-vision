@@ -1,0 +1,140 @@
+import { del, get, patch, post, put, requestBlob } from './http'
+import type {
+  AnalyticsData,
+  APICredential,
+  Audit,
+  AuditCategory,
+  AuditLog,
+  DashboardData,
+  IntegrationGuide,
+  LoginResult,
+  Paged,
+  Project,
+  Provider,
+  RecycleItem,
+  ReviewSummary,
+  RoleDefinition,
+  RuleTemplate,
+  Task,
+  TaskDetail,
+  TriggerSource,
+  TriggerUpdate,
+  User,
+} from './types'
+
+export const authApi = {
+  login: (payload: { username: string; password: string }) => post<LoginResult>('/auth/login', payload),
+  refresh: (refreshToken: string) => post<LoginResult>('/auth/refresh', { refresh_token: refreshToken }),
+  me: () => get<{ user: User }>('/auth/me'),
+  logout: () => post<{ logged_out: boolean }>('/auth/logout'),
+  changePassword: (payload: { old_password: string; new_password: string }) =>
+    post<{ changed: boolean }>('/auth/change-password', payload),
+}
+
+export const userApi = {
+  list: () => get<{ items: User[]; total: number; roles: RoleDefinition[] }>('/users'),
+  create: (payload: Record<string, unknown>) => post<User>('/users', payload),
+  update: (id: number, payload: Record<string, unknown>) => put<User>(`/users/${id}`, payload),
+}
+
+export const projectApi = {
+  list: (params?: Record<string, unknown>) => get<Paged<Project>>('/projects', params),
+  get: (id: number) => get<Project>(`/projects/${id}`),
+  create: (payload: Partial<Project>) => post<Project>('/projects', payload),
+  update: (id: number, payload: Partial<Project>) => put<Project>(`/projects/${id}`, payload),
+  setStatus: (id: number, status: string, reason?: string) => patch<Project>(`/projects/${id}/status`, { status, reason }),
+  remove: (id: number) => del<{ deleted: boolean }>(`/projects/${id}`),
+  restore: (id: number) => post<unknown>(`/projects/${id}/restore`),
+}
+
+export const credentialApi = {
+  list: (projectId: number) => get<{ items: APICredential[]; total: number }>(`/projects/${projectId}/credentials`),
+  create: (projectId: number, payload: { name: string; audit_ids: number[]; status?: string }) =>
+    post<{ credential: APICredential; app_secret: string; warning: string }>(`/projects/${projectId}/credentials`, payload),
+  update: (projectId: number, credentialId: number, payload: { name?: string; audit_ids?: number[]; status?: string }) =>
+    put<APICredential>(`/projects/${projectId}/credentials/${credentialId}`, payload),
+  rotate: (projectId: number, credentialId: number) =>
+    post<{ id: number; app_key: string; app_secret: string; warning: string }>(`/projects/${projectId}/credentials/${credentialId}/rotate`),
+  remove: (projectId: number, credentialId: number) =>
+    del<{ deleted: boolean }>(`/projects/${projectId}/credentials/${credentialId}`),
+}
+
+export const providerApi = {
+  list: (params?: Record<string, unknown>) => get<{ items: Provider[]; total: number }>('/providers', params),
+  get: (id: number) => get<Provider>(`/providers/${id}`),
+  create: (payload: Record<string, unknown>) => post<Provider>('/providers', payload),
+  update: (id: number, payload: Record<string, unknown>) => put<Provider>(`/providers/${id}`, payload),
+  remove: (id: number) => del<{ deleted: boolean }>(`/providers/${id}`),
+  test: (id: number) =>
+    post<{ ok: boolean; latency_ms: number; message: string; model: string }>(`/providers/${id}/test`),
+}
+
+export const auditApi = {
+  list: (params?: Record<string, unknown>) => get<Paged<Audit>>('/audits', params),
+  get: (id: number) => get<{ audit: Audit; triggers: TriggerSource[] }>(`/audits/${id}`),
+  create: (payload: Record<string, unknown>) => post<Audit>('/audits', payload),
+  update: (id: number, payload: Record<string, unknown>) => put<Audit>(`/audits/${id}`, payload),
+  setStatus: (id: number, status: string) => patch<{ status: string }>(`/audits/${id}/status`, { status }),
+  clone: (id: number, payload: { name: string; code: string }) => post<Audit>(`/audits/${id}/clone`, payload),
+  remove: (id: number) => del<{ deleted: boolean }>(`/audits/${id}`),
+  restore: (id: number) => post<unknown>(`/audits/${id}/restore`),
+  integration: (id: number, credentialId?: number | null) =>
+    get<IntegrationGuide>(`/audits/${id}/integration`, credentialId ? { credential_id: credentialId } : undefined),
+  exportTasks: (id: number, params?: Record<string, unknown>) =>
+    requestBlob({ method: 'GET', url: `/audits/${id}/export`, params }),
+  updateTrigger: (id: number, payload: TriggerUpdate) => put<TriggerSource>(`/trigger-sources/${id}`, payload),
+  testTrigger: (id: number) => post<Record<string, unknown>>(`/trigger-sources/${id}/test`),
+}
+
+export const taskApi = {
+  list: (params?: Record<string, unknown>) => get<Paged<Task>>('/tasks', params),
+  get: (id: number) => get<TaskDetail>(`/tasks/${id}`),
+  submit: (payload: Record<string, unknown>) =>
+    post<{ task: Task; duplicated: boolean }>('/tasks', payload),
+  retry: (id: number) => post<{ task_id: number; status: string }>(`/tasks/${id}/retry`),
+  batchRetry: (taskIds: number[]) =>
+    post<{ success: number; failed: Array<{ id: number; reason: string }> }>('/tasks/batch-retry', { task_ids: taskIds }),
+  review: (id: number, payload: { conclusion: string; reason_code?: string; remark?: string }) =>
+    post<{ task_id: number; status: string; result: string }>(`/tasks/${id}/review`, payload),
+}
+
+export const dashboardApi = {
+  get: (projectId?: number | null) => get<DashboardData>('/dashboard', projectId ? { project_id: projectId } : undefined),
+}
+
+export const logApi = {
+  list: (params?: Record<string, unknown>) => get<Paged<AuditLog>>('/audit-logs', params),
+}
+
+export const analyticsApi = {
+  get: (params?: Record<string, unknown>) => get<AnalyticsData>('/analytics', params),
+}
+
+export const reviewApi = {
+  summary: (projectId?: number | null) =>
+    get<ReviewSummary>('/reviews/summary', projectId ? { project_id: projectId } : undefined),
+}
+
+export const recycleApi = {
+  list: (params?: Record<string, unknown>) => get<Paged<RecycleItem>>('/recycle-bin', params),
+}
+
+export const metaApi = {
+  ruleTemplates: () =>
+    get<{
+      templates: RuleTemplate[]
+      default_review_prompt: string
+      default_classify_prompt?: string
+      example_categories?: AuditCategory[]
+    }>('/meta/rule-templates'),
+  system: () =>
+    get<{
+      name: string
+      name_en: string
+      version: string
+      redis_db: number
+      worker_count: number
+      provider_kinds: Array<{ key: string; name: string; supports_images: string }>
+    }>('/meta/system'),
+  roles: () => get<{ items: RoleDefinition[] }>('/meta/roles'),
+}

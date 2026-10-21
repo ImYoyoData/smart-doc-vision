@@ -1,0 +1,83 @@
+name: smartdoc-vision
+
+services:
+  mysql:
+    image: mysql:8.0
+    restart: unless-stopped
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-time-zone=+08:00
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-smartdoc-change-me}
+      MYSQL_DATABASE: smart-doc-vision
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      APP_ENV: production
+      SERVER_PORT: 8080
+      MYSQL_DSN: root:${MYSQL_ROOT_PASSWORD:-smartdoc-change-me}@tcp(mysql:3306)/smart-doc-vision?charset=utf8mb4&parseTime=True&loc=Local
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: ""
+      REDIS_DB: 3
+      JWT_SECRET: ${JWT_SECRET:-replace-this-jwt-secret-in-production}
+      MASTER_KEY: ${MASTER_KEY:-replace-this-master-key-in-production}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-Admin@123456}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8088,http://127.0.0.1:8088}
+      WORKER_COUNT: ${WORKER_COUNT:-4}
+      MEDIA_ALLOW_PRIVATE: "false"
+      DEFAULT_AI_BASE_URL: ${DEFAULT_AI_BASE_URL:-}
+      DEFAULT_AI_MODEL: ${DEFAULT_AI_MODEL:-}
+      DEFAULT_AI_API_KEY: ${DEFAULT_AI_API_KEY:-}
+      DEFAULT_AI_SUPPORTS_VISION: ${DEFAULT_AI_SUPPORTS_VISION:-false}
+      JEV_BASE_URL: ${JEV_BASE_URL:-https://api.typesafe.ai/v1}
+      JEV_MODEL: ${JEV_MODEL:-jev-latest}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/health >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-8088}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  mysql-data:
+  redis-data:

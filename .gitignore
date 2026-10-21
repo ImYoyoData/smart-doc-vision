@@ -1,0 +1,41 @@
+# secrets
+.env
+.env.local
+*.pem
+
+# dependencies
+backend/vendor/
+web/node_modules/
+
+# build output
+backend/bin/
+backend/dist/
+backend/internal/webui/dist/*
+!backend/internal/webui/dist/.gitkeep
+web/dist/
+/dist/
+*.exe
+*.test
+*.out
+
+# uploads / runtime
+uploads/
+logs/
+tmp/
+.zcodeignore
+
+# editor
+.idea/
+.vscode/
+.DS_Store
+
+# local runtime artifacts
+backend.log
+web.log
+run-backend.log
+web-dev.log
+embedded-ui-test.log
+.login.json
+.token
+dbhub.toml
+gui-test-screenshots/
