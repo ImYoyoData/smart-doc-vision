@@ -641,6 +641,9 @@ func validateAuditInput(req *auditInput, creating bool) error {
 		return err
 	}
 	req.DecisionMode = normalizeDecisionMode(req.DecisionMode)
+	if creating && req.DecisionMode == model.DecisionClassifyOnly {
+		req.Categories = catalog.EnsureClassifierUnknown(req.Categories)
+	}
 	if err := validateDecisionConfig(req.DecisionMode, req.Categories); err != nil {
 		return err
 	}

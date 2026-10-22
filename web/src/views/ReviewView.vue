@@ -20,6 +20,7 @@ import {
   TimeOutline,
 } from '@vicons/ionicons5'
 import PageHeader from '@/components/PageHeader.vue'
+import ReviewContext from '@/components/ReviewContext.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import { auditApi, taskApi } from '@/api'
@@ -43,6 +44,16 @@ const detail = ref<TaskDetail | null>(null)
 const auditFilter = ref<number | null>(null)
 const reasonCode = ref('MANUAL_CONFIRMED')
 const remark = ref('')
+const reasonOptions = [
+  { label: '人工确认（MANUAL_CONFIRMED）', value: 'MANUAL_CONFIRMED' },
+  { label: '风险确认（RISK_CONFIRMED）', value: 'RISK_CONFIRMED' },
+  { label: '分类不确定（CLASSIFICATION_UNCERTAIN）', value: 'CLASSIFICATION_UNCERTAIN' },
+  { label: '证据不足 / 内容不完整（INCOMPLETE_EVIDENCE）', value: 'INCOMPLETE_EVIDENCE' },
+  { label: '模型异常兜底（MODEL_ERROR）', value: 'MODEL_ERROR' },
+  { label: '规则转人工（RULE_REVIEW）', value: 'RULE_REVIEW' },
+  { label: '敏感信息 / 合规风险（SENSITIVE_INFO）', value: 'SENSITIVE_INFO' },
+  { label: '其他（OTHER）', value: 'OTHER' },
+]
 
 const selectedTask = computed(() => detail.value?.task || queue.value.find((t) => t.id === selectedId.value) || null)
 const selectedAudit = computed(() => audits.value.find((a) => a.id === selectedTask.value?.audit_id) || null)
@@ -139,13 +150,23 @@ async function loadQueue() {
   }
 }
 
+function suggestReasonCode(task: Task) {
+  const detail = task.result_detail
+  if (detail?.model_error) return 'MODEL_ERROR'
+  if (task.rule_trace?.trace?.some((group) => group.hit && group.on_hit_result === 'REVIEW')) return 'RULE_REVIEW'
+  const confidence = detail?.category_confidence ?? task.model_result?.category_confidence
+  if (confidence !== undefined && confidence !== null && confidence < 0.6) return 'CLASSIFICATION_UNCERTAIN'
+  return 'MANUAL_CONFIRMED'
+}
+
 async function selectTask(task: Task) {
   selectedId.value = task.id
-  reasonCode.value = 'MANUAL_CONFIRMED'
+  reasonCode.value = suggestReasonCode(task)
   remark.value = ''
   detailLoading.value = true
   try {
     detail.value = await taskApi.get(task.id)
+    if (detail.value?.task) reasonCode.value = suggestReasonCode(detail.value.task)
   } catch (error) {
     message.error(error instanceof Error ? error.message : '加载任务详情失败')
   } finally {
@@ -370,10 +391,25 @@ onMounted(async () => {
               </aside>
             </div>
 
+            <ReviewContext :task="selectedTask" class="review-context-block" />
             <div class="review-action-bar">
+              <div class="review-action-head">
+                <div>
+                  <strong>给出复核结论</strong>
+                  <span>通过会按 PASS 路由执行回调/动作；不通过会按 REJECT 路由并回传原因。</span>
+                </div>
+              </div>
               <div class="review-form">
-                <n-input v-model:value="reasonCode" placeholder="原因码，如 MANUAL_CONFIRMED / RISK_CONFIRMED" size="small" style="width: 250px" />
-                <n-input v-model:value="remark" placeholder="复核备注（可选）" size="small" style="flex: 1; min-width: 180px" />
+                <n-select
+                  v-model:value="reasonCode"
+                  :options="reasonOptions"
+                  filterable
+                  tag
+                  size="small"
+                  placeholder="选择或输入原因码"
+                  style="width: 280px"
+                />
+                <n-input v-model:value="remark" type="textarea" :autosize="{ minRows: 2, maxRows: 4 }" placeholder="写明判断依据、核对了哪些内容、为什么通过或不通过" size="small" style="flex: 1; min-width: 240px" />
               </div>
               <div class="review-buttons">
                 <n-button size="large" :loading="submitting" @click="submitReview('REJECT')">
@@ -984,6 +1020,32 @@ onMounted(async () => {
   white-space: nowrap;
 }
 
+.review-context-block {
+  margin: 0 20px 14px;
+}
+
+.review-action-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.review-action-head strong {
+  display: block;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.review-action-head span {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 9.5px;
+}
+
 .review-action-bar {
   position: sticky;
   bottom: 0;
@@ -1056,7 +1118,33 @@ onMounted(async () => {
     margin-left: 0;
   }
 
-  .review-action-bar {
+  .review-context-block {
+  margin: 0 20px 14px;
+}
+
+.review-action-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.review-action-head strong {
+  display: block;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.review-action-head span {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 9.5px;
+}
+
+.review-action-bar {
     align-items: stretch;
     flex-direction: column;
   }

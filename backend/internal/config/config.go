@@ -117,6 +117,9 @@ func Load() Config {
 	}
 
 	fileCfg := yamlConfig{}
+	if yamlPath != "" && envPath != "" {
+		log.Printf("config: both %s and %s found; .env values take precedence", envPath, yamlPath)
+	}
 	if yamlPath != "" {
 		raw, err := os.ReadFile(yamlPath)
 		if err != nil {
@@ -220,15 +223,19 @@ func resolveMySQLDSN(fileCfg yamlConfig, dotenv map[string]string, host string, 
 	if value, ok := os.LookupEnv("MYSQL_DSN"); ok && strings.TrimSpace(value) != "" {
 		return strings.TrimSpace(value)
 	}
-	if fileCfg.MySQL.DSN != nil && strings.TrimSpace(*fileCfg.MySQL.DSN) != "" {
-		return strings.TrimSpace(*fileCfg.MySQL.DSN)
-	}
-	// config.yml fields intentionally beat a full DSN copied into .env.
-	if yamlMySQLConfigured(fileCfg) || envHas("MYSQL_HOST", "MYSQL_PORT", "MYSQL_USER", "MYSQL_PASSWORD", "MYSQL_DATABASE", "MYSQL_CHARSET") {
+	// .env is the primary configuration source: its fields beat a legacy
+	// config.yml, and its full DSN beats legacy YAML fields.
+	if dotenvHas(dotenv, "MYSQL_HOST", "MYSQL_PORT", "MYSQL_USER", "MYSQL_PASSWORD", "MYSQL_DATABASE", "MYSQL_CHARSET") {
 		return buildMySQLDSN(host, port, user, password, database, charset)
 	}
 	if value := strings.TrimSpace(dotenv["MYSQL_DSN"]); value != "" {
 		return value
+	}
+	if fileCfg.MySQL.DSN != nil && strings.TrimSpace(*fileCfg.MySQL.DSN) != "" {
+		return strings.TrimSpace(*fileCfg.MySQL.DSN)
+	}
+	if yamlMySQLConfigured(fileCfg) {
+		return buildMySQLDSN(host, port, user, password, database, charset)
 	}
 	return buildMySQLDSN(host, port, user, password, database, charset)
 }
@@ -237,14 +244,17 @@ func resolveRedisAddr(fileCfg yamlConfig, dotenv map[string]string, host string,
 	if value, ok := os.LookupEnv("REDIS_ADDR"); ok && strings.TrimSpace(value) != "" {
 		return strings.TrimSpace(value)
 	}
-	if fileCfg.Redis.Addr != nil && strings.TrimSpace(*fileCfg.Redis.Addr) != "" {
-		return strings.TrimSpace(*fileCfg.Redis.Addr)
-	}
-	if yamlRedisConfigured(fileCfg) || envHas("REDIS_HOST", "REDIS_PORT") {
+	if dotenvHas(dotenv, "REDIS_HOST", "REDIS_PORT") {
 		return net.JoinHostPort(host, strconv.Itoa(port))
 	}
 	if value := strings.TrimSpace(dotenv["REDIS_ADDR"]); value != "" {
 		return value
+	}
+	if fileCfg.Redis.Addr != nil && strings.TrimSpace(*fileCfg.Redis.Addr) != "" {
+		return strings.TrimSpace(*fileCfg.Redis.Addr)
+	}
+	if yamlRedisConfigured(fileCfg) {
+		return net.JoinHostPort(host, strconv.Itoa(port))
 	}
 	return net.JoinHostPort(host, strconv.Itoa(port))
 }
@@ -267,15 +277,24 @@ func envHas(keys ...string) bool {
 	return false
 }
 
+func dotenvHas(dotenv map[string]string, keys ...string) bool {
+	for _, key := range keys {
+		if value, ok := dotenv[key]; ok && strings.TrimSpace(value) != "" {
+			return true
+		}
+	}
+	return false
+}
+
 func pickString(key string, yamlValue *string, dotenv map[string]string, fallback string) string {
 	if value, ok := os.LookupEnv(key); ok && strings.TrimSpace(value) != "" {
 		return strings.TrimSpace(value)
 	}
+	if value, ok := dotenv[key]; ok && strings.TrimSpace(value) != "" {
+		return strings.TrimSpace(value)
+	}
 	if yamlValue != nil {
 		return strings.TrimSpace(*yamlValue)
-	}
-	if value, ok := dotenv[key]; ok {
-		return strings.TrimSpace(value)
 	}
 	return fallback
 }
@@ -286,13 +305,13 @@ func pickInt(key string, yamlValue *int, dotenv map[string]string, fallback int)
 			return number
 		}
 	}
-	if yamlValue != nil {
-		return *yamlValue
-	}
 	if value, ok := dotenv[key]; ok && strings.TrimSpace(value) != "" {
 		if number, err := strconv.Atoi(strings.TrimSpace(value)); err == nil {
 			return number
 		}
+	}
+	if yamlValue != nil {
+		return *yamlValue
 	}
 	return fallback
 }
@@ -301,11 +320,11 @@ func pickBool(key string, yamlValue *bool, dotenv map[string]string, fallback bo
 	if value, ok := os.LookupEnv(key); ok && strings.TrimSpace(value) != "" {
 		return parseBool(value, fallback)
 	}
-	if yamlValue != nil {
-		return *yamlValue
-	}
 	if value, ok := dotenv[key]; ok && strings.TrimSpace(value) != "" {
 		return parseBool(value, fallback)
+	}
+	if yamlValue != nil {
+		return *yamlValue
 	}
 	return fallback
 }
@@ -314,11 +333,11 @@ func pickList(key string, yamlValue []string, dotenv map[string]string, fallback
 	if value, ok := os.LookupEnv(key); ok && strings.TrimSpace(value) != "" {
 		return splitCSV(value)
 	}
-	if len(yamlValue) > 0 {
-		return yamlValue
-	}
 	if value, ok := dotenv[key]; ok && strings.TrimSpace(value) != "" {
 		return splitCSV(value)
+	}
+	if len(yamlValue) > 0 {
+		return yamlValue
 	}
 	return fallback
 }
@@ -380,7 +399,7 @@ func writeDefaultEnv(path string) error {
 	masterKey := randomHex(32)
 	content := fmt.Sprintf(`# SmartDoc Vision configuration
 # Generated automatically on first run. Edit before production.
-# Precedence: OS environment > config.yml > .env > built-in defaults.
+# Precedence: OS environment > .env > config.yml (legacy fallback) > built-in defaults.
 APP_ENV=development
 SERVER_PORT=8080
 # Admin UI: http://127.0.0.1:8080/admin

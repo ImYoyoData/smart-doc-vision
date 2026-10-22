@@ -27,6 +27,7 @@ import {
   TimeOutline,
 } from '@vicons/ionicons5'
 import StatusTag from './StatusTag.vue'
+import ReviewContext from './ReviewContext.vue'
 import { taskApi } from '@/api'
 import type { Task, TaskDetail, TaskEvent } from '@/api/types'
 
@@ -53,6 +54,16 @@ const reviewForm = reactive({
   reasonCode: 'MANUAL_CONFIRMED',
   remark: '',
 })
+const reasonOptions = [
+  { label: '人工确认（MANUAL_CONFIRMED）', value: 'MANUAL_CONFIRMED' },
+  { label: '风险确认（RISK_CONFIRMED）', value: 'RISK_CONFIRMED' },
+  { label: '分类不确定（CLASSIFICATION_UNCERTAIN）', value: 'CLASSIFICATION_UNCERTAIN' },
+  { label: '证据不足 / 内容不完整（INCOMPLETE_EVIDENCE）', value: 'INCOMPLETE_EVIDENCE' },
+  { label: '模型异常兜底（MODEL_ERROR）', value: 'MODEL_ERROR' },
+  { label: '规则转人工（RULE_REVIEW）', value: 'RULE_REVIEW' },
+  { label: '敏感信息 / 合规风险（SENSITIVE_INFO）', value: 'SENSITIVE_INFO' },
+  { label: '其他（OTHER）', value: 'OTHER' },
+]
 
 const task = computed<Task | null>(() => detail.value?.task || null)
 const events = computed<TaskEvent[]>(() => detail.value?.events || [])
@@ -144,6 +155,12 @@ function retry() {
 function openReview() {
   reviewForm.conclusion = 'PASS'
   reviewForm.reasonCode = 'MANUAL_CONFIRMED'
+  if (task.value?.result_detail?.model_error) reviewForm.reasonCode = 'MODEL_ERROR'
+  else if (task.value?.rule_trace?.trace?.some((group) => group.hit && group.on_hit_result === 'REVIEW')) reviewForm.reasonCode = 'RULE_REVIEW'
+  else {
+    const confidence = task.value?.result_detail?.category_confidence ?? task.value?.model_result?.category_confidence
+    if (confidence !== undefined && confidence !== null && confidence < 0.6) reviewForm.reasonCode = 'CLASSIFICATION_UNCERTAIN'
+  }
   reviewForm.remark = ''
   reviewError.value = ''
   reviewShow.value = true
@@ -413,6 +430,7 @@ watch(
         <span class="review-icon"><ShieldCheckmarkOutline /></span>
       </div>
       <div class="review-body">
+        <ReviewContext :task="task" compact class="modal-review-context" />
         <label class="field-label">复核结论</label>
         <n-radio-group v-model:value="reviewForm.conclusion" class="review-radio">
           <n-radio value="PASS" class="radio-card pass">
@@ -425,9 +443,9 @@ watch(
           </n-radio>
         </n-radio-group>
         <label class="field-label">原因码</label>
-        <n-input v-model:value="reviewForm.reasonCode" placeholder="例如 MANUAL_CONFIRMED" />
+        <n-select v-model:value="reviewForm.reasonCode" :options="reasonOptions" filterable tag placeholder="选择或输入原因码" />
         <label class="field-label">复核备注</label>
-        <n-input v-model:value="reviewForm.remark" type="textarea" :autosize="{ minRows: 3, maxRows: 5 }" placeholder="说明判断依据，便于后续追溯" />
+        <n-input v-model:value="reviewForm.remark" type="textarea" :autosize="{ minRows: 3, maxRows: 5 }" placeholder="写明判断依据、核对了哪些内容、为什么通过或不通过" />
         <div v-if="reviewError" class="review-error">{{ reviewError }}</div>
         <div class="review-actions">
           <n-button @click="reviewShow = false">取消</n-button>
@@ -1087,8 +1105,14 @@ watch(
   height: 28px;
 }
 
+.modal-review-context {
+  margin-bottom: 16px;
+}
+
 .review-modal {
-  width: min(470px, calc(100vw - 32px));
+  width: min(620px, calc(100vw - 32px));
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
   border-radius: 18px;
   background: #fff;
   box-shadow: 0 30px 80px -20px rgba(15, 23, 42, 0.35);

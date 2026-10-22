@@ -111,6 +111,19 @@ const defaultRoutesText = JSON.stringify({
   REVIEW: { exec_mode: 'sequential', on_error: 'to_review', actions: [] },
 }, null, 2)
 
+const classifierUnknownCategory: AuditCategory = {
+  code: 'unknown',
+  name: '未知',
+  description: '无法判断，或不属于当前已配置的任何类型',
+  result: 'PASS',
+}
+
+function ensureClassifierUnknownCategory() {
+  if (form.decisionMode !== 'CLASSIFY_ONLY') return
+  if (form.categories.some((category) => category.code.trim().toLowerCase() === 'unknown')) return
+  form.categories.push({ ...classifierUnknownCategory })
+}
+
 const fallbackCategories: AuditCategory[] = [
   { code: 'contract', name: '合同协议', description: '合同、协议、补充条款、盖章的签约文件', result: 'PASS' },
   { code: 'invoice', name: '发票票据', description: '发票、收据、付款凭证、报销单据', result: 'PASS' },
@@ -312,6 +325,7 @@ function setDecisionMode(value: string | number) {
     } else if (mode === 'CLASSIFY_ONLY') {
       form.categories = form.categories.map((category) => ({ ...category, result: 'PASS' }))
     }
+    if (mode === 'CLASSIFY_ONLY') ensureClassifierUnknownCategory()
     form.rulesPreset = mode === 'CLASSIFY_ONLY' ? 'classifier' : 'classify'
     form.rulesText = mode === 'CLASSIFY_ONLY' ? '[]' : rulesTextForPreset('classify')
     if (!editing.value) {
@@ -495,6 +509,7 @@ async function onCategoryFilePicked(event: Event) {
     const imported = normalizeImportedCategories(rows)
     const applyImport = () => {
       form.categories = imported
+      ensureClassifierUnknownCategory()
       message.success(`已导入 ${imported.length} 个分类类型`)
     }
     if (form.categories.length > 0) {
@@ -516,6 +531,7 @@ async function onCategoryFilePicked(event: Event) {
 function loadExampleCategories() {
   const pure = form.decisionMode === 'CLASSIFY_ONLY'
   form.categories = exampleCategories.value.map((category) => ({ ...category, result: pure ? 'PASS' : category.result }))
+  ensureClassifierUnknownCategory()
   message.success('已载入分类示例，可按业务调整')
 }
 
@@ -868,6 +884,7 @@ function applyAssistantDraft(config: AuditAssistantConfig) {
   form.rulesPreset = form.decisionMode === 'CLASSIFY_ONLY' ? 'classifier' : form.decisionMode === 'CLASSIFY' ? 'classify' : 'standard'
   form.rulesText = JSON.stringify(config.rules || [], null, 2)
   form.routesText = JSON.stringify(config.routes || JSON.parse(defaultRoutesText), null, 2)
+  if (form.decisionMode === 'CLASSIFY_ONLY') ensureClassifierUnknownCategory()
   form.defaultResult = form.decisionMode === 'CLASSIFY_ONLY' ? 'PASS' : config.default_result || 'REVIEW'
   form.onModelFail = config.on_model_fail || 'REVIEW'
   form.dedupeWindowSec = config.dedupe_window_sec || 86400

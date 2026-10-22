@@ -348,6 +348,7 @@ func (s *Seeder) ensureClassifierAudit(projectID uint64, adminID uint64) error {
 	for i := range categories {
 		categories[i].Result = model.ResultPass
 	}
+	categories = catalog.EnsureClassifierUnknown(categories)
 	audit := model.Audit{
 		ProjectID:       projectID,
 		Name:            "档案类型分类器（纯分类示例）",

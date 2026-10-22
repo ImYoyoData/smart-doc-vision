@@ -153,7 +153,6 @@ foreach ($file in $outputs) {
 }
 
 $envTemplate = Join-Path $Root '.env.example'
-$configTemplate = Join-Path $Root 'config.yml.example'
 if (Test-Path $envTemplate) {
     Copy-Item -Path $envTemplate -Destination (Join-Path $outputDir '.env.example') -Force
     $targetEnv = Join-Path $outputDir '.env'
@@ -161,10 +160,6 @@ if (Test-Path $envTemplate) {
         Copy-Item -Path $envTemplate -Destination $targetEnv -Force
         Write-Host "  已生成 dist/.env 配置模板（可直接编辑）" -ForegroundColor Yellow
     }
-}
-if (Test-Path $configTemplate) {
-    Copy-Item -Path $configTemplate -Destination (Join-Path $outputDir 'config.yml.example') -Force
-    Write-Host "  已生成 dist/config.yml.example（重命名为 config.yml 后优先生效）" -ForegroundColor Yellow
 }
 
 $upx = Get-Command 'upx' -ErrorAction SilentlyContinue

@@ -22,7 +22,7 @@
 | 规则引擎 | AND/OR 条件组、优先级、stop_on_hit、模型分数/风险等级/标签、扩展字段、媒体字段等 |
 | 触发接入 | 开放 API（HMAC + 防重放 + 审核授权范围 + 每分钟限流）、Redis Stream、WebSocket（含结果推送）、HTTP 定时轮询，每个审核配置独立开关 |
 | 结果回调 | 可配置回调 URL / Secret / 需要回调的结论 / 是否回传原内容；HMAC-SHA256 签名、自动重试、幂等键 |
-| 人工复核 | 独立复核工作台、等待时长排序、媒体与规则命中预览、原因码、PASS/REJECT 后自动回调 |
+| 人工复核 | 独立复核工作台、等待时长排序、媒体与规则命中预览、详细复核上下文（转人工原因、风险分/等级、分类置信度、规则命中、模型依据）、建议原因码、PASS/REJECT 后自动回调 |
 | 数据报表 | ECharts 趋势、通过率、结论分布、分类审核分布、项目/审核维度对比、未通过原因、错误与延迟分布 |
 | 审核导出 | 每个审核配置可按时间、状态、结论、触发来源、媒体类型、关键字筛选导出 UTF-8 CSV 任务记录 |
 | AI 配置助手 | 通过对话收集审核要求，自动生成并保存审核配置；创建走需求采集，编辑必须先选择目标并展示当前配置，确认“当前值 → 目标值”后只修改指定字段；前提是项目内至少有一个启用的通用大模型 |
@@ -106,17 +106,17 @@ CREATE DATABASE IF NOT EXISTS `smart-doc-vision`
 
 ### 3. 配置文件
 
-支持 `.env` 和 `config.yml` 两种方式，加载优先级为：
+统一使用一个 `.env` 配置文件（也支持操作系统环境变量覆盖）。加载优先级为：
 
 ```text
-操作系统环境变量  >  config.yml  >  .env  >  内置默认值
+操作系统环境变量  >  .env  >  内置默认值
 ```
 
 - 管理后台固定入口：`http://127.0.0.1:<SERVER_PORT>/admin`，根路径 `/` 会自动跳转。
-- `.env` 可用 MySQL 独立字段，也可使用完整 `MYSQL_DSN`；Redis 可用 `REDIS_ADDR` 或 `REDIS_HOST` + `REDIS_PORT`。
-- `config.yml` 结构和示例见 [config.yml.example](config.yml.example)。
-- 如果当前目录及其上级目录既没有 `.env` 也没有 `config.yml`，程序首次启动会自动生成一个带默认值和随机 JWT/MASTER 密钥的 `.env`。
-- `build.ps1` 会把 `.env.example` 复制为 `dist/.env`（仅在不存在时），并复制 `dist/config.yml.example`；把示例重命名为 `config.yml` 后优先于 `.env` 生效。
+- MySQL 和 Redis 配置全部写在同一个 `.env` 中；MySQL 可用独立字段或完整 `MYSQL_DSN`，Redis 可用 `REDIS_ADDR` 或 `REDIS_HOST` + `REDIS_PORT`。
+- 如果当前目录及其上级目录没有 `.env`，程序首次启动会自动生成一个带默认值和随机 JWT/MASTER 密钥的 `.env`。
+- `build.ps1` 会把 `.env.example` 复制为 `dist/.env`（仅在不存在时），不会再生成其他配置文件。
+- 旧版 `config.yml` 仅作为兼容兜底读取，但 `.env` 中的同名配置优先；新部署不再需要它。
 
 `.env` 至少修改：
 
@@ -138,27 +138,6 @@ REDIS_DB=3
 JWT_SECRET=一段足够长的随机字符串
 MASTER_KEY=至少 32 字符的密钥
 ADMIN_PASSWORD=你的管理员密码
-```
-
-`config.yml` 示例：
-
-```yaml
-http:
-  port: 8080
-
-mysql:
-  host: 127.0.0.1
-  port: 3306
-  user: root
-  password: "你的密码"
-  database: smart-doc-vision
-  charset: utf8mb4
-
-redis:
-  host: 127.0.0.1
-  port: 6379
-  password: ""
-  db: 3
 ```
 
 > 当前工作区的本地 `.env` 已按本机 MySQL / Redis 配置好，且被 `.gitignore` 忽略。`dbhub.toml` 也已被忽略，避免数据库口令进入版本库。
@@ -261,10 +240,9 @@ dist/smartdoc-vision-1.0.0-windows-amd64.exe
 dist/smartdoc-vision-1.0.0-linux-amd64
 dist/smartdoc-vision-1.0.0-linux-arm64
 dist/.env
-dist/config.yml.example
 ```
 
-构建时会生成 `dist/.env` 配置模板（已存在则不覆盖），并复制 `config.yml.example`。把示例重命名为 `config.yml` 后，其显式配置优先于 `.env`；操作系统环境变量优先级最高。首次运行如果当前目录既没有 `.env` 也没有 `config.yml`，程序会自动生成带默认值和随机密钥的 `.env`。
+构建时会生成 `dist/.env` 配置模板（已存在则不覆盖）。操作系统环境变量优先级最高，其余配置统一放在 `.env`。首次运行如果当前目录没有 `.env`，程序会自动生成带默认值和随机密钥的 `.env`。
 
 运行（需要同目录或当前工作目录存在 `.env`）：
 
@@ -458,7 +436,7 @@ JEV 不使用自由文本 Prompt，而是 `state + questions` 的结构化裁决
 |---|---|---|---|
 | 合规审核 `REVIEW` | `result` + 风险分 | 规则模板按风险阈值判定 PASS / REJECT / REVIEW | 内容安全、档案完整性、敏感信息审核 |
 | 分类审核 `CLASSIFY` | `category` + `category_confidence` + 风险信息 | 按分类映射结论；通过类别的置信度低于阈值时自动转人工 | 档案类型、票据/合同/图纸分类、按类别分流 |
-| 纯分类器 `CLASSIFY_ONLY` | `category` + `category_confidence` | **成功分类一律 PASS**，不做驳回判定；`category` / `category_name` 就是业务需要的类型值 | 标签、归档类别、工单类型、内容路由 |
+| 纯分类器 `CLASSIFY_ONLY` | `category` + `category_confidence` | **成功分类一律 PASS**，不做驳回判定；`category` / `category_name` 就是业务需要的类型值；创建时自动加入可编辑的 `unknown / 未知` 类型 | 标签、归档类别、工单类型、内容路由 |
 
 分类审核的每个分类都配置：
 
@@ -466,6 +444,7 @@ JEV 不使用自由文本 Prompt，而是 `state + questions` 的结构化裁决
 - `name`：展示名称（写入结果 `category_name`）；
 - `description`：给模型的判定说明；
 - `result`：该类别的终审映射结论（PASS / REJECT / REVIEW）。纯分类器会忽略 result 并统一存为 PASS。
+- 纯分类器创建时会自动加入 `unknown / 未知` 类型，名称和说明可编辑，确保模型无法判断时仍有明确返回值。
 
 分类类型支持 **CSV / JSON 导入导出**：
 
