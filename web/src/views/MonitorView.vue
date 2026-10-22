@@ -414,9 +414,9 @@ onBeforeUnmount(() => {
           </div>
           <div class="dep-item" :class="{ down: data && !data.dependencies.mysql }">
             <span class="dep-icon"><ServerOutline /></span>
-            <div>
+            <div class="dep-body">
               <strong>MySQL {{ data ? (data.dependencies.mysql ? '正常' : '不可用') : '—' }}</strong>
-              <span>
+              <span class="dep-meta">
                 连接 {{ data?.mysql_pool.open_connections ?? 0 }} 个 · 使用中 {{ data?.mysql_pool.in_use ?? 0 }}
                 · 空闲 {{ data?.mysql_pool.idle ?? 0 }} · 等待 {{ data?.mysql_pool.wait_count ?? 0 }} 次
               </span>
@@ -424,9 +424,9 @@ onBeforeUnmount(() => {
           </div>
           <div class="dep-item" :class="{ down: data && !data.dependencies.redis }">
             <span class="dep-icon"><LayersOutline /></span>
-            <div>
+            <div class="dep-body">
               <strong>Redis {{ data ? (data.dependencies.redis ? '正常' : '不可用') : '—' }}</strong>
-              <span>
+              <span class="dep-meta">
                 连接 {{ data?.redis_pool.total_conns ?? 0 }} 个 · 空闲 {{ data?.redis_pool.idle_conns ?? 0 }}
                 · 命中 {{ formatNumber(data?.redis_pool.hits) }} · 未命中 {{ formatNumber(data?.redis_pool.misses) }}
               </span>
@@ -690,7 +690,7 @@ onBeforeUnmount(() => {
   background: #f8fdfa;
 }
 
-.dep-item > div {
+.dep-body {
   min-width: 0;
 }
 
@@ -709,6 +709,7 @@ onBeforeUnmount(() => {
   background: var(--brand-soft);
   color: var(--brand);
   flex-shrink: 0;
+  line-height: 0;
 }
 
 .dep-item.down .dep-icon {
@@ -728,7 +729,7 @@ onBeforeUnmount(() => {
   font-weight: 600;
 }
 
-.dep-item span {
+.dep-meta {
   display: block;
   margin-top: 2px;
   color: var(--muted-light);
