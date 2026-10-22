@@ -27,11 +27,16 @@ func (m *Manager) runRedisWorker(ctx context.Context, trigger model.TriggerSourc
 	consumer := "sdv-worker-" + uuid.NewString()[:8]
 	_ = m.redis.XGroupCreateMkStream(ctx, cfg.Stream, cfg.Group, "0").Err()
 	m.touchRun(trigger.ID, "", false)
+	lastClaim := time.Time{}
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		default:
+		}
+		if time.Since(lastClaim) >= 30*time.Second {
+			m.reclaimPending(ctx, trigger, cfg, consumer)
+			lastClaim = time.Now()
 		}
 		streams, err := m.redis.XReadGroup(ctx, &redis.XReadGroupArgs{
 			Group: cfg.Group, Consumer: consumer,
@@ -57,6 +62,29 @@ func (m *Manager) runRedisWorker(ctx context.Context, trigger model.TriggerSourc
 				m.consumeRedisMessage(ctx, trigger, cfg, msg)
 			}
 		}
+	}
+}
+
+func (m *Manager) reclaimPending(ctx context.Context, trigger model.TriggerSource, cfg RedisConfig, consumer string) {
+	start := "0-0"
+	for {
+		msgs, next, err := m.redis.XAutoClaim(ctx, &redis.XAutoClaimArgs{
+			Stream: cfg.Stream, Group: cfg.Group, Consumer: consumer,
+			MinIdle: time.Minute, Start: start, Count: int64(cfg.BatchSize),
+		}).Result()
+		if err != nil {
+			if ctx.Err() == nil {
+				log.Printf("trigger %s reclaim pending: %v", cfg.Stream, err)
+			}
+			return
+		}
+		for _, msg := range msgs {
+			m.consumeRedisMessage(ctx, trigger, cfg, msg)
+		}
+		if next == "" || next == "0-0" || len(msgs) == 0 {
+			return
+		}
+		start = next
 	}
 }
 

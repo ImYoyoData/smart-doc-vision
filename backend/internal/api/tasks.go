@@ -83,7 +83,7 @@ func (s *Server) listTasks(c *gin.Context) {
 		return
 	}
 	var items []model.Task
-	if err := q.Select("id, task_no, project_id, audit_id, source_type, biz_key, dedupe_hash, media_type, status, result, provider_id, error_message, retry_count, duration_ms, reviewer_id, reviewed_at, started_at, finished_at, created_at, updated_at").
+	if err := q.Select("id, task_no, project_id, audit_id, source_type, source_id, biz_key, dedupe_hash, media_type, status, result, provider_id, error_message, retry_count, duration_ms, reviewer_id, reviewed_at, started_at, finished_at, created_at, updated_at").
 		Order(taskOrder(c.Query("sort"))).Offset((page - 1) * pageSize).Limit(pageSize).Find(&items).Error; err != nil {
 		serverError(c, err)
 		return
