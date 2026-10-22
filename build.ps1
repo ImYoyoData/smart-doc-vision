@@ -2,7 +2,8 @@
 param(
     [ValidateSet('win', 'linux', 'linux-arm64', 'both', 'all')]
     [string]$Target = '',
-    [string]$Version = ''
+    [string]$Version = '',
+    [switch]$Upx
 )
 
 $ErrorActionPreference = 'Stop'
@@ -146,12 +147,6 @@ try {
     $env:CGO_ENABLED = $oldCGO
 }
 
-Write-Step "产物"
-foreach ($file in $outputs) {
-    $size = [math]::Round((Get-Item $file).Length / 1MB, 2)
-    Write-Host ("  {0}  ({1} MB)" -f $file, $size) -ForegroundColor Green
-}
-
 $envTemplate = Join-Path $Root '.env.example'
 if (Test-Path $envTemplate) {
     Copy-Item -Path $envTemplate -Destination (Join-Path $outputDir '.env.example') -Force
@@ -162,25 +157,53 @@ if (Test-Path $envTemplate) {
     }
 }
 
-$upx = Get-Command 'upx' -ErrorAction SilentlyContinue
-if ($upx) {
-    Write-Host ""
-    $answer = Read-Host "检测到 UPX（$($upx.Source)），是否对产物进行压缩？[Y/n]"
-    if ([string]::IsNullOrWhiteSpace($answer) -or $answer.Trim().ToLowerInvariant() -in @('y', 'yes')) {
-        Write-Step "UPX 压缩"
-        foreach ($file in $outputs) {
-            Write-Host "  -> $file"
-            & $upx.Source --best --lzma $file
-            if ($LASTEXITCODE -ne 0) {
-                Write-Warning "UPX 压缩失败：$file（程序仍可使用未压缩版本）"
-            }
-        }
-    } else {
-        Write-Host "已跳过 UPX 压缩。"
+# UPX variants are only produced for the two x64 targets; arm64 keeps the
+# original binary only. The uncompressed builds always remain in dist/.
+$upxTargets = @($targets | Where-Object { $_.GOARCH -eq 'amd64' -and $_.GOOS -in @('windows', 'linux') })
+$upxCommand = Get-Command 'upx' -ErrorAction SilentlyContinue
+$compress = $false
+if ($Upx) {
+    if (-not $upxCommand) {
+        throw "未找到 upx。请安装 UPX 并加入 PATH，或去掉 -Upx。"
     }
+    $compress = $true
+} elseif ($upxCommand -and $upxTargets.Count -gt 0) {
+    Write-Host ""
+    $answer = Read-Host "检测到 UPX（$($upxCommand.Source)），是否额外生成 Windows/Linux amd64 的 UPX 压缩版本？[y/N]"
+    if (-not [string]::IsNullOrWhiteSpace($answer) -and $answer.Trim().ToLowerInvariant() -in @('y', 'yes')) {
+        $compress = $true
+    }
+}
+
+if ($compress) {
+    Write-Step "生成 UPX 压缩版本（Windows amd64 / Linux amd64）"
+    foreach ($item in $upxTargets) {
+        $source = Join-Path $outputDir $item.File
+        if ($item.GOOS -eq 'windows') {
+            $compressed = Join-Path $outputDir ($item.File -replace '\.exe$', '-upx.exe')
+        } else {
+            $compressed = Join-Path $outputDir "$($item.File)-upx"
+        }
+        Copy-Item -Path $source -Destination $compressed -Force
+        Write-Host "  -> $compressed"
+        & $upxCommand.Source --best --lzma $compressed
+        if ($LASTEXITCODE -ne 0) {
+            Remove-Item -Path $compressed -Force -ErrorAction SilentlyContinue
+            throw "UPX 压缩失败：$compressed"
+        }
+        $outputs += $compressed
+    }
+} elseif ($Upx) {
+    Write-Host "当前目标不包含 Windows/Linux amd64，跳过 UPX 压缩。" -ForegroundColor Yellow
 } else {
     Write-Host ""
-    Write-Host "未检测到 UPX，跳过压缩。安装 UPX 并加入 PATH 后可交互启用。" -ForegroundColor Yellow
+    Write-Host "未生成 UPX 版本。安装 UPX 后可用 -Upx 非交互生成，或不压缩直接分发原产物。" -ForegroundColor Yellow
+}
+
+Write-Step "产物清单"
+foreach ($file in $outputs) {
+    $size = [math]::Round((Get-Item $file).Length / 1MB, 2)
+    Write-Host ("  {0}  ({1} MB)" -f $file, $size) -ForegroundColor Green
 }
 
 Write-Host ""

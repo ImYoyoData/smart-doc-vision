@@ -220,8 +220,11 @@ cd web && npm run build
 .\build.ps1 -Target linux
 .\build.ps1 -Target linux-arm64
 .\build.ps1 -Target all
-.\build.ps1 -Target all -Version 1.2.0
+.\build.ps1 -Target both -Upx
+.\build.ps1 -Target all -Version 1.3.0
 ```
+
+`-Upx` 会额外生成 Windows amd64 和 Linux amd64 的 UPX 压缩版本（文件名带 `-upx` 后缀），未压缩产物始终保留。未指定 `-Upx` 时，若检测到 `upx` 会询问一次；默认不压缩，避免个别安全软件把 UPX 壳误判为可疑程序。
 
 版本号默认读取根目录 [VERSION](VERSION)，并会通过 `-ldflags -X` 写入程序；后台「模型接入」等页面显示的版本号来自 `/meta/system`。
 
@@ -230,15 +233,17 @@ cd web && npm run build
 1. 执行前端 `npm run build`，Vite 生产构建自动使用 `/admin/` 作为资源前缀；
 2. 将 `web/dist` 复制到 `backend/internal/webui/dist`；
 3. 使用 `CGO_ENABLED=0` 编译 Go 单文件程序；
-4. 若检测到 `upx`，会询问是否使用 `--best --lzma` 压缩；
+4. 需要时用 `upx --best --lzma` 额外生成 Windows amd64 / Linux amd64 压缩版本（原产物保留）；
 5. 输出到项目根目录 `dist/`。
 
 生成文件示例：
 
 ```text
-dist/smartdoc-vision-1.0.0-windows-amd64.exe
-dist/smartdoc-vision-1.0.0-linux-amd64
-dist/smartdoc-vision-1.0.0-linux-arm64
+dist/smartdoc-vision-1.3.0-windows-amd64.exe
+dist/smartdoc-vision-1.3.0-windows-amd64-upx.exe
+dist/smartdoc-vision-1.3.0-linux-amd64
+dist/smartdoc-vision-1.3.0-linux-amd64-upx
+dist/smartdoc-vision-1.3.0-linux-arm64
 dist/.env
 ```
 
@@ -293,18 +298,23 @@ git push origin v1.0.0
 - 将前端资源嵌入 Go 程序；
 - 执行 `go vet` 和 `go test`；
 - 构建 Windows amd64、Linux amd64、Linux arm64；
-- 生成 `SHA256SUMS.txt`；
+- 额外生成 Windows amd64 / Linux amd64 的 UPX 压缩版本（`-upx` 后缀），原产物保留；
+- 生成覆盖全部资产的 `SHA256SUMS.txt`；
 - 从 [CHANGELOG.md](CHANGELOG.md) 提取对应版本更新内容；
-- 创建或更新 GitHub Release，并上传三个可执行文件和校验和。
+- 创建或更新 GitHub Release，并上传全部可执行文件和校验和。
 
 发布资产命名：
 
 ```text
 smartdoc-vision-<version>-windows-amd64.exe
+smartdoc-vision-<version>-windows-amd64-upx.exe
 smartdoc-vision-<version>-linux-amd64
+smartdoc-vision-<version>-linux-amd64-upx
 smartdoc-vision-<version>-linux-arm64
 SHA256SUMS.txt
 ```
+
+UPX 压缩版本体积更小，但部分杀毒软件会对 UPX 壳产生误报；生产部署建议优先使用未压缩版本，或在受控环境验证后再使用压缩版本。
 
 ## Docker 部署
 

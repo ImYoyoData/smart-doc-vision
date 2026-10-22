@@ -77,6 +77,22 @@ jobs:
           go vet ./...
           go test ./...
 
+      - name: Setup UPX
+        run: |
+          set -euo pipefail
+          if ! command -v upx >/dev/null 2>&1; then
+            if sudo apt-get update -qq && sudo apt-get install -y -qq upx-ucl >/dev/null 2>&1; then
+              echo "installed upx-ucl from apt"
+            else
+              UPX_VERSION=5.0.2
+              curl -sSfL "https://github.com/upx/upx/releases/download/v${UPX_VERSION}/upx-${UPX_VERSION}-amd64_linux.tar.xz" -o /tmp/upx.tar.xz
+              tar -xJf /tmp/upx.tar.xz -C /tmp
+              sudo install -m 0755 "/tmp/upx-${UPX_VERSION}-amd64_linux/upx" /usr/local/bin/upx
+              echo "installed upx ${UPX_VERSION} from GitHub releases"
+            fi
+          fi
+          upx --version | head -n 1
+
       - name: Build release binaries
         working-directory: backend
         env:
@@ -97,6 +113,14 @@ jobs:
           CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
             go build -trimpath -ldflags "$LDFLAGS" \
             -o "../dist/smartdoc-vision-${VERSION}-linux-arm64" ./cmd/server
+
+          # Extra UPX variants for the two x64 targets. Originals stay untouched
+          # so users can fall back if a security scanner flags the packed stub.
+          cp "../dist/smartdoc-vision-${VERSION}-windows-amd64.exe" "../dist/smartdoc-vision-${VERSION}-windows-amd64-upx.exe"
+          upx --best --lzma "../dist/smartdoc-vision-${VERSION}-windows-amd64-upx.exe"
+
+          cp "../dist/smartdoc-vision-${VERSION}-linux-amd64" "../dist/smartdoc-vision-${VERSION}-linux-amd64-upx"
+          upx --best --lzma "../dist/smartdoc-vision-${VERSION}-linux-amd64-upx"
 
           cd ../dist
           sha256sum smartdoc-vision-* > SHA256SUMS.txt
@@ -136,6 +160,8 @@ jobs:
           make_latest: true
           files: |
             dist/smartdoc-vision-${{ steps.version.outputs.version }}-windows-amd64.exe
+            dist/smartdoc-vision-${{ steps.version.outputs.version }}-windows-amd64-upx.exe
             dist/smartdoc-vision-${{ steps.version.outputs.version }}-linux-amd64
+            dist/smartdoc-vision-${{ steps.version.outputs.version }}-linux-amd64-upx
             dist/smartdoc-vision-${{ steps.version.outputs.version }}-linux-arm64
             dist/SHA256SUMS.txt
