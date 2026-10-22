@@ -11,14 +11,14 @@ type RoleDefinition struct {
 
 var allMenus = []string{
 	"dashboard", "analytics", "reviews", "tasks", "audits", "providers",
-	"credentials", "projects", "logs", "recycle", "users", "help", "profile",
+	"credentials", "projects", "logs", "recycle", "users", "monitor", "help", "profile",
 }
 
 var allPermissions = []string{
 	"project:create", "project:update", "project:delete", "project:restore",
 	"provider:write", "audit:write", "credential:write",
 	"task:submit", "task:review", "task:retry", "user:manage",
-	"log:read", "recycle:write",
+	"log:read", "recycle:write", "system:monitor",
 }
 
 var roleDefinitions = []RoleDefinition{

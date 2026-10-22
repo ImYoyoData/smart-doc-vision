@@ -14,6 +14,7 @@ import type {
   MFAChallenge,
   MFASetup,
   MFAStatus,
+  MonitorData,
   Paged,
   Project,
   Provider,
@@ -123,6 +124,10 @@ export const dashboardApi = {
 
 export const logApi = {
   list: (params?: Record<string, unknown>) => get<Paged<AuditLog>>('/audit-logs', params),
+}
+
+export const monitorApi = {
+  get: (range: string) => get<MonitorData>('/system/monitor', { range }),
 }
 
 export const analyticsApi = {
