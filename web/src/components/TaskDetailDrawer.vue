@@ -30,6 +30,7 @@ import StatusTag from './StatusTag.vue'
 import ReviewContext from './ReviewContext.vue'
 import { taskApi } from '@/api'
 import type { Task, TaskDetail, TaskEvent } from '@/api/types'
+import { REVIEW_REASON_OPTIONS } from '@/constants/reviewReasons'
 
 const props = defineProps<{
   show: boolean
@@ -54,16 +55,7 @@ const reviewForm = reactive({
   reasonCode: 'MANUAL_CONFIRMED',
   remark: '',
 })
-const reasonOptions = [
-  { label: '人工确认（MANUAL_CONFIRMED）', value: 'MANUAL_CONFIRMED' },
-  { label: '风险确认（RISK_CONFIRMED）', value: 'RISK_CONFIRMED' },
-  { label: '分类不确定（CLASSIFICATION_UNCERTAIN）', value: 'CLASSIFICATION_UNCERTAIN' },
-  { label: '证据不足 / 内容不完整（INCOMPLETE_EVIDENCE）', value: 'INCOMPLETE_EVIDENCE' },
-  { label: '模型异常兜底（MODEL_ERROR）', value: 'MODEL_ERROR' },
-  { label: '规则转人工（RULE_REVIEW）', value: 'RULE_REVIEW' },
-  { label: '敏感信息 / 合规风险（SENSITIVE_INFO）', value: 'SENSITIVE_INFO' },
-  { label: '其他（OTHER）', value: 'OTHER' },
-]
+const reasonOptions = REVIEW_REASON_OPTIONS
 
 const task = computed<Task | null>(() => detail.value?.task || null)
 const events = computed<TaskEvent[]>(() => detail.value?.events || [])
@@ -443,7 +435,15 @@ watch(
           </n-radio>
         </n-radio-group>
         <label class="field-label">原因码</label>
-        <n-select v-model:value="reviewForm.reasonCode" :options="reasonOptions" filterable tag placeholder="选择或输入原因码" />
+        <n-select
+          v-model:value="reviewForm.reasonCode"
+          :options="reasonOptions"
+          filterable
+          tag
+          :consistent-menu-width="false"
+          placeholder="选择或输入原因码"
+          style="width: 210px"
+        />
         <label class="field-label">复核备注</label>
         <n-input v-model:value="reviewForm.remark" type="textarea" :autosize="{ minRows: 3, maxRows: 5 }" placeholder="写明判断依据、核对了哪些内容、为什么通过或不通过" />
         <div v-if="reviewError" class="review-error">{{ reviewError }}</div>
@@ -1110,7 +1110,7 @@ watch(
 }
 
 .review-modal {
-  width: min(620px, calc(100vw - 32px));
+  width: min(540px, calc(100vw - 32px));
   max-height: calc(100vh - 40px);
   overflow-y: auto;
   border-radius: 18px;
@@ -1163,7 +1163,7 @@ watch(
 }
 
 .review-body {
-  padding: 20px 24px 22px;
+  padding: 16px 22px 18px;
 }
 
 .field-label {

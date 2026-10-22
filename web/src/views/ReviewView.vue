@@ -27,6 +27,7 @@ import { auditApi, taskApi } from '@/api'
 import type { Audit, Task, TaskDetail } from '@/api/types'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { useReviewStore } from '@/stores/review'
+import { REVIEW_REASON_OPTIONS } from '@/constants/reviewReasons'
 
 const workspace = useWorkspaceStore()
 const reviewStore = useReviewStore()
@@ -44,16 +45,7 @@ const detail = ref<TaskDetail | null>(null)
 const auditFilter = ref<number | null>(null)
 const reasonCode = ref('MANUAL_CONFIRMED')
 const remark = ref('')
-const reasonOptions = [
-  { label: '人工确认（MANUAL_CONFIRMED）', value: 'MANUAL_CONFIRMED' },
-  { label: '风险确认（RISK_CONFIRMED）', value: 'RISK_CONFIRMED' },
-  { label: '分类不确定（CLASSIFICATION_UNCERTAIN）', value: 'CLASSIFICATION_UNCERTAIN' },
-  { label: '证据不足 / 内容不完整（INCOMPLETE_EVIDENCE）', value: 'INCOMPLETE_EVIDENCE' },
-  { label: '模型异常兜底（MODEL_ERROR）', value: 'MODEL_ERROR' },
-  { label: '规则转人工（RULE_REVIEW）', value: 'RULE_REVIEW' },
-  { label: '敏感信息 / 合规风险（SENSITIVE_INFO）', value: 'SENSITIVE_INFO' },
-  { label: '其他（OTHER）', value: 'OTHER' },
-]
+const reasonOptions = REVIEW_REASON_OPTIONS
 
 const selectedTask = computed(() => detail.value?.task || queue.value.find((t) => t.id === selectedId.value) || null)
 const selectedAudit = computed(() => audits.value.find((a) => a.id === selectedTask.value?.audit_id) || null)
@@ -407,7 +399,8 @@ onMounted(async () => {
                   tag
                   size="small"
                   placeholder="选择或输入原因码"
-                  style="width: 280px"
+                  :consistent-menu-width="false"
+                  style="width: 210px"
                 />
                 <n-input v-model:value="remark" type="textarea" :autosize="{ minRows: 2, maxRows: 4 }" placeholder="写明判断依据、核对了哪些内容、为什么通过或不通过" size="small" style="flex: 1; min-width: 240px" />
               </div>
