@@ -297,8 +297,8 @@ onMounted(async () => {
       </aside>
 
       <section class="panel review-workbench">
-        <n-spin :show="detailLoading">
-          <template v-if="selectedTask">
+        <n-spin :show="detailLoading" class="workbench-spin">
+          <div v-if="selectedTask" class="workbench-shell">
             <div class="workbench-head">
               <div>
                 <div class="workbench-kicker">REVIEW TASK</div>
@@ -314,7 +314,8 @@ onMounted(async () => {
               </div>
             </div>
 
-            <div class="workbench-body">
+            <div class="workbench-scroll">
+              <div class="workbench-body">
               <div class="workbench-content">
                 <h3 class="section-label">图档内容</h3>
                 <div v-for="(item, i) in texts" :key="`text-${i}`" class="review-text">
@@ -383,14 +384,9 @@ onMounted(async () => {
               </aside>
             </div>
 
-            <ReviewContext :task="selectedTask" class="review-context-block" />
+              <ReviewContext :task="selectedTask" class="review-context-block" />
+            </div>
             <div class="review-action-bar">
-              <div class="review-action-head">
-                <div>
-                  <strong>给出复核结论</strong>
-                  <span>通过会按 PASS 路由执行回调/动作；不通过会按 REJECT 路由并回传原因。</span>
-                </div>
-              </div>
               <div class="review-form">
                 <n-select
                   v-model:value="reasonCode"
@@ -398,11 +394,11 @@ onMounted(async () => {
                   filterable
                   tag
                   size="small"
-                  placeholder="选择或输入原因码"
+                  placeholder="原因码"
                   :consistent-menu-width="false"
-                  style="width: 210px"
+                  style="width: 168px; flex-shrink: 0"
                 />
-                <n-input v-model:value="remark" type="textarea" :autosize="{ minRows: 2, maxRows: 4 }" placeholder="写明判断依据、核对了哪些内容、为什么通过或不通过" size="small" style="flex: 1; min-width: 240px" />
+                <n-input v-model:value="remark" type="textarea" :autosize="{ minRows: 2, maxRows: 3 }" placeholder="写明判断依据、核对了哪些内容、为什么通过或不通过" size="small" style="flex: 1; min-width: 0" />
               </div>
               <div class="review-buttons">
                 <n-button size="large" :loading="submitting" @click="submitReview('REJECT')">
@@ -415,7 +411,7 @@ onMounted(async () => {
                 </n-button>
               </div>
             </div>
-          </template>
+          </div>
 
           <EmptyState
             v-else
@@ -495,14 +491,17 @@ onMounted(async () => {
 
 .review-layout {
   display: grid;
-  grid-template-columns: 355px minmax(0, 1fr);
+  grid-template-columns: 360px minmax(0, 1fr);
   gap: 14px;
-  align-items: start;
+  align-items: stretch;
+  height: clamp(400px, calc(100vh - 305px), 920px);
 }
 
 .review-queue {
-  position: sticky;
-  top: 80px;
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
   overflow: hidden;
 }
 
@@ -533,8 +532,8 @@ onMounted(async () => {
 }
 
 .queue-list {
-  max-height: calc(100vh - 310px);
-  min-height: 300px;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 7px;
 }
@@ -636,7 +635,8 @@ onMounted(async () => {
 
 .queue-empty {
   display: flex;
-  height: 260px;
+  height: 100%;
+  min-height: 260px;
   align-items: center;
   justify-content: center;
   flex-direction: column;
@@ -661,12 +661,50 @@ onMounted(async () => {
 }
 
 .review-workbench {
-  min-height: calc(100vh - 260px);
-  overflow: visible;
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  container-type: inline-size;
+}
+
+.workbench-spin {
+  flex: 1;
+  min-height: 0;
+}
+
+.workbench-spin :deep(.n-spin-container),
+.workbench-spin :deep(.n-spin-content) {
+  height: 100%;
+  min-height: 0;
+}
+
+.workbench-spin :deep(.n-spin-content) {
+  display: flex;
+  flex-direction: column;
+}
+
+.workbench-shell {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.workbench-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.review-workbench :deep(.empty-state) {
+  height: 100%;
 }
 
 .workbench-head {
   display: flex;
+  flex-shrink: 0;
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
@@ -1040,14 +1078,11 @@ onMounted(async () => {
 }
 
 .review-action-bar {
-  position: sticky;
-  bottom: 0;
-  z-index: 5;
   display: flex;
+  flex-shrink: 0;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 14px 20px;
+  gap: 12px;
+  padding: 12px 18px;
   border-top: 1px solid #f1e7d4;
   border-radius: 0 0 18px 18px;
   background: rgba(255, 253, 248, 0.96);
@@ -1058,6 +1093,7 @@ onMounted(async () => {
 .review-form {
   display: flex;
   flex: 1;
+  min-width: 0;
   gap: 8px;
 }
 
@@ -1071,9 +1107,35 @@ onMounted(async () => {
   height: 38px;
 }
 
+@container (max-width: 780px) {
+  .workbench-body {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+
+  .review-analysis {
+    padding-left: 0;
+    padding-top: 14px;
+    border-left: 0;
+    border-top: 1px solid #f0f3f8;
+  }
+}
+
+@container (max-width: 620px) {
+  .review-action-bar {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 9px;
+  }
+
+  .review-buttons {
+    justify-content: flex-end;
+  }
+}
+
 @media (max-width: 1200px) {
   .review-layout {
-    grid-template-columns: 320px minmax(0, 1fr);
+    grid-template-columns: 330px minmax(0, 1fr);
   }
 
   .workbench-body {
@@ -1091,14 +1153,24 @@ onMounted(async () => {
 @media (max-width: 900px) {
   .review-layout {
     grid-template-columns: 1fr;
+    height: auto;
   }
 
-  .review-queue {
-    position: static;
+  .review-queue,
+  .review-workbench {
+    height: auto;
   }
 
   .queue-list {
-    max-height: 310px;
+    max-height: 320px;
+  }
+
+  .workbench-scroll {
+    overflow: visible;
+  }
+
+  .review-workbench :deep(.empty-state) {
+    height: auto;
   }
 
   .review-banner {
@@ -1111,33 +1183,7 @@ onMounted(async () => {
     margin-left: 0;
   }
 
-  .review-context-block {
-  margin: 0 20px 14px;
-}
-
-.review-action-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 10px;
-}
-
-.review-action-head strong {
-  display: block;
-  color: var(--ink);
-  font-size: 12px;
-  font-weight: 650;
-}
-
-.review-action-head span {
-  display: block;
-  margin-top: 2px;
-  color: var(--muted);
-  font-size: 9.5px;
-}
-
-.review-action-bar {
+  .review-action-bar {
     align-items: stretch;
     flex-direction: column;
   }

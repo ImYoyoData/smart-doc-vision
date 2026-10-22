@@ -80,7 +80,12 @@ function queuePercent(active: number, limit: number) {
   return Math.min(100, Math.round((active / limit) * 100))
 }
 
+let inFlight = false
+
 async function load(silent = false) {
+  // Never stack polls: a slow response must not pile up requests.
+  if (inFlight) return
+  inFlight = true
   if (!silent) loading.value = true
   try {
     data.value = await monitorApi.get(range.value)
@@ -88,6 +93,7 @@ async function load(silent = false) {
   } catch (error) {
     if (!silent) message.error(error instanceof Error ? error.message : '加载运行监控失败')
   } finally {
+    inFlight = false
     if (!silent) loading.value = false
   }
 }
@@ -102,6 +108,7 @@ const axisStyle = {
 const labels = computed(() => history.value.map((point) => axisTime(point.time)))
 
 const requestOption = computed<EChartsOption>(() => ({
+  animation: false,
   tooltip: { trigger: 'axis' },
   legend: {
     right: 0,
@@ -134,6 +141,7 @@ const requestOption = computed<EChartsOption>(() => ({
 }))
 
 const concurrencyOption = computed<EChartsOption>(() => ({
+  animation: false,
   tooltip: { trigger: 'axis' },
   legend: {
     right: 0,
@@ -178,6 +186,7 @@ const concurrencyOption = computed<EChartsOption>(() => ({
 }))
 
 const memoryOption = computed<EChartsOption>(() => ({
+  animation: false,
   tooltip: { trigger: 'axis', valueFormatter: (value) => `${value} MB` },
   legend: {
     right: 0,
@@ -223,6 +232,7 @@ const memoryOption = computed<EChartsOption>(() => ({
 }))
 
 const latencyOption = computed<EChartsOption>(() => ({
+  animation: false,
   tooltip: { trigger: 'axis', valueFormatter: (value) => `${value} ms` },
   grid: { left: 4, right: 10, top: 18, bottom: 4, containLabel: true },
   xAxis: { type: 'category', data: labels.value, boundaryGap: false, ...axisStyle },
@@ -243,12 +253,24 @@ const latencyOption = computed<EChartsOption>(() => ({
 watch(range, () => load())
 
 let timer: ReturnType<typeof setInterval> | null = null
+
+function tick() {
+  // Hidden tabs do not need fresh chart data; skip the request entirely.
+  if (document.visibilityState === 'visible') load(true)
+}
+
+function onVisibilityChange() {
+  if (document.visibilityState === 'visible') load(true)
+}
+
 onMounted(() => {
   load()
-  timer = setInterval(() => load(true), 10000)
+  timer = setInterval(tick, 10000)
+  document.addEventListener('visibilitychange', onVisibilityChange)
 })
 onBeforeUnmount(() => {
   if (timer) clearInterval(timer)
+  document.removeEventListener('visibilitychange', onVisibilityChange)
 })
 </script>
 

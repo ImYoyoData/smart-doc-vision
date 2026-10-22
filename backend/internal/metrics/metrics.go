@@ -63,7 +63,6 @@ var (
 	hostPrevIdle  uint64
 	hostPrevTotal uint64
 	hostPrevValid bool
-	latestHost    hostStats
 )
 
 var (
@@ -78,8 +77,14 @@ var (
 
 	sampleMu   sync.RWMutex
 	samples    []sample
+	latest     sample
 	samplerRun sync.Once
 )
+
+// Snapshot intentionally avoids runtime.ReadMemStats: that call stops the
+// world and would make every monitor poll expensive for the whole process.
+// Values come from the 10s sampler instead.
+var snapshotOnce sync.Once
 
 // Current is the live process snapshot shown on the system monitor page.
 type Current struct {
@@ -158,6 +163,11 @@ func ObserveRequest(method, route string, status int, duration time.Duration) {
 // until ctx is cancelled.
 func StartSampler(ctx context.Context) {
 	samplerRun.Do(func() {
+		sampleMu.Lock()
+		if capacity := int(Retention/SampleInterval) + 16; cap(samples) < capacity {
+			samples = make([]sample, 0, capacity)
+		}
+		sampleMu.Unlock()
 		capture()
 		go func() {
 			ticker := time.NewTicker(SampleInterval)
@@ -174,18 +184,32 @@ func StartSampler(ctx context.Context) {
 	})
 }
 
-// Snapshot returns live runtime and request statistics.
+// Snapshot returns live request counters plus the latest sampled memory
+// statistics. It never triggers a stop-the-world memory read.
 func Snapshot() Current {
-	var mem runtime.MemStats
-	runtime.ReadMemStats(&mem)
+	snapshotOnce.Do(func() {
+		sampleMu.RLock()
+		hasSample := !latest.at.IsZero()
+		sampleMu.RUnlock()
+		if !hasSample {
+			capture()
+		}
+	})
+	sampleMu.RLock()
+	sampled := latest
+	sampleMu.RUnlock()
+	host := hostStats{
+		cpuPercent: sampled.hostCPUPercent,
+		memPercent: sampled.hostMemPercent,
+		memUsedMB:  sampled.hostMemUsedMB,
+		memTotalMB: sampled.hostMemTotalMB,
+		available:  sampled.hostAvailable,
+	}
 	total := totalRequests.Load()
 	avgLatency := 0.0
 	if total > 0 {
 		avgLatency = float64(latencyNanos.Load()) / float64(total) / float64(time.Millisecond)
 	}
-	sampleMu.RLock()
-	host := latestHost
-	sampleMu.RUnlock()
 	return Current{
 		StartedAt:             startedAt.Format(time.RFC3339),
 		UptimeSeconds:         int64(time.Since(startedAt).Seconds()),
@@ -193,13 +217,13 @@ func Snapshot() Current {
 		Threads:               threadCount(),
 		GOMAXPROCS:            runtime.GOMAXPROCS(0),
 		NumCPU:                runtime.NumCPU(),
-		HeapAllocMB:           toMB(mem.HeapAlloc),
-		HeapInuseMB:           toMB(mem.HeapInuse),
-		HeapSysMB:             toMB(mem.HeapSys),
-		StackInuseMB:          toMB(mem.StackInuse),
-		SysMB:                 toMB(mem.Sys),
-		GCCount:               mem.NumGC,
-		GCPauseTotalMS:        float64(mem.PauseTotalNs) / float64(time.Millisecond),
+		HeapAllocMB:           toMB(sampled.heapAlloc),
+		HeapInuseMB:           toMB(sampled.heapInuse),
+		HeapSysMB:             toMB(sampled.heapSys),
+		StackInuseMB:          toMB(sampled.stackInuse),
+		SysMB:                 toMB(sampled.sys),
+		GCCount:               sampled.gcCount,
+		GCPauseTotalMS:        float64(sampled.pauseTotal) / float64(time.Millisecond),
 		InFlight:              inFlight.Load(),
 		RequestsTotal:         total,
 		ErrorsTotal:           errorRequests.Load(),
@@ -223,9 +247,11 @@ func historySince(since, now time.Time, maxPoints int) []Point {
 	if maxPoints < 2 {
 		maxPoints = 2
 	}
+	// Aggregate while holding the read lock instead of copying up to 24h of
+	// samples on every poll; this keeps monitor reads allocation-light.
 	sampleMu.RLock()
-	snapshot := append([]sample(nil), samples...)
-	sampleMu.RUnlock()
+	defer sampleMu.RUnlock()
+	snapshot := samples
 	if len(snapshot) == 0 {
 		return []Point{}
 	}
@@ -353,7 +379,7 @@ func capture() {
 	}
 	cutoff := entry.at.Add(-Retention)
 	sampleMu.Lock()
-	latestHost = host
+	latest = entry
 	samples = append(samples, entry)
 	trimmed := samples[:0]
 	for _, item := range samples {

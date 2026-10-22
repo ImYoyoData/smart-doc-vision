@@ -4,6 +4,7 @@ import (
 	"context"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -11,6 +12,51 @@ import (
 	"smartdoc-vision/backend/internal/metrics"
 	"smartdoc-vision/backend/internal/model"
 )
+
+// Task status counts are the only monitor value that needs a full table
+// aggregate. Cache them so 10s polling from several admins does not keep
+// scanning the tasks table.
+const monitorTaskCacheTTL = 30 * time.Second
+
+var (
+	monitorTaskMu   sync.Mutex
+	monitorTaskAt   time.Time
+	monitorTaskLast map[string]int64
+)
+
+func (s *Server) taskStatusCounts(ctx context.Context) map[string]int64 {
+	monitorTaskMu.Lock()
+	defer monitorTaskMu.Unlock()
+	if monitorTaskLast != nil && time.Since(monitorTaskAt) < monitorTaskCacheTTL {
+		return cloneCounts(monitorTaskLast)
+	}
+	counts := map[string]int64{
+		model.TaskQueued: 0, model.TaskProcessing: 0, model.TaskReviewPending: 0,
+		model.TaskSuccess: 0, model.TaskFailed: 0,
+	}
+	type statusCount struct {
+		Status string
+		Count  int64
+	}
+	var rows []statusCount
+	if err := s.db.WithContext(ctx).Model(&model.Task{}).
+		Select("status, count(*) as count").Group("status").Scan(&rows).Error; err == nil {
+		for _, item := range rows {
+			counts[item.Status] = item.Count
+		}
+		monitorTaskLast = cloneCounts(counts)
+		monitorTaskAt = time.Now()
+	}
+	return counts
+}
+
+func cloneCounts(source map[string]int64) map[string]int64 {
+	out := make(map[string]int64, len(source))
+	for key, value := range source {
+		out[key] = value
+	}
+	return out
+}
 
 type monitorQueueItem struct {
 	ProjectID   uint64 `json:"project_id"`
@@ -92,21 +138,7 @@ func (s *Server) systemMonitor(c *gin.Context) {
 		dependencies["redis"] = false
 	}
 
-	tasks := map[string]int64{
-		model.TaskQueued: 0, model.TaskProcessing: 0, model.TaskReviewPending: 0,
-		model.TaskSuccess: 0, model.TaskFailed: 0,
-	}
-	type statusCount struct {
-		Status string
-		Count  int64
-	}
-	var taskCounts []statusCount
-	if err := s.db.WithContext(ctx).Model(&model.Task{}).
-		Select("status, count(*) as count").Group("status").Scan(&taskCounts).Error; err == nil {
-		for _, item := range taskCounts {
-			tasks[item.Status] = item.Count
-		}
-	}
+	tasks := s.taskStatusCounts(ctx)
 
 	mysqlPool := gin.H{}
 	if sqlDB != nil {
@@ -138,7 +170,7 @@ func (s *Server) systemMonitor(c *gin.Context) {
 		"sample_interval_seconds": int(metrics.SampleInterval / time.Second),
 		"retention_hours":         int(metrics.Retention / time.Hour),
 		"current":                 metrics.Snapshot(),
-		"history":                 metrics.History(since, 240),
+		"history":                 metrics.History(since, 120),
 		"queue":                   queue,
 		"tasks":                   tasks,
 		"dependencies":            dependencies,

@@ -107,3 +107,32 @@ func TestSnapshotReportsRuntime(t *testing.T) {
 		t.Fatalf("unexpected sample interval: %+v", current)
 	}
 }
+
+func TestSnapshotUsesSampledMemory(t *testing.T) {
+	sampleMu.Lock()
+	originalSamples, originalLatest := samples, latest
+	sampleMu.Unlock()
+	defer func() {
+		sampleMu.Lock()
+		samples, latest = originalSamples, originalLatest
+		sampleMu.Unlock()
+	}()
+
+	entry := sample{
+		at: time.Now(), heapAlloc: 64 << 20, heapInuse: 48 << 20, heapSys: 128 << 20,
+		stackInuse: 2 << 20, sys: 256 << 20, gcCount: 7,
+		pauseTotal: uint64(3 * time.Millisecond),
+	}
+	sampleMu.Lock()
+	latest = entry
+	samples = []sample{entry}
+	sampleMu.Unlock()
+
+	current := Snapshot()
+	if current.HeapAllocMB != 64 || current.HeapSysMB != 128 || current.SysMB != 256 {
+		t.Fatalf("snapshot must use sampled memory instead of re-reading: %+v", current)
+	}
+	if current.GCCount != 7 || current.GCPauseTotalMS != 3 {
+		t.Fatalf("snapshot must use sampled GC stats: %+v", current)
+	}
+}
