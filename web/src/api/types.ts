@@ -373,6 +373,7 @@ export interface TaskResultDetail {
   category_confidence?: number
   callback?: {
     ok?: boolean
+    transport?: string
     http_status?: number
     attempts?: number
     error?: string
@@ -381,6 +382,13 @@ export interface TaskResultDetail {
     response?: string
     result?: string
   } | null
+  routes?: Array<{
+    index?: number
+    type?: string
+    ok?: boolean
+    duration_ms?: number
+    error?: string
+  }>
   manual_review?: {
     reviewer?: string
     conclusion?: string

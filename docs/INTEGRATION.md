@@ -452,7 +452,7 @@ GET {url}?cursor={cursor}
 | 配置 | 说明 |
 |---|---|
 | callback_enabled | 是否启用 |
-| callback_url | 回调地址（公开地址；内网需平台开启 MEDIA_ALLOW_PRIVATE） |
+| callback_url | 回调地址，支持公开 `http(s)://` Webhook 或 `ws(s)://` WebSocket（内网需平台开启 MEDIA_ALLOW_PRIVATE） |
 | callback_results | 需要回调的最终结论：PASS / REJECT（待议任务经人工复核后再回调） |
 | callback_secret | HMAC 签名密钥，加密存储 |
 | callback_include_content | 是否把原始文本/内容回传；关闭时只传 URL/元信息 |
@@ -523,6 +523,29 @@ if not hmac.compare_digest(expected, request.headers["X-SmartDoc-Signature"]):
 - 业务方返回 2xx 视为成功。
 - 失败按 1s / 2s / 4s 重试 3 次。
 - 最终失败会写入任务详情的 `result_detail.callback`，并记录审计。
+
+### 8.4 WebSocket 回调
+
+`callback_url` 使用 `ws://` 或 `wss://` 时，平台按 WebSocket 推送结果：
+
+1. 建立连接时携带与 HTTP 回调相同的 `X-Idempotency-Key`、`X-SmartDoc-Event`、`X-SmartDoc-Task`、`X-SmartDoc-Result`、`X-SmartDoc-Timestamp`、`X-SmartDoc-Signature` 握手请求头；
+2. 连接建立后发送一条 UTF-8 JSON 文本帧，内容与 8.2 的回调体一致；
+3. 帧发送成功即视为回调成功，失败同样重试 3 次；连接在发送后关闭，业务方如需长期订阅请使用 WebSocket 触发或在业务侧持久化。
+
+### 8.5 结果动作编排
+
+除统一业务回调外，审核配置还可以按 PASS / REJECT / REVIEW 分别编排结果动作，动作在结果落库前执行，执行记录写入 `result_detail.routes`：
+
+| type | 必填字段 | 可选字段 | 说明 |
+|---|---|---|---|
+| http | url | method、params、headers、body、timeout_ms | params/headers 为字符串字典；body 留空发送标准结果 JSON |
+| websocket | url（ws/wss） | headers、payload、timeout_ms | headers 用于握手鉴权；payload 留空发送标准结果 JSON |
+| redis | target | command（publish/set/xadd）、payload | 写入平台 Redis DB 3；payload 留空发送标准结果 JSON |
+| mysql | dsn_env、query | args | DSN 从服务端环境变量读取；query 使用 `?` 占位符 |
+
+每个结论可配置 `on_error`：`continue` 继续执行、`stop` 停止后续动作、`to_review` 转人工复核。模板变量：`${task_no}`、`${task_id}`、`${biz_key}`、`${source_type}`、`${project_code}`、`${project_id}`、`${audit_code}`、`${audit_id}`、`${result}`、`${summary}`、`${reasons}`、`${labels}`、`${risk_level}`、`${score}`、`${category}`、`${category_name}`、`${category_confidence}`、`${review_note}`。
+
+> HTTP 与 WebSocket 动作同样受 SSRF 防护约束；后台提供结构化编辑器与「高级 JSON」两种编辑方式，保存时会校验动作类型、必填字段和失败策略。
 
 ---
 

@@ -37,6 +37,8 @@ import StatusTag from '@/components/StatusTag.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import TaskSubmitModal from '@/components/TaskSubmitModal.vue'
 import AuditIntegrationDrawer from '@/components/AuditIntegrationDrawer.vue'
+import ResultRoutesEditor from '@/components/ResultRoutesEditor.vue'
+import TriggerManageModal from '@/components/TriggerManageModal.vue'
 import { auditApi, metaApi, providerApi } from '@/api'
 import { copyText } from '@/utils/clipboard'
 import type { Audit, AuditAssistantConfig, AuditAssistantMessage, AuditCategory, Provider, RuleTemplate, TriggerSource } from '@/api/types'
@@ -68,6 +70,8 @@ const guideAuditId = ref<number | null>(null)
 const detailShow = ref(false)
 const detailAudit = ref<Audit | null>(null)
 const detailTriggers = ref<TriggerSource[]>([])
+const triggerModalShow = ref(false)
+const activeTrigger = ref<TriggerSource | null>(null)
 const decisionFilter = ref<string | null>(null)
 const exportShow = ref(false)
 const exportTarget = ref<Audit | null>(null)
@@ -1043,6 +1047,24 @@ function openGuide(audit: Audit) {
   guideShow.value = true
 }
 
+function openTriggerManage(trigger: TriggerSource) {
+  activeTrigger.value = trigger
+  triggerModalShow.value = true
+}
+
+async function reloadDetail() {
+  if (!detailAudit.value) return
+  try {
+    const data = await auditApi.get(detailAudit.value.id)
+    detailAudit.value = data.audit
+    detailTriggers.value = data.triggers
+    const updated = data.triggers.find((item) => item.id === activeTrigger.value?.id)
+    if (updated) activeTrigger.value = updated
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : '刷新审核详情失败')
+  }
+}
+
 async function openDetail(audit: Audit) {
   detailAudit.value = audit
   detailTriggers.value = []
@@ -1423,20 +1445,9 @@ onMounted(async () => {
                   placeholder='[{"name":"高风险驳回","priority":10,"logic":"OR","enabled":true,"conditions":[...],"result":"REJECT"}]'
                 />
               </div>
-              <div class="field">
-                <label>结果动作路由 JSON <span>结果落库前执行 HTTP / Redis / MySQL 动作</span></label>
-                <n-input
-                  v-model:value="form.routesText"
-                  type="textarea"
-                  :autosize="{ minRows: 6, maxRows: 14 }"
-                  class="code-input"
-                  spellcheck="false"
-                  placeholder='{"PASS":{"exec_mode":"sequential","on_error":"continue","actions":[]}}'
-                />
-                <div class="form-hint">
-                  动作支持 http（不得访问内网）、redis（publish / set / xadd）、mysql（经 dsn_env 读取 DSN）。
-                  on_error 可选 continue / stop / to_review，支持 ${task_no}、${result}、${score} 等变量。
-                </div>
+              <div class="field routes-field">
+                <label>结果动作回调 <span>按最终结论向业务系统推送结果</span></label>
+                <ResultRoutesEditor v-model="form.routesText" />
               </div>
             </div>
           </div>
@@ -1744,8 +1755,16 @@ onMounted(async () => {
           <div v-if="detailTriggers.length" class="trigger-list">
             <div v-for="trigger in detailTriggers" :key="trigger.id" class="trigger-row">
               <span class="trigger-type">{{ trigger.type }}</span>
-              <div><strong>{{ trigger.name }}</strong><span>优先级 {{ trigger.priority }}</span></div>
+              <div class="trigger-info">
+                <strong>{{ trigger.name }}</strong>
+                <span>
+                  优先级 {{ trigger.priority }}
+                  <template v-if="trigger.last_consume_at"> · 最近消费 {{ new Date(trigger.last_consume_at).toLocaleString() }}</template>
+                  <template v-if="trigger.last_error"> · <em class="trigger-error">{{ trigger.last_error }}</em></template>
+                </span>
+              </div>
               <StatusTag :status="trigger.status" type="provider" />
+              <n-button size="tiny" secondary @click="openTriggerManage(trigger)">配置</n-button>
             </div>
           </div>
           <p v-else class="muted small">暂无触发源。</p>
@@ -1763,6 +1782,11 @@ onMounted(async () => {
       v-model:show="guideShow"
       :audit-id="guideAuditId"
       @updated="load"
+    />
+    <TriggerManageModal
+      v-model:show="triggerModalShow"
+      :trigger="activeTrigger"
+      @updated="reloadDetail"
     />
   </div>
 </template>
@@ -2135,7 +2159,7 @@ onMounted(async () => {
 
 .json-editor-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 12px;
   margin-top: 12px;
 }
@@ -2601,6 +2625,19 @@ onMounted(async () => {
 
 .trigger-row > div {
   flex: 1;
+  min-width: 0;
+}
+
+.trigger-info > span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trigger-error {
+  color: #d03050;
+  font-style: normal;
 }
 
 .trigger-row strong {

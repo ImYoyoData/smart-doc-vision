@@ -18,10 +18,10 @@
 | 账号与权限 | 内置角色（超管/项目管理员/审核配置员/复核员/只读）、自定义角色与菜单/操作权限组合、项目数据范围、个人中心改密、2FA 重置 |
 | 模型接入 | 通用大模型（OpenAI 兼容 / Anthropic Messages 两种协议）、JEV System One（Choice / Noul）、连接测试、图片能力开关、多图预算、参数配置 |
 | 审核配置 | 合规审核 / 分类审核 / 纯分类器三种模式、媒体类型、模型绑定、审核要求 Prompt、规则模板与规则 JSON 编辑、分类映射与置信度兜底、分类类型 CSV/JSON 导入导出、默认结论、模型失败兜底、去重窗口、版本号 |
-| 任务引擎 | 项目级调度队列 + 并发 Worker 名额 + 公平轮询、异步 Worker 池、项目每日配额、幂等去重、状态机、结构化审核、规则判定、灰区转人工复核、结果动作路由（HTTP / Redis / MySQL）、业务回调、失败重试 |
+| 任务引擎 | 项目级调度队列 + 并发 Worker 名额 + 公平轮询、异步 Worker 池、项目每日配额、幂等去重、状态机、结构化审核、规则判定、灰区转人工复核、结果动作路由（HTTP / WebSocket / Redis / MySQL）、业务回调、失败重试 |
 | 规则引擎 | AND/OR 条件组、优先级、stop_on_hit、模型分数/风险等级/标签、扩展字段、媒体字段等 |
 | 触发接入 | 开放 API（HMAC + 防重放 + 审核授权范围 + 每分钟限流）、Redis Stream、WebSocket（含结果推送）、HTTP 定时轮询，每个审核配置独立开关 |
-| 结果回调 | 可配置回调 URL / Secret / 需要回调的结论 / 是否回传原内容；HMAC-SHA256 签名、自动重试、幂等键 |
+| 结果回调 | 可配置回调 URL / Secret / 需要回调的结论 / 是否回传原内容；支持 HTTP(S) Webhook 与 WebSocket 推送，HMAC-SHA256 签名、自动重试、幂等键 |
 | 人工复核 | 独立复核工作台、等待时长排序、媒体与规则命中预览、详细复核上下文（转人工原因、风险分/等级、分类置信度、规则命中、模型依据）、建议原因码、PASS/REJECT 后自动回调 |
 | 数据报表 | ECharts 趋势、通过率、结论分布、分类审核分布、项目/审核维度对比、未通过原因、错误与延迟分布 |
 | 审核导出 | 每个审核配置可按时间、状态、结论、触发来源、媒体类型、关键字筛选导出 UTF-8 CSV 任务记录 |
@@ -336,7 +336,7 @@ docker compose up -d --build
 | WebSocket | 签名连接后接收 `submit` 帧，返回 ACK，并主动推送终态 `result` 帧 | 建立长连接并处理心跳/重连 |
 | HTTP 轮询 | 按间隔和 cursor 拉取业务查询接口，连续失败自动暂停 | 提供只读查询接口，返回 `items` + `next_cursor` |
 
-项目中新创建的审核会自动生成这四种触发源（仅开放 API 默认启用）。AppKey/AppSecret 在「接入凭证」页面创建，每条凭证必须勾选允许访问的审核配置。接入指南内提供可按当前项目/审核编码直接复制的 cURL、带签名的 WebSocket 地址、Redis XADD 命令、轮询响应示例和回调报文。
+项目中新创建的审核会自动生成这四种触发源（仅开放 API 默认启用）。在审核详情点击任一触发源的「配置」，可以直接启用/暂停、修改 Stream、轮询地址、鉴权密钥等参数、查看最近运行/消费时间与错误，并执行连接测试。AppKey/AppSecret 在「接入凭证」页面创建，每条凭证必须勾选允许访问的审核配置。接入指南内提供可按当前项目/审核编码直接复制的 cURL、带签名的 WebSocket 地址、Redis XADD 命令、轮询响应示例和回调报文。
 
 AI 对接助手按触发方式拆分：每个方式都有独立的专用提示词，避免把 HMAC、队列生产端、长连接和查询接口的约束混在一份泛化提示词里；总览可多选方式生成组合提示词。下载的「统一 Skill.md」包含四种方式，并明确要求编码助手先询问业务方要接入哪一种或哪几种。
 
@@ -344,7 +344,22 @@ AI 对接助手按触发方式拆分：每个方式都有独立的专用提示�
 
 ### 结果回调
 
-审核配置可以独立配置回调 URL、签名 Secret、需要回调的结论（PASS / REJECT）以及是否回传原内容。自动审核进入待议时不会立即回调；人工复核完成后，以最终 PASS/REJECT 触发回调。回调失败按 1s / 2s / 4s 重试 3 次，并写入任务详情。
+审核配置可以独立配置回调 URL、签名 Secret、需要回调的结论（PASS / REJECT）以及是否回传原内容。回调地址支持 `http(s)://` Webhook 与 `ws(s)://` WebSocket：WebSocket 回调在握手请求头中携带同样的 `X-SmartDoc-*` 事件头与 HMAC 签名，连接建立后发送一条标准结果 JSON。自动审核进入待议时不会立即回调；人工复核完成后，以最终 PASS/REJECT 触发回调。回调失败按 1s / 2s / 4s 重试 3 次，并写入任务详情。
+
+### 结果动作编排
+
+审核配置的「结果动作回调」按最终结论（PASS / REJECT / REVIEW）分别编排，可在一个结论下串联多个动作：
+
+| 动作 | 配置项 | 说明 |
+|---|---|---|
+| HTTP | method、url、params、headers、body、timeout_ms | `params` 与 `headers` 每行一个 `key: value`；body 留空时发送标准结果 JSON |
+| WebSocket | url、headers、payload、timeout_ms | 仅支持 `ws://` / `wss://`，headers 用于握手鉴权，payload 留空时发送标准结果 JSON |
+| Redis | command、target、payload | command 支持 `publish` / `set` / `xadd` |
+| MySQL | dsn_env、query、args | DSN 从服务端环境变量读取，SQL 使用 `?` 占位符，args 每行一个 |
+
+动作支持模板变量：`${task_no}`、`${task_id}`、`${biz_key}`、`${source_type}`、`${project_code}`、`${audit_code}`、`${result}`、`${summary}`、`${reasons}`、`${labels}`、`${risk_level}`、`${score}`、`${category}`、`${category_name}`、`${category_confidence}`、`${review_note}`。`on_error` 可选 `continue` / `stop` / `to_review`，执行结果写入任务详情的 `routes` 字段。后台已提供结构化编辑器，也可切换「高级 JSON」直接编辑。
+
+> HTTP / WebSocket 结果动作默认启用 SSRF 防护，禁止访问内网与回环地址。本地联调需要回调到 `127.0.0.1` 时，仅在测试环境设置 `MEDIA_ALLOW_PRIVATE=true` 后重启后端。
 
 ### MySQL 说明
 
@@ -591,7 +606,7 @@ smart-doc-vision/
 | 审核定义 / 规则 / 兜底 | ✅ 规则模板 + 自定义规则 JSON 持久化 |
 | 幂等去重 | ✅ Redis 去重键 + DB 窗口内查询 |
 | 三条结果路线 | ✅ PASS / REJECT / REVIEW，灰区进入人工复核 |
-| 结果路由动作 | ✅ 业务回调 + HTTP / Redis / MySQL 结果动作编排，支持失败策略与执行记录 |
+| 结果路由动作 | ✅ 业务回调 + HTTP / WebSocket / Redis / MySQL 结果动作编排，支持参数、请求头、失败策略与执行记录 |
 | 回收站 | ✅ 项目 / 审核软删除、恢复、保留期计算 |
 | 审计日志 | ✅ 管理操作与任务事件全量入库 |
 | 监控看板 | ✅ 运营工作台 + ECharts 项目/审核数据报表；Prometheus `/metrics` 已接入，告警渠道未接入 |
