@@ -290,6 +290,9 @@ func parseAssistantReply(content string, providerID, projectID, auditID uint64, 
 	if len(draft.Categories) == 0 && (draft.DecisionMode == model.DecisionClassify || draft.DecisionMode == model.DecisionClassifyOnly) {
 		draft.Categories = catalog.ExampleClassificationCategories()
 	}
+	if draft.DecisionMode == model.DecisionClassifyOnly {
+		draft.Categories = catalog.EnsureClassifierUnknown(draft.Categories)
+	}
 	filteredCategories := make([]model.AuditCategory, 0, len(draft.Categories))
 	for _, category := range draft.Categories {
 		category.Code = strings.ToLower(strings.TrimSpace(category.Code))

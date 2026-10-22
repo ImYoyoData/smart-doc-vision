@@ -15,12 +15,16 @@ import (
 
 func metricsMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		started := time.Now()
+		metrics.BeginRequest()
+		defer func() {
+			route := c.FullPath()
+			if route == "" {
+				route = "unmatched"
+			}
+			metrics.ObserveRequest(c.Request.Method, route, c.Writer.Status(), time.Since(started))
+		}()
 		c.Next()
-		route := c.FullPath()
-		if route == "" {
-			route = "unmatched"
-		}
-		metrics.ObserveRequest(c.Request.Method, route, c.Writer.Status())
 	}
 }
 

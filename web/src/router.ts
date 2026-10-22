@@ -50,6 +50,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '用户与权限', section: '系统管理', menu: 'users' },
       },
       {
+        path: 'monitor',
+        name: 'monitor',
+        component: () => import('@/views/MonitorView.vue'),
+        meta: { title: '运行监控', section: '系统管理', menu: 'monitor' },
+      },
+      {
         path: 'profile',
         name: 'profile',
         component: () => import('@/views/ProfileView.vue'),

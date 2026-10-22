@@ -74,8 +74,11 @@ const stats = computed(() => ({
   audits: workspace.projects.reduce((sum, p) => sum + p.audit_count, 0),
   today: workspace.projects.reduce((sum, p) => sum + p.today_tasks, 0),
 }))
+const canCreateProject = computed(() => auth.user?.role === 'SUPER_ADMIN')
+const canUpdateProject = computed(() => auth.can('project:update'))
 
 function openCreate() {
+  if (!canCreateProject.value) return
   editing.value = null
   Object.assign(form, {
     name: '',
@@ -288,7 +291,7 @@ onMounted(load)
             </div>
             <span class="project-code mono">{{ project.code }}</span>
           </div>
-          <button class="card-menu" type="button" @click="openEdit(project)">
+          <button v-if="canUpdateProject" class="card-menu" type="button" @click="openEdit(project)">
             <EllipsisHorizontalOutline />
           </button>
         </div>
@@ -319,10 +322,10 @@ onMounted(load)
             <n-button size="tiny" quaternary title="项目接入凭证" @click="goCredentials(project)">
               <template #icon><KeyOutline /></template>
             </n-button>
-            <n-button v-if="project.status === 'ACTIVE'" size="tiny" quaternary @click="setStatus(project, 'PAUSED')">
+            <n-button v-if="canUpdateProject && project.status === 'ACTIVE'" size="tiny" quaternary @click="setStatus(project, 'PAUSED')">
               <template #icon><PauseOutline /></template>
             </n-button>
-            <n-button v-else size="tiny" quaternary @click="setStatus(project, 'ACTIVE')">
+            <n-button v-else-if="canUpdateProject" size="tiny" quaternary @click="setStatus(project, 'ACTIVE')">
               <template #icon><PlayOutline /></template>
             </n-button>
             <n-button v-if="auth.user?.role === 'SUPER_ADMIN'" size="tiny" quaternary class="danger" @click="remove(project)">
@@ -342,8 +345,8 @@ onMounted(load)
     <EmptyState
       v-else
       title="没有匹配的项目"
-      description="调整筛选条件，或创建一个新的项目空间。"
-      action="新建项目"
+      :description="canCreateProject ? '调整筛选条件，或创建一个新的项目空间。' : '调整筛选条件，或联系超级管理员为你授权项目。'"
+      :action="canCreateProject ? '新建项目' : ''"
       @action="openCreate"
     />
 

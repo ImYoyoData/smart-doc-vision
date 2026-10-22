@@ -70,14 +70,15 @@ const activeUsers = computed(() => users.value.filter((u) => u.status === 'ACTIV
 const menuLabels: Record<string, string> = {
   dashboard: '仪表盘', analytics: '数据报表', reviews: '待议复核', tasks: '审核任务',
   audits: '审核配置', providers: '模型接入', credentials: '接入凭证', projects: '项目空间',
-  logs: '审计日志', recycle: '回收站', users: '用户与权限', help: '对接文档', profile: '个人中心',
+  logs: '审计日志', recycle: '回收站', users: '用户与权限', monitor: '运行监控',
+  help: '对接文档', profile: '个人中心',
 }
 
 const permissionLabels: Record<string, string> = {
   'project:create': '创建项目', 'project:update': '修改项目', 'project:delete': '删除项目', 'project:restore': '恢复项目',
   'provider:write': '管理模型接入', 'audit:write': '管理审核配置', 'credential:write': '管理接入凭证',
   'task:submit': '提交审核任务', 'task:review': '人工复核', 'task:retry': '重试任务', 'user:manage': '管理账号',
-  'log:read': '查看审计日志', 'recycle:write': '回收站操作',
+  'log:read': '查看审计日志', 'recycle:write': '回收站操作', 'system:monitor': '查看运行监控',
 }
 
 async function load() {
@@ -450,6 +451,69 @@ onMounted(load)
         </div>
       </div>
     </n-modal>
+
+    <n-modal v-model:show="roleModalShow" :mask-closable="!roleSaving">
+      <div class="user-modal role-modal">
+        <div class="modal-head">
+          <div>
+            <div class="modal-kicker">{{ editingRole ? 'EDIT ROLE' : 'NEW ROLE' }}</div>
+            <h2>{{ editingRole ? '编辑自定义角色' : '新建自定义角色' }}</h2>
+            <p>菜单决定可见入口，操作权限决定可执行的动作；数据范围仍由账号授权的项目决定。</p>
+          </div>
+          <span class="modal-icon"><ShieldCheckmarkOutline /></span>
+        </div>
+        <div class="modal-body">
+          <div class="two-col">
+            <div class="field">
+              <label>角色编码 <span v-if="!editingRole" class="required">*</span></label>
+              <n-input v-model:value="roleForm.code" :disabled="Boolean(editingRole)" placeholder="ARCHIVE_OPERATOR" />
+            </div>
+            <div class="field">
+              <label>角色名称 <span class="required">*</span></label>
+              <n-input v-model:value="roleForm.name" placeholder="档案运营" />
+            </div>
+          </div>
+          <div class="field">
+            <label>角色说明</label>
+            <n-input v-model:value="roleForm.description" placeholder="说明该角色的使用场景与边界" />
+          </div>
+          <div class="role-editor-grid">
+            <div class="field">
+              <label>可见菜单 <span class="optional">至少一项</span></label>
+              <div class="check-panel">
+                <n-checkbox-group v-model:value="roleForm.menus">
+                  <n-checkbox
+                    v-for="menu in allMenus"
+                    :key="menu"
+                    :value="menu"
+                    :label="menuLabels[menu] || menu"
+                  />
+                </n-checkbox-group>
+              </div>
+            </div>
+            <div class="field">
+              <label>操作权限 <span class="optional">至少一项</span></label>
+              <div class="check-panel">
+                <n-checkbox-group v-model:value="roleForm.permissions">
+                  <n-checkbox
+                    v-for="permission in allPermissions"
+                    :key="permission"
+                    :value="permission"
+                    :label="permissionLabels[permission] || permission"
+                  />
+                </n-checkbox-group>
+              </div>
+            </div>
+          </div>
+          <p class="role-tip">运行监控依赖「查看运行监控」权限；只勾选菜单而未勾选权限时，接口仍会拒绝访问。</p>
+          <div v-if="roleError" class="modal-error">{{ roleError }}</div>
+        </div>
+        <div class="modal-footer">
+          <n-button :disabled="roleSaving" @click="roleModalShow = false">取消</n-button>
+          <n-button type="primary" :loading="roleSaving" @click="saveRole">{{ editingRole ? '保存角色' : '创建角色' }}</n-button>
+        </div>
+      </div>
+    </n-modal>
   </div>
 </template>
 
@@ -693,6 +757,13 @@ onMounted(load)
   color: var(--muted-light);
   font-size: 9px;
   font-weight: 400;
+}
+
+.role-tip {
+  margin: 0;
+  color: var(--muted-light);
+  font-size: 9px;
+  line-height: 1.7;
 }
 
 @media (max-width: 720px) {

@@ -20,12 +20,14 @@ import {
   TimeOutline,
 } from '@vicons/ionicons5'
 import PageHeader from '@/components/PageHeader.vue'
+import ReviewContext from '@/components/ReviewContext.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import { auditApi, taskApi } from '@/api'
 import type { Audit, Task, TaskDetail } from '@/api/types'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { useReviewStore } from '@/stores/review'
+import { REVIEW_REASON_OPTIONS } from '@/constants/reviewReasons'
 
 const workspace = useWorkspaceStore()
 const reviewStore = useReviewStore()
@@ -43,6 +45,7 @@ const detail = ref<TaskDetail | null>(null)
 const auditFilter = ref<number | null>(null)
 const reasonCode = ref('MANUAL_CONFIRMED')
 const remark = ref('')
+const reasonOptions = REVIEW_REASON_OPTIONS
 
 const selectedTask = computed(() => detail.value?.task || queue.value.find((t) => t.id === selectedId.value) || null)
 const selectedAudit = computed(() => audits.value.find((a) => a.id === selectedTask.value?.audit_id) || null)
@@ -139,13 +142,23 @@ async function loadQueue() {
   }
 }
 
+function suggestReasonCode(task: Task) {
+  const detail = task.result_detail
+  if (detail?.model_error) return 'MODEL_ERROR'
+  if (task.rule_trace?.trace?.some((group) => group.hit && group.on_hit_result === 'REVIEW')) return 'RULE_REVIEW'
+  const confidence = detail?.category_confidence ?? task.model_result?.category_confidence
+  if (confidence !== undefined && confidence !== null && confidence < 0.6) return 'CLASSIFICATION_UNCERTAIN'
+  return 'MANUAL_CONFIRMED'
+}
+
 async function selectTask(task: Task) {
   selectedId.value = task.id
-  reasonCode.value = 'MANUAL_CONFIRMED'
+  reasonCode.value = suggestReasonCode(task)
   remark.value = ''
   detailLoading.value = true
   try {
     detail.value = await taskApi.get(task.id)
+    if (detail.value?.task) reasonCode.value = suggestReasonCode(detail.value.task)
   } catch (error) {
     message.error(error instanceof Error ? error.message : '加载任务详情失败')
   } finally {
@@ -284,8 +297,8 @@ onMounted(async () => {
       </aside>
 
       <section class="panel review-workbench">
-        <n-spin :show="detailLoading">
-          <template v-if="selectedTask">
+        <n-spin :show="detailLoading" class="workbench-spin">
+          <div v-if="selectedTask" class="workbench-shell">
             <div class="workbench-head">
               <div>
                 <div class="workbench-kicker">REVIEW TASK</div>
@@ -301,7 +314,8 @@ onMounted(async () => {
               </div>
             </div>
 
-            <div class="workbench-body">
+            <div class="workbench-scroll">
+              <div class="workbench-body">
               <div class="workbench-content">
                 <h3 class="section-label">图档内容</h3>
                 <div v-for="(item, i) in texts" :key="`text-${i}`" class="review-text">
@@ -370,10 +384,21 @@ onMounted(async () => {
               </aside>
             </div>
 
+              <ReviewContext :task="selectedTask" class="review-context-block" />
+            </div>
             <div class="review-action-bar">
               <div class="review-form">
-                <n-input v-model:value="reasonCode" placeholder="原因码，如 MANUAL_CONFIRMED / RISK_CONFIRMED" size="small" style="width: 250px" />
-                <n-input v-model:value="remark" placeholder="复核备注（可选）" size="small" style="flex: 1; min-width: 180px" />
+                <n-select
+                  v-model:value="reasonCode"
+                  :options="reasonOptions"
+                  filterable
+                  tag
+                  size="small"
+                  placeholder="原因码"
+                  :consistent-menu-width="false"
+                  style="width: 168px; flex-shrink: 0"
+                />
+                <n-input v-model:value="remark" type="textarea" :autosize="{ minRows: 2, maxRows: 3 }" placeholder="写明判断依据、核对了哪些内容、为什么通过或不通过" size="small" style="flex: 1; min-width: 0" />
               </div>
               <div class="review-buttons">
                 <n-button size="large" :loading="submitting" @click="submitReview('REJECT')">
@@ -386,7 +411,7 @@ onMounted(async () => {
                 </n-button>
               </div>
             </div>
-          </template>
+          </div>
 
           <EmptyState
             v-else
@@ -466,14 +491,17 @@ onMounted(async () => {
 
 .review-layout {
   display: grid;
-  grid-template-columns: 355px minmax(0, 1fr);
+  grid-template-columns: 360px minmax(0, 1fr);
   gap: 14px;
-  align-items: start;
+  align-items: stretch;
+  height: clamp(400px, calc(100vh - 305px), 920px);
 }
 
 .review-queue {
-  position: sticky;
-  top: 80px;
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
   overflow: hidden;
 }
 
@@ -504,8 +532,8 @@ onMounted(async () => {
 }
 
 .queue-list {
-  max-height: calc(100vh - 310px);
-  min-height: 300px;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 7px;
 }
@@ -607,7 +635,8 @@ onMounted(async () => {
 
 .queue-empty {
   display: flex;
-  height: 260px;
+  height: 100%;
+  min-height: 260px;
   align-items: center;
   justify-content: center;
   flex-direction: column;
@@ -632,12 +661,50 @@ onMounted(async () => {
 }
 
 .review-workbench {
-  min-height: calc(100vh - 260px);
-  overflow: visible;
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  container-type: inline-size;
+}
+
+.workbench-spin {
+  flex: 1;
+  min-height: 0;
+}
+
+.workbench-spin :deep(.n-spin-container),
+.workbench-spin :deep(.n-spin-content) {
+  height: 100%;
+  min-height: 0;
+}
+
+.workbench-spin :deep(.n-spin-content) {
+  display: flex;
+  flex-direction: column;
+}
+
+.workbench-shell {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.workbench-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.review-workbench :deep(.empty-state) {
+  height: 100%;
 }
 
 .workbench-head {
   display: flex;
+  flex-shrink: 0;
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
@@ -984,15 +1051,38 @@ onMounted(async () => {
   white-space: nowrap;
 }
 
-.review-action-bar {
-  position: sticky;
-  bottom: 0;
-  z-index: 5;
+.review-context-block {
+  margin: 0 20px 14px;
+}
+
+.review-action-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  padding: 14px 20px;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.review-action-head strong {
+  display: block;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.review-action-head span {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 9.5px;
+}
+
+.review-action-bar {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 18px;
   border-top: 1px solid #f1e7d4;
   border-radius: 0 0 18px 18px;
   background: rgba(255, 253, 248, 0.96);
@@ -1003,6 +1093,7 @@ onMounted(async () => {
 .review-form {
   display: flex;
   flex: 1;
+  min-width: 0;
   gap: 8px;
 }
 
@@ -1016,9 +1107,35 @@ onMounted(async () => {
   height: 38px;
 }
 
+@container (max-width: 780px) {
+  .workbench-body {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+
+  .review-analysis {
+    padding-left: 0;
+    padding-top: 14px;
+    border-left: 0;
+    border-top: 1px solid #f0f3f8;
+  }
+}
+
+@container (max-width: 620px) {
+  .review-action-bar {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 9px;
+  }
+
+  .review-buttons {
+    justify-content: flex-end;
+  }
+}
+
 @media (max-width: 1200px) {
   .review-layout {
-    grid-template-columns: 320px minmax(0, 1fr);
+    grid-template-columns: 330px minmax(0, 1fr);
   }
 
   .workbench-body {
@@ -1036,14 +1153,24 @@ onMounted(async () => {
 @media (max-width: 900px) {
   .review-layout {
     grid-template-columns: 1fr;
+    height: auto;
   }
 
-  .review-queue {
-    position: static;
+  .review-queue,
+  .review-workbench {
+    height: auto;
   }
 
   .queue-list {
-    max-height: 310px;
+    max-height: 320px;
+  }
+
+  .workbench-scroll {
+    overflow: visible;
+  }
+
+  .review-workbench :deep(.empty-state) {
+    height: auto;
   }
 
   .review-banner {

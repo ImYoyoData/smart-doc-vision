@@ -379,6 +379,11 @@ func (e *Engine) process(taskID uint64) {
 
 	routeResults, routeOverride := e.runRoutes(audit, task, finalResult, input, map[string]any{
 		"summary": verdict.Summary, "reasons": verdict.Reasons, "labels": verdict.Labels,
+		"risk_level": verdict.RiskLevel, "score": verdict.Score,
+		"category": verdict.Category, "category_name": verdict.CategoryName,
+		"category_confidence": verdict.CategoryConfidence,
+		"provider":            verdict.Provider, "model": verdict.Model,
+		"rule": ruleResult, "media_type": task.MediaType,
 	})
 	if routeOverride != "" {
 		finalResult = routeOverride
@@ -537,10 +542,17 @@ func (e *Engine) runCallback(taskID uint64) {
 	if targetURL == "" {
 		return
 	}
+	wsCallback := isWebSocketURL(targetURL)
 	if !e.cfg.AllowPrivate {
-		if err := media.ValidateOutboundURL(targetURL); err != nil {
+		var verifyErr error
+		if wsCallback {
+			verifyErr = validateWebSocketURL(targetURL)
+		} else {
+			verifyErr = media.ValidateOutboundURL(targetURL)
+		}
+		if verifyErr != nil {
 			e.appendCallbackResult(task, map[string]any{
-				"ok": false, "target_url": targetURL, "error": "回调地址未通过 SSRF 校验: " + err.Error(),
+				"ok": false, "target_url": targetURL, "error": "回调地址未通过 SSRF 校验: " + verifyErr.Error(),
 			})
 			return
 		}
@@ -602,6 +614,54 @@ func (e *Engine) runCallback(taskID uint64) {
 	}
 	var customHeaders map[string]string
 	_ = model.DecodeJSON(audit.CallbackHeaders, &customHeaders)
+
+	if wsCallback {
+		headers := map[string]string{
+			"Content-Type":         "application/json",
+			"X-Idempotency-Key":    task.TaskNo,
+			"X-SmartDoc-Event":     "audit.completed",
+			"X-SmartDoc-Task":      task.TaskNo,
+			"X-SmartDoc-Result":    task.Result,
+			"X-SmartDoc-Timestamp": strconv.FormatInt(time.Now().UnixMilli(), 10),
+		}
+		if secret != "" {
+			mac := hmac.New(sha256.New, []byte(secret))
+			mac.Write(body)
+			headers["X-SmartDoc-Signature"] = "sha256=" + hex.EncodeToString(mac.Sum(nil))
+		}
+		for k, v := range customHeaders {
+			if strings.TrimSpace(k) != "" {
+				headers[k] = v
+			}
+		}
+		var wsErr string
+		for attempt := 1; attempt <= 3; attempt++ {
+			ctx, cancel := context.WithTimeout(e.ctx, 10*time.Second)
+			err := sendWebSocket(ctx, targetURL, headers, string(body), 10*time.Second)
+			cancel()
+			if err == nil {
+				e.appendCallbackResult(task, map[string]any{
+					"ok": true, "target_url": targetURL, "transport": "websocket",
+					"attempts": attempt, "signed": secret != "", "result": task.Result,
+				})
+				return
+			}
+			wsErr = err.Error()
+			if attempt < 3 {
+				select {
+				case <-time.After(time.Duration(1<<uint(attempt-1)) * time.Second):
+				case <-e.ctx.Done():
+					return
+				}
+			}
+		}
+		e.appendCallbackResult(task, map[string]any{
+			"ok": false, "target_url": targetURL, "transport": "websocket",
+			"error": truncate(wsErr, 400), "attempts": 3, "signed": secret != "", "result": task.Result,
+		})
+		e.writeAudit(task, "TASK_CALLBACK_FAILED", map[string]any{"target_url": targetURL, "error": truncate(wsErr, 300)})
+		return
+	}
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	var lastErr string

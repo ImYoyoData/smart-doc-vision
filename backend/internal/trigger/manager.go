@@ -126,11 +126,7 @@ func (m *Manager) reconcile() {
 }
 
 func fingerprint(t model.TriggerSource) string {
-	updated := ""
-	if !t.UpdatedAt.IsZero() {
-		updated = t.UpdatedAt.Format(time.RFC3339Nano)
-	}
-	return fmt.Sprintf("%d:%s:%s:%s:%s:%s", t.ID, t.Type, t.Status, updated, string(t.ConfigJSON), t.SecretEnc)
+	return fmt.Sprintf("%d:%s:%s:%s:%s", t.ID, t.Type, t.Status, string(t.ConfigJSON), t.SecretEnc)
 }
 
 func (m *Manager) touchRun(triggerID uint64, errMsg string, consume bool) {

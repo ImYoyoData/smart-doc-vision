@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"fmt"
+	"strings"
 
 	"smartdoc-vision/backend/internal/model"
 )
@@ -27,6 +28,26 @@ const DefaultClassifyPrompt = `你是“智审图档”平台的档案分类专�
 5. 同时说明判断依据和是否存在敏感、伪造、缺页等风险。
 
 分类结果会按审核配置中的“分类 → 终审结论”映射落库，因此分类编码必须准确。`
+
+// ClassifierUnknownCategory is always included when a pure classifier is
+// created, so callers always have an explicit fallback type. Its name and
+// description remain editable by the user.
+func ClassifierUnknownCategory() model.AuditCategory {
+	return model.AuditCategory{
+		Code: "unknown", Name: "未知",
+		Description: "无法判断，或不属于当前已配置的任何类型",
+		Result:      model.ResultPass,
+	}
+}
+
+func EnsureClassifierUnknown(categories []model.AuditCategory) []model.AuditCategory {
+	for _, category := range categories {
+		if strings.EqualFold(strings.TrimSpace(category.Code), "unknown") {
+			return categories
+		}
+	}
+	return append(categories, ClassifierUnknownCategory())
+}
 
 // ExampleClassificationCategories is also used by the seeded demo audit.
 func ExampleClassificationCategories() []model.AuditCategory {

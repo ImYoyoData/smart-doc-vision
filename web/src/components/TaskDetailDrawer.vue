@@ -21,14 +21,17 @@ import {
   CheckmarkCircleOutline,
   DocumentTextOutline,
   DownloadOutline,
+  FlashOutline,
   ImagesOutline,
   RefreshOutline,
   ShieldCheckmarkOutline,
   TimeOutline,
 } from '@vicons/ionicons5'
 import StatusTag from './StatusTag.vue'
+import ReviewContext from './ReviewContext.vue'
 import { taskApi } from '@/api'
 import type { Task, TaskDetail, TaskEvent } from '@/api/types'
+import { REVIEW_REASON_OPTIONS } from '@/constants/reviewReasons'
 
 const props = defineProps<{
   show: boolean
@@ -53,6 +56,7 @@ const reviewForm = reactive({
   reasonCode: 'MANUAL_CONFIRMED',
   remark: '',
 })
+const reasonOptions = REVIEW_REASON_OPTIONS
 
 const task = computed<Task | null>(() => detail.value?.task || null)
 const events = computed<TaskEvent[]>(() => detail.value?.events || [])
@@ -144,6 +148,12 @@ function retry() {
 function openReview() {
   reviewForm.conclusion = 'PASS'
   reviewForm.reasonCode = 'MANUAL_CONFIRMED'
+  if (task.value?.result_detail?.model_error) reviewForm.reasonCode = 'MODEL_ERROR'
+  else if (task.value?.rule_trace?.trace?.some((group) => group.hit && group.on_hit_result === 'REVIEW')) reviewForm.reasonCode = 'RULE_REVIEW'
+  else {
+    const confidence = task.value?.result_detail?.category_confidence ?? task.value?.model_result?.category_confidence
+    if (confidence !== undefined && confidence !== null && confidence < 0.6) reviewForm.reasonCode = 'CLASSIFICATION_UNCERTAIN'
+  }
   reviewForm.remark = ''
   reviewError.value = ''
   reviewShow.value = true
@@ -305,13 +315,28 @@ watch(
                   <strong>结果回调 {{ task.result_detail.callback.ok ? '成功' : '失败' }}</strong>
                   <span>{{ task.result_detail.callback.target_url || '—' }}</span>
                 </div>
-                <span class="callback-badge">{{ task.result_detail.callback.http_status || 'ERR' }}</span>
+                <span class="callback-badge">{{ task.result_detail.callback.transport === 'websocket' ? 'WS' : (task.result_detail.callback.http_status || 'ERR') }}</span>
               </div>
               <div class="callback-meta">
                 <span>签名字段：{{ task.result_detail.callback.signed ? '已签名' : '未签名' }}</span>
                 <span>尝试：{{ task.result_detail.callback.attempts || 0 }} 次</span>
+                <span>通道：{{ task.result_detail.callback.transport === 'websocket' ? 'WebSocket' : 'HTTP' }}</span>
               </div>
               <p v-if="task.result_detail.callback.error" class="callback-error">{{ task.result_detail.callback.error }}</p>
+            </div>
+
+            <div v-if="task.result_detail?.routes?.length" class="route-results">
+              <div class="route-results-head">
+                <FlashOutline />
+                <strong>结果动作</strong>
+                <span>{{ task.result_detail.routes.filter((item) => item.ok).length }} / {{ task.result_detail.routes.length }} 成功</span>
+              </div>
+              <div v-for="(item, index) in task.result_detail.routes" :key="index" class="route-item" :class="{ ok: item.ok }">
+                <span class="route-type">{{ (item.type || 'action').toUpperCase() }}</span>
+                <span class="route-state">{{ item.ok ? '成功' : '失败' }}</span>
+                <span class="route-duration">{{ item.duration_ms || 0 }} ms</span>
+                <p v-if="item.error" class="route-error">{{ item.error }}</p>
+              </div>
             </div>
           </section>
 
@@ -413,6 +438,7 @@ watch(
         <span class="review-icon"><ShieldCheckmarkOutline /></span>
       </div>
       <div class="review-body">
+        <ReviewContext :task="task" compact class="modal-review-context" />
         <label class="field-label">复核结论</label>
         <n-radio-group v-model:value="reviewForm.conclusion" class="review-radio">
           <n-radio value="PASS" class="radio-card pass">
@@ -425,9 +451,17 @@ watch(
           </n-radio>
         </n-radio-group>
         <label class="field-label">原因码</label>
-        <n-input v-model:value="reviewForm.reasonCode" placeholder="例如 MANUAL_CONFIRMED" />
+        <n-select
+          v-model:value="reviewForm.reasonCode"
+          :options="reasonOptions"
+          filterable
+          tag
+          :consistent-menu-width="false"
+          placeholder="选择或输入原因码"
+          style="width: 210px"
+        />
         <label class="field-label">复核备注</label>
-        <n-input v-model:value="reviewForm.remark" type="textarea" :autosize="{ minRows: 3, maxRows: 5 }" placeholder="说明判断依据，便于后续追溯" />
+        <n-input v-model:value="reviewForm.remark" type="textarea" :autosize="{ minRows: 3, maxRows: 5 }" placeholder="写明判断依据、核对了哪些内容、为什么通过或不通过" />
         <div v-if="reviewError" class="review-error">{{ reviewError }}</div>
         <div class="review-actions">
           <n-button @click="reviewShow = false">取消</n-button>
@@ -783,6 +817,87 @@ watch(
   word-break: break-all;
 }
 
+.route-results {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid #e6ecf5;
+  border-radius: 10px;
+  background: #fbfcfe;
+}
+
+.route-results-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  font-size: 11px;
+}
+
+.route-results-head :deep(svg) {
+  width: 14px;
+  height: 14px;
+  color: var(--brand);
+}
+
+.route-results-head strong {
+  font-weight: 600;
+}
+
+.route-results-head span {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.route-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 7px;
+  background: #fff5f5;
+  font-size: 10px;
+}
+
+.route-item + .route-item {
+  margin-top: 4px;
+}
+
+.route-item.ok {
+  background: #f5fbf7;
+}
+
+.route-type {
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #eef2f8;
+  font-family: var(--mono);
+  font-size: 9px;
+  color: #5a6472;
+}
+
+.route-state {
+  font-weight: 550;
+  color: #b91c1c;
+}
+
+.route-item.ok .route-state {
+  color: #15803d;
+}
+
+.route-duration {
+  margin-left: auto;
+  color: var(--muted);
+}
+
+.route-error {
+  flex-basis: 100%;
+  margin: 2px 0 0;
+  color: #b91c1c;
+  font-size: 9px;
+  word-break: break-all;
+}
+
 .manual-note {
   display: flex;
   align-items: flex-start;
@@ -1087,8 +1202,14 @@ watch(
   height: 28px;
 }
 
+.modal-review-context {
+  margin-bottom: 16px;
+}
+
 .review-modal {
-  width: min(470px, calc(100vw - 32px));
+  width: min(540px, calc(100vw - 32px));
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
   border-radius: 18px;
   background: #fff;
   box-shadow: 0 30px 80px -20px rgba(15, 23, 42, 0.35);
@@ -1139,7 +1260,7 @@ watch(
 }
 
 .review-body {
-  padding: 20px 24px 22px;
+  padding: 16px 22px 18px;
 }
 
 .field-label {

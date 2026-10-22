@@ -175,12 +175,19 @@ async function submit() {
     errorText.value = '请选择审核配置'
     return
   }
-  const images = form.images
-    .split(/\r?\n/)
-    .map((s) => s.trim())
-    .filter(Boolean)
+  const images = [
+    ...localImages.value.map((image) => image.dataUrl),
+    ...form.images
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .filter(Boolean),
+  ]
+  if (images.length > 12) {
+    errorText.value = '单次最多提交 12 张图片'
+    return
+  }
   if (!form.text.trim() && images.length === 0) {
-    errorText.value = '请填写文档文本或至少一张图片 URL'
+    errorText.value = '请填写文档文本、上传本地图片或填写图片 URL'
     return
   }
   let ext: Record<string, unknown> | undefined

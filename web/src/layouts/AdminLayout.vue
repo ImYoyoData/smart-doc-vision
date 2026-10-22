@@ -24,6 +24,7 @@ import {
   ScanOutline,
   SettingsOutline,
   ShieldCheckmarkOutline,
+  SpeedometerOutline,
   TrashOutline,
 } from '@vicons/ionicons5'
 import BrandMark from '@/components/BrandMark.vue'
@@ -75,7 +76,10 @@ const sections = [
   },
   {
     label: '系统管理',
-    items: [{ name: 'users', label: '用户与权限', icon: PeopleOutline }],
+    items: [
+      { name: 'users', label: '用户与权限', icon: PeopleOutline },
+      { name: 'monitor', label: '运行监控', icon: SpeedometerOutline },
+    ],
   },
 ]
 
@@ -89,11 +93,15 @@ const pageSection = computed(() => String(route.meta.section || '工作台'))
 const today = dayjs().format('YYYY.MM.DD')
 const avatarText = computed(() => (auth.displayName || 'U').slice(0, 1).toUpperCase())
 
+const canCreateProject = computed(() => auth.user?.role === 'SUPER_ADMIN')
 const projectOptions = computed(() => {
   const items = workspace.projects.map((p) => ({
     label: `${p.name}　${p.env.toUpperCase()}`,
     key: `project:${p.id}`,
   }))
+  if (!canCreateProject.value) {
+    return items.length ? items : [{ label: '暂无可访问项目', key: 'no-project', disabled: true }]
+  }
   return [
     ...items,
     ...(items.length ? [{ type: 'divider' as const, key: 'd1' }] : []),
@@ -115,7 +123,7 @@ function navigate(name: string) {
 
 function handleProject(key: string) {
   if (key === 'create-project') {
-    router.push({ name: 'projects', query: { create: '1' } })
+    if (canCreateProject.value) router.push({ name: 'projects', query: { create: '1' } })
     return
   }
   if (key.startsWith('project:')) {

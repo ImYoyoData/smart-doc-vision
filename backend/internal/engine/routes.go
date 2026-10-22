@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/gorilla/websocket"
 	"github.com/redis/go-redis/v9"
 
 	"smartdoc-vision/backend/internal/media"
@@ -29,6 +31,7 @@ type routeAction struct {
 	Method    string            `json:"method"`
 	URL       string            `json:"url"`
 	Headers   map[string]string `json:"headers"`
+	Params    map[string]string `json:"params"`
 	Body      string            `json:"body"`
 	TimeoutMS int               `json:"timeout_ms"`
 	Command   string            `json:"command"`
@@ -121,6 +124,8 @@ func (e *Engine) executeRouteAction(render routeRender, action routeAction) erro
 	switch strings.ToLower(strings.TrimSpace(action.Type)) {
 	case "http":
 		return e.executeHTTPAction(render, action)
+	case "websocket":
+		return e.executeWebSocketAction(render, action)
 	case "redis":
 		return e.executeRedisAction(render, action)
 	case "mysql":
@@ -130,10 +135,38 @@ func (e *Engine) executeRouteAction(render routeRender, action routeAction) erro
 	}
 }
 
+func routePayload(render routeRender) map[string]any {
+	return map[string]any{
+		"event": "audit.result_action", "task_no": render.Task.TaskNo,
+		"project_code": render.Project.Code, "audit_code": render.Audit.Code,
+		"biz_key": render.Task.BizKey, "result": render.FinalResult,
+		"summary": render.Detail["summary"], "reasons": render.Detail["reasons"],
+		"labels": render.Detail["labels"], "risk_level": render.Detail["risk_level"],
+		"score": render.Detail["score"], "category": render.Detail["category"],
+		"category_name":       render.Detail["category_name"],
+		"category_confidence": render.Detail["category_confidence"],
+		"ext":                 render.Input.Ext,
+	}
+}
+
 func (e *Engine) executeHTTPAction(render routeRender, action routeAction) error {
 	target := renderString(action.URL, render)
 	if target == "" {
 		return fmt.Errorf("HTTP 动作缺少 url")
+	}
+	if len(action.Params) > 0 {
+		u, err := url.Parse(target)
+		if err != nil {
+			return fmt.Errorf("HTTP 动作 url 无效: %w", err)
+		}
+		query := u.Query()
+		for key, value := range action.Params {
+			if strings.TrimSpace(key) != "" {
+				query.Set(key, renderString(value, render))
+			}
+		}
+		u.RawQuery = query.Encode()
+		target = u.String()
 	}
 	if !e.cfg.AllowPrivate {
 		if err := media.ValidateOutboundURL(target); err != nil {
@@ -146,14 +179,7 @@ func (e *Engine) executeHTTPAction(render routeRender, action routeAction) error
 	}
 	body := renderString(action.Body, render)
 	if strings.TrimSpace(body) == "" {
-		payload := map[string]any{
-			"event": "audit.result_action", "task_no": render.Task.TaskNo,
-			"project_code": render.Project.Code, "audit_code": render.Audit.Code,
-			"biz_key": render.Task.BizKey, "result": render.FinalResult,
-			"summary": render.Detail["summary"], "reasons": render.Detail["reasons"],
-			"labels": render.Detail["labels"], "ext": render.Input.Ext,
-		}
-		raw, _ := json.Marshal(payload)
+		raw, _ := json.Marshal(routePayload(render))
 		body = string(raw)
 	}
 	timeout := time.Duration(action.TimeoutMS) * time.Millisecond
@@ -188,6 +214,89 @@ func (e *Engine) executeHTTPAction(render routeRender, action routeAction) error
 	return nil
 }
 
+func validateWebSocketURL(raw string) error {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return fmt.Errorf("WebSocket 地址无效: %w", err)
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "ws":
+		u.Scheme = "http"
+	case "wss":
+		u.Scheme = "https"
+	default:
+		return fmt.Errorf("WebSocket 动作仅支持 ws/wss 地址")
+	}
+	return media.ValidateOutboundURL(u.String())
+}
+
+func isWebSocketURL(target string) bool {
+	lower := strings.ToLower(strings.TrimSpace(target))
+	return strings.HasPrefix(lower, "ws://") || strings.HasPrefix(lower, "wss://")
+}
+
+func sendWebSocket(ctx context.Context, target string, headers map[string]string, payload string, timeout time.Duration) error {
+	dialer := websocket.Dialer{HandshakeTimeout: timeout}
+	reqHeader := http.Header{}
+	reqHeader.Set("User-Agent", "SmartDoc-Vision-Route/1.0")
+	for key, value := range headers {
+		if strings.TrimSpace(key) != "" {
+			reqHeader.Set(key, value)
+		}
+	}
+	conn, resp, err := dialer.DialContext(ctx, target, reqHeader)
+	if err != nil {
+		if resp != nil {
+			return fmt.Errorf("WebSocket 握手失败 HTTP %d: %w", resp.StatusCode, err)
+		}
+		return fmt.Errorf("WebSocket 连接失败: %w", err)
+	}
+	defer conn.Close()
+	_ = conn.SetWriteDeadline(time.Now().Add(timeout))
+	if err := conn.WriteMessage(websocket.TextMessage, []byte(payload)); err != nil {
+		return fmt.Errorf("WebSocket 发送失败: %w", err)
+	}
+	return nil
+}
+
+func (e *Engine) executeWebSocketAction(render routeRender, action routeAction) error {
+	target := renderString(action.URL, render)
+	if target == "" {
+		return fmt.Errorf("WebSocket 动作缺少 url")
+	}
+	if !e.cfg.AllowPrivate {
+		if err := validateWebSocketURL(target); err != nil {
+			return fmt.Errorf("WebSocket 动作地址未通过 SSRF 校验: %w", err)
+		}
+	} else if !isWebSocketURL(target) {
+		return fmt.Errorf("WebSocket 动作仅支持 ws/wss 地址")
+	}
+	payload := renderString(action.Payload, render)
+	if strings.TrimSpace(payload) == "" {
+		payload = renderString(action.Body, render)
+	}
+	if strings.TrimSpace(payload) == "" {
+		raw, _ := json.Marshal(routePayload(render))
+		payload = string(raw)
+	}
+	headers := map[string]string{}
+	for key, value := range action.Headers {
+		if strings.TrimSpace(key) != "" {
+			headers[key] = renderString(value, render)
+		}
+	}
+	if _, ok := headers["Content-Type"]; !ok {
+		headers["Content-Type"] = "application/json"
+	}
+	timeout := time.Duration(action.TimeoutMS) * time.Millisecond
+	if timeout <= 0 || timeout > 30*time.Second {
+		timeout = 10 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(e.ctx, timeout)
+	defer cancel()
+	return sendWebSocket(ctx, target, headers, payload, timeout)
+}
+
 func (e *Engine) executeRedisAction(render routeRender, action routeAction) error {
 	if e.redis == nil {
 		return fmt.Errorf("Redis 未配置")
@@ -198,12 +307,7 @@ func (e *Engine) executeRedisAction(render routeRender, action routeAction) erro
 	}
 	payload := renderString(action.Payload, render)
 	if strings.TrimSpace(payload) == "" {
-		raw, _ := json.Marshal(map[string]any{
-			"task_no": render.Task.TaskNo, "biz_key": render.Task.BizKey,
-			"project_code": render.Project.Code, "audit_code": render.Audit.Code,
-			"result": render.FinalResult, "summary": render.Detail["summary"],
-			"reasons": render.Detail["reasons"], "labels": render.Detail["labels"],
-		})
+		raw, _ := json.Marshal(routePayload(render))
 		payload = string(raw)
 	}
 	ctx, cancel := context.WithTimeout(e.ctx, 5*time.Second)
@@ -248,17 +352,33 @@ func (e *Engine) executeMySQLAction(render routeRender, action routeAction) erro
 	return err
 }
 
+func detailText(detail map[string]any, key string) string {
+	if value, ok := detail[key]; ok && value != nil {
+		return fmt.Sprint(value)
+	}
+	return ""
+}
+
 func renderString(input string, render routeRender) string {
 	replacer := strings.NewReplacer(
 		"${task_no}", render.Task.TaskNo,
 		"${task_id}", fmt.Sprint(render.Task.ID),
 		"${biz_key}", render.Task.BizKey,
+		"${source_type}", render.Task.SourceType,
 		"${project_code}", render.Project.Code,
 		"${project_id}", fmt.Sprint(render.Project.ID),
 		"${audit_code}", render.Audit.Code,
 		"${audit_id}", fmt.Sprint(render.Audit.ID),
 		"${result}", render.FinalResult,
-		"${summary}", fmt.Sprint(render.Detail["summary"]),
+		"${summary}", detailText(render.Detail, "summary"),
+		"${reasons}", detailText(render.Detail, "reasons"),
+		"${labels}", detailText(render.Detail, "labels"),
+		"${risk_level}", detailText(render.Detail, "risk_level"),
+		"${score}", detailText(render.Detail, "score"),
+		"${category}", detailText(render.Detail, "category"),
+		"${category_name}", detailText(render.Detail, "category_name"),
+		"${category_confidence}", detailText(render.Detail, "category_confidence"),
+		"${review_note}", render.Task.ReviewNote,
 	)
 	return replacer.Replace(input)
 }

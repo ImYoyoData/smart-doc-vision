@@ -18,11 +18,11 @@
 | 账号与权限 | 内置角色（超管/项目管理员/审核配置员/复核员/只读）、自定义角色与菜单/操作权限组合、项目数据范围、个人中心改密、2FA 重置 |
 | 模型接入 | 通用大模型（OpenAI 兼容 / Anthropic Messages 两种协议）、JEV System One（Choice / Noul）、连接测试、图片能力开关、多图预算、参数配置 |
 | 审核配置 | 合规审核 / 分类审核 / 纯分类器三种模式、媒体类型、模型绑定、审核要求 Prompt、规则模板与规则 JSON 编辑、分类映射与置信度兜底、分类类型 CSV/JSON 导入导出、默认结论、模型失败兜底、去重窗口、版本号 |
-| 任务引擎 | 项目级调度队列 + 并发 Worker 名额 + 公平轮询、异步 Worker 池、项目每日配额、幂等去重、状态机、结构化审核、规则判定、灰区转人工复核、结果动作路由（HTTP / Redis / MySQL）、业务回调、失败重试 |
+| 任务引擎 | 项目级调度队列 + 并发 Worker 名额 + 公平轮询、异步 Worker 池、项目每日配额、幂等去重、状态机、结构化审核、规则判定、灰区转人工复核、结果动作路由（HTTP / WebSocket / Redis / MySQL）、业务回调、失败重试 |
 | 规则引擎 | AND/OR 条件组、优先级、stop_on_hit、模型分数/风险等级/标签、扩展字段、媒体字段等 |
 | 触发接入 | 开放 API（HMAC + 防重放 + 审核授权范围 + 每分钟限流）、Redis Stream、WebSocket（含结果推送）、HTTP 定时轮询，每个审核配置独立开关 |
-| 结果回调 | 可配置回调 URL / Secret / 需要回调的结论 / 是否回传原内容；HMAC-SHA256 签名、自动重试、幂等键 |
-| 人工复核 | 独立复核工作台、等待时长排序、媒体与规则命中预览、原因码、PASS/REJECT 后自动回调 |
+| 结果回调 | 可配置回调 URL / Secret / 需要回调的结论 / 是否回传原内容；支持 HTTP(S) Webhook 与 WebSocket 推送，HMAC-SHA256 签名、自动重试、幂等键 |
+| 人工复核 | 独立复核工作台、等待时长排序、媒体与规则命中预览、详细复核上下文（转人工原因、风险分/等级、分类置信度、规则命中、模型依据）、建议原因码、PASS/REJECT 后自动回调 |
 | 数据报表 | ECharts 趋势、通过率、结论分布、分类审核分布、项目/审核维度对比、未通过原因、错误与延迟分布 |
 | 审核导出 | 每个审核配置可按时间、状态、结论、触发来源、媒体类型、关键字筛选导出 UTF-8 CSV 任务记录 |
 | AI 配置助手 | 通过对话收集审核要求，自动生成并保存审核配置；创建走需求采集，编辑必须先选择目标并展示当前配置，确认“当前值 → 目标值”后只修改指定字段；前提是项目内至少有一个启用的通用大模型 |
@@ -106,17 +106,17 @@ CREATE DATABASE IF NOT EXISTS `smart-doc-vision`
 
 ### 3. 配置文件
 
-支持 `.env` 和 `config.yml` 两种方式，加载优先级为：
+统一使用一个 `.env` 配置文件（也支持操作系统环境变量覆盖）。加载优先级为：
 
 ```text
-操作系统环境变量  >  config.yml  >  .env  >  内置默认值
+操作系统环境变量  >  .env  >  内置默认值
 ```
 
 - 管理后台固定入口：`http://127.0.0.1:<SERVER_PORT>/admin`，根路径 `/` 会自动跳转。
-- `.env` 可用 MySQL 独立字段，也可使用完整 `MYSQL_DSN`；Redis 可用 `REDIS_ADDR` 或 `REDIS_HOST` + `REDIS_PORT`。
-- `config.yml` 结构和示例见 [config.yml.example](config.yml.example)。
-- 如果当前目录及其上级目录既没有 `.env` 也没有 `config.yml`，程序首次启动会自动生成一个带默认值和随机 JWT/MASTER 密钥的 `.env`。
-- `build.ps1` 会把 `.env.example` 复制为 `dist/.env`（仅在不存在时），并复制 `dist/config.yml.example`；把示例重命名为 `config.yml` 后优先于 `.env` 生效。
+- MySQL 和 Redis 配置全部写在同一个 `.env` 中；MySQL 可用独立字段或完整 `MYSQL_DSN`，Redis 可用 `REDIS_ADDR` 或 `REDIS_HOST` + `REDIS_PORT`。
+- 如果当前目录及其上级目录没有 `.env`，程序首次启动会自动生成一个带默认值和随机 JWT/MASTER 密钥的 `.env`。
+- `build.ps1` 会把 `.env.example` 复制为 `dist/.env`（仅在不存在时），不会再生成其他配置文件。
+- 旧版 `config.yml` 仅作为兼容兜底读取，但 `.env` 中的同名配置优先；新部署不再需要它。
 
 `.env` 至少修改：
 
@@ -138,27 +138,6 @@ REDIS_DB=3
 JWT_SECRET=一段足够长的随机字符串
 MASTER_KEY=至少 32 字符的密钥
 ADMIN_PASSWORD=你的管理员密码
-```
-
-`config.yml` 示例：
-
-```yaml
-http:
-  port: 8080
-
-mysql:
-  host: 127.0.0.1
-  port: 3306
-  user: root
-  password: "你的密码"
-  database: smart-doc-vision
-  charset: utf8mb4
-
-redis:
-  host: 127.0.0.1
-  port: 6379
-  password: ""
-  db: 3
 ```
 
 > 当前工作区的本地 `.env` 已按本机 MySQL / Redis 配置好，且被 `.gitignore` 忽略。`dbhub.toml` 也已被忽略，避免数据库口令进入版本库。
@@ -241,8 +220,11 @@ cd web && npm run build
 .\build.ps1 -Target linux
 .\build.ps1 -Target linux-arm64
 .\build.ps1 -Target all
-.\build.ps1 -Target all -Version 1.2.0
+.\build.ps1 -Target both -Upx
+.\build.ps1 -Target all -Version 1.3.0
 ```
+
+`-Upx` 会额外生成 Windows amd64 和 Linux amd64 的 UPX 压缩版本（文件名带 `-upx` 后缀），未压缩产物始终保留。未指定 `-Upx` 时，若检测到 `upx` 会询问一次；默认不压缩，避免个别安全软件把 UPX 壳误判为可疑程序。
 
 版本号默认读取根目录 [VERSION](VERSION)，并会通过 `-ldflags -X` 写入程序；后台「模型接入」等页面显示的版本号来自 `/meta/system`。
 
@@ -251,20 +233,21 @@ cd web && npm run build
 1. 执行前端 `npm run build`，Vite 生产构建自动使用 `/admin/` 作为资源前缀；
 2. 将 `web/dist` 复制到 `backend/internal/webui/dist`；
 3. 使用 `CGO_ENABLED=0` 编译 Go 单文件程序；
-4. 若检测到 `upx`，会询问是否使用 `--best --lzma` 压缩；
+4. 需要时用 `upx --best --lzma` 额外生成 Windows amd64 / Linux amd64 压缩版本（原产物保留）；
 5. 输出到项目根目录 `dist/`。
 
 生成文件示例：
 
 ```text
-dist/smartdoc-vision-1.0.0-windows-amd64.exe
-dist/smartdoc-vision-1.0.0-linux-amd64
-dist/smartdoc-vision-1.0.0-linux-arm64
+dist/smartdoc-vision-1.3.0-windows-amd64.exe
+dist/smartdoc-vision-1.3.0-windows-amd64-upx.exe
+dist/smartdoc-vision-1.3.0-linux-amd64
+dist/smartdoc-vision-1.3.0-linux-amd64-upx
+dist/smartdoc-vision-1.3.0-linux-arm64
 dist/.env
-dist/config.yml.example
 ```
 
-构建时会生成 `dist/.env` 配置模板（已存在则不覆盖），并复制 `config.yml.example`。把示例重命名为 `config.yml` 后，其显式配置优先于 `.env`；操作系统环境变量优先级最高。首次运行如果当前目录既没有 `.env` 也没有 `config.yml`，程序会自动生成带默认值和随机密钥的 `.env`。
+构建时会生成 `dist/.env` 配置模板（已存在则不覆盖）。操作系统环境变量优先级最高，其余配置统一放在 `.env`。首次运行如果当前目录没有 `.env`，程序会自动生成带默认值和随机密钥的 `.env`。
 
 运行（需要同目录或当前工作目录存在 `.env`）：
 
@@ -315,18 +298,23 @@ git push origin v1.0.0
 - 将前端资源嵌入 Go 程序；
 - 执行 `go vet` 和 `go test`；
 - 构建 Windows amd64、Linux amd64、Linux arm64；
-- 生成 `SHA256SUMS.txt`；
+- 额外生成 Windows amd64 / Linux amd64 的 UPX 压缩版本（`-upx` 后缀），原产物保留；
+- 生成覆盖全部资产的 `SHA256SUMS.txt`；
 - 从 [CHANGELOG.md](CHANGELOG.md) 提取对应版本更新内容；
-- 创建或更新 GitHub Release，并上传三个可执行文件和校验和。
+- 创建或更新 GitHub Release，并上传全部可执行文件和校验和。
 
 发布资产命名：
 
 ```text
 smartdoc-vision-<version>-windows-amd64.exe
+smartdoc-vision-<version>-windows-amd64-upx.exe
 smartdoc-vision-<version>-linux-amd64
+smartdoc-vision-<version>-linux-amd64-upx
 smartdoc-vision-<version>-linux-arm64
 SHA256SUMS.txt
 ```
+
+UPX 压缩版本体积更小，但部分杀毒软件会对 UPX 壳产生误报；生产部署建议优先使用未压缩版本，或在受控环境验证后再使用压缩版本。
 
 ## Docker 部署
 
@@ -358,7 +346,7 @@ docker compose up -d --build
 | WebSocket | 签名连接后接收 `submit` 帧，返回 ACK，并主动推送终态 `result` 帧 | 建立长连接并处理心跳/重连 |
 | HTTP 轮询 | 按间隔和 cursor 拉取业务查询接口，连续失败自动暂停 | 提供只读查询接口，返回 `items` + `next_cursor` |
 
-项目中新创建的审核会自动生成这四种触发源（仅开放 API 默认启用）。AppKey/AppSecret 在「接入凭证」页面创建，每条凭证必须勾选允许访问的审核配置。接入指南内提供可按当前项目/审核编码直接复制的 cURL、带签名的 WebSocket 地址、Redis XADD 命令、轮询响应示例和回调报文。
+项目中新创建的审核会自动生成这四种触发源（仅开放 API 默认启用）。在审核详情点击任一触发源的「配置」，可以直接启用/暂停、修改 Stream、轮询地址、鉴权密钥等参数、查看最近运行/消费时间与错误，并执行连接测试。AppKey/AppSecret 在「接入凭证」页面创建，每条凭证必须勾选允许访问的审核配置。接入指南内提供可按当前项目/审核编码直接复制的 cURL、带签名的 WebSocket 地址、Redis XADD 命令、轮询响应示例和回调报文。
 
 AI 对接助手按触发方式拆分：每个方式都有独立的专用提示词，避免把 HMAC、队列生产端、长连接和查询接口的约束混在一份泛化提示词里；总览可多选方式生成组合提示词。下载的「统一 Skill.md」包含四种方式，并明确要求编码助手先询问业务方要接入哪一种或哪几种。
 
@@ -366,7 +354,22 @@ AI 对接助手按触发方式拆分：每个方式都有独立的专用提示�
 
 ### 结果回调
 
-审核配置可以独立配置回调 URL、签名 Secret、需要回调的结论（PASS / REJECT）以及是否回传原内容。自动审核进入待议时不会立即回调；人工复核完成后，以最终 PASS/REJECT 触发回调。回调失败按 1s / 2s / 4s 重试 3 次，并写入任务详情。
+审核配置可以独立配置回调 URL、签名 Secret、需要回调的结论（PASS / REJECT）以及是否回传原内容。回调地址支持 `http(s)://` Webhook 与 `ws(s)://` WebSocket：WebSocket 回调在握手请求头中携带同样的 `X-SmartDoc-*` 事件头与 HMAC 签名，连接建立后发送一条标准结果 JSON。自动审核进入待议时不会立即回调；人工复核完成后，以最终 PASS/REJECT 触发回调。回调失败按 1s / 2s / 4s 重试 3 次，并写入任务详情。
+
+### 结果动作编排
+
+审核配置的「结果动作回调」按最终结论（PASS / REJECT / REVIEW）分别编排，可在一个结论下串联多个动作：
+
+| 动作 | 配置项 | 说明 |
+|---|---|---|
+| HTTP | method、url、params、headers、body、timeout_ms | `params` 与 `headers` 每行一个 `key: value`；body 留空时发送标准结果 JSON |
+| WebSocket | url、headers、payload、timeout_ms | 仅支持 `ws://` / `wss://`，headers 用于握手鉴权，payload 留空时发送标准结果 JSON |
+| Redis | command、target、payload | command 支持 `publish` / `set` / `xadd` |
+| MySQL | dsn_env、query、args | DSN 从服务端环境变量读取，SQL 使用 `?` 占位符，args 每行一个 |
+
+动作支持模板变量：`${task_no}`、`${task_id}`、`${biz_key}`、`${source_type}`、`${project_code}`、`${audit_code}`、`${result}`、`${summary}`、`${reasons}`、`${labels}`、`${risk_level}`、`${score}`、`${category}`、`${category_name}`、`${category_confidence}`、`${review_note}`。`on_error` 可选 `continue` / `stop` / `to_review`，执行结果写入任务详情的 `routes` 字段。后台已提供结构化编辑器，也可切换「高级 JSON」直接编辑。
+
+> HTTP / WebSocket 结果动作默认启用 SSRF 防护，禁止访问内网与回环地址。本地联调需要回调到 `127.0.0.1` 时，仅在测试环境设置 `MEDIA_ALLOW_PRIVATE=true` 后重启后端。
 
 ### MySQL 说明
 
@@ -382,6 +385,21 @@ AI 对接助手按触发方式拆分：每个方式都有独立的专用提示�
 - 超级管理员可重置其他账号密码；账号停用后立即无法登录。
 - 所有用户可在右上角头像 →「个人中心」修改自己的登录密码；密码至少 10 位并同时包含字母和数字。
 - 菜单由服务端根据角色下发，前端导航自动隐藏无权限入口；后端仍会独立校验写操作和项目范围。
+- 「系统管理 → 运行监控」默认仅超级管理员可见；自定义角色需要同时勾选 `monitor` 菜单和 `system:monitor` 权限才能访问。
+
+## 运行监控
+
+超级管理员可在「系统管理 → 运行监控」查看服务运行状态，所有指标以图表展示并支持最近 1 小时 / 6 小时 / 24 小时切换：
+
+- 运行时间、Go 堆内存与进程内存、协程数、操作系统线程数、GC 次数与暂停耗时；
+- 每个采样区间的请求量、HTTP 4xx/5xx 错误数、当前处理中请求数（并发）和平均响应耗时；
+- 各项目独立 Worker 池的执行中任务、并发上限与排队数量，以及任务状态汇总；
+- MySQL / Redis 依赖状态和连接池使用情况；
+- 主机级 CPU 使用率与物理内存占用，仅作参考（Linux 读取 `/proc`，Windows 调用系统 API）。
+
+指标每 10 秒采样一次，在进程内保留 24 小时；服务重启后历史清空。Prometheus 抓取仍使用 `/metrics`，不受影响。
+
+为了不让监控本身拖慢服务：内存统计只在采样协程中读取（不会在每次接口请求时触发 stop-the-world 的 `ReadMemStats`），任务状态汇总缓存 30 秒，监控接口默认最多返回 120 个降采样点；前端图表关闭动画，标签页隐藏时暂停轮询，并且不会叠加并发请求。
 
 ## 审核记录导出
 
@@ -458,7 +476,7 @@ JEV 不使用自由文本 Prompt，而是 `state + questions` 的结构化裁决
 |---|---|---|---|
 | 合规审核 `REVIEW` | `result` + 风险分 | 规则模板按风险阈值判定 PASS / REJECT / REVIEW | 内容安全、档案完整性、敏感信息审核 |
 | 分类审核 `CLASSIFY` | `category` + `category_confidence` + 风险信息 | 按分类映射结论；通过类别的置信度低于阈值时自动转人工 | 档案类型、票据/合同/图纸分类、按类别分流 |
-| 纯分类器 `CLASSIFY_ONLY` | `category` + `category_confidence` | **成功分类一律 PASS**，不做驳回判定；`category` / `category_name` 就是业务需要的类型值 | 标签、归档类别、工单类型、内容路由 |
+| 纯分类器 `CLASSIFY_ONLY` | `category` + `category_confidence` | **成功分类一律 PASS**，不做驳回判定；`category` / `category_name` 就是业务需要的类型值；创建时自动加入可编辑的 `unknown / 未知` 类型 | 标签、归档类别、工单类型、内容路由 |
 
 分类审核的每个分类都配置：
 
@@ -466,6 +484,7 @@ JEV 不使用自由文本 Prompt，而是 `state + questions` 的结构化裁决
 - `name`：展示名称（写入结果 `category_name`）；
 - `description`：给模型的判定说明；
 - `result`：该类别的终审映射结论（PASS / REJECT / REVIEW）。纯分类器会忽略 result 并统一存为 PASS。
+- 纯分类器创建时会自动加入 `unknown / 未知` 类型，名称和说明可编辑，确保模型无法判断时仍有明确返回值。
 
 分类类型支持 **CSV / JSON 导入导出**：
 
@@ -612,7 +631,7 @@ smart-doc-vision/
 | 审核定义 / 规则 / 兜底 | ✅ 规则模板 + 自定义规则 JSON 持久化 |
 | 幂等去重 | ✅ Redis 去重键 + DB 窗口内查询 |
 | 三条结果路线 | ✅ PASS / REJECT / REVIEW，灰区进入人工复核 |
-| 结果路由动作 | ✅ 业务回调 + HTTP / Redis / MySQL 结果动作编排，支持失败策略与执行记录 |
+| 结果路由动作 | ✅ 业务回调 + HTTP / WebSocket / Redis / MySQL 结果动作编排，支持参数、请求头、失败策略与执行记录 |
 | 回收站 | ✅ 项目 / 审核软删除、恢复、保留期计算 |
 | 审计日志 | ✅ 管理操作与任务事件全量入库 |
 | 监控看板 | ✅ 运营工作台 + ECharts 项目/审核数据报表；Prometheus `/metrics` 已接入，告警渠道未接入 |

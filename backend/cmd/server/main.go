@@ -13,6 +13,7 @@ import (
 	"smartdoc-vision/backend/internal/api"
 	"smartdoc-vision/backend/internal/config"
 	"smartdoc-vision/backend/internal/engine"
+	"smartdoc-vision/backend/internal/metrics"
 	"smartdoc-vision/backend/internal/security"
 	"smartdoc-vision/backend/internal/service"
 	"smartdoc-vision/backend/internal/store"
@@ -62,6 +63,10 @@ func main() {
 	retentionService := service.NewRetentionService(db)
 	go retentionService.Run(retentionCtx)
 	defer retentionCancel()
+
+	monitorCtx, monitorCancel := context.WithCancel(context.Background())
+	metrics.StartSampler(monitorCtx)
+	defer monitorCancel()
 
 	server := api.NewServer(cfg, db, cache, cipher, eng, tasks)
 	httpServer := &http.Server{

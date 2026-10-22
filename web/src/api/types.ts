@@ -373,6 +373,7 @@ export interface TaskResultDetail {
   category_confidence?: number
   callback?: {
     ok?: boolean
+    transport?: string
     http_status?: number
     attempts?: number
     error?: string
@@ -381,6 +382,13 @@ export interface TaskResultDetail {
     response?: string
     result?: string
   } | null
+  routes?: Array<{
+    index?: number
+    type?: string
+    ok?: boolean
+    duration_ms?: number
+    error?: string
+  }>
   manual_review?: {
     reviewer?: string
     conclusion?: string
@@ -637,3 +645,83 @@ export interface ReviewSummary {
 }
 
 
+
+export interface MonitorPoint {
+  time: string
+  heap_alloc_mb: number
+  heap_sys_mb: number
+  sys_mb: number
+  goroutines: number
+  threads: number
+  in_flight: number
+  requests: number
+  errors: number
+  avg_latency_ms: number
+  gc_count: number
+  host_cpu_percent: number
+  host_mem_percent: number
+}
+
+export interface MonitorCurrent {
+  started_at: string
+  uptime_seconds: number
+  goroutines: number
+  threads: number
+  gomaxprocs: number
+  num_cpu: number
+  heap_alloc_mb: number
+  heap_inuse_mb: number
+  heap_sys_mb: number
+  stack_inuse_mb: number
+  sys_mb: number
+  gc_count: number
+  gc_pause_total_ms: number
+  in_flight: number
+  requests_total: number
+  errors_total: number
+  avg_latency_ms: number
+  host_cpu_percent: number
+  host_mem_percent: number
+  host_mem_used_mb: number
+  host_mem_total_mb: number
+  host_available: boolean
+  sample_interval_seconds: number
+  retention_hours: number
+}
+
+export interface MonitorQueueItem {
+  project_id: number
+  project_name: string
+  project_code: string
+  active: number
+  pending: number
+  limit: number
+}
+
+export interface MonitorData {
+  range: string
+  since: string
+  now: string
+  sample_interval_seconds: number
+  retention_hours: number
+  current: MonitorCurrent
+  history: MonitorPoint[]
+  queue: MonitorQueueItem[]
+  tasks: Record<string, number>
+  dependencies: { mysql: boolean; redis: boolean }
+  mysql_pool: {
+    open_connections?: number
+    in_use?: number
+    idle?: number
+    max_open?: number
+    wait_count?: number
+    wait_duration_ms?: number
+  }
+  redis_pool: {
+    total_conns?: number
+    idle_conns?: number
+    hits?: number
+    misses?: number
+    timeouts?: number
+  }
+}

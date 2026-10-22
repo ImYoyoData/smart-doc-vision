@@ -37,6 +37,8 @@ import StatusTag from '@/components/StatusTag.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import TaskSubmitModal from '@/components/TaskSubmitModal.vue'
 import AuditIntegrationDrawer from '@/components/AuditIntegrationDrawer.vue'
+import ResultRoutesEditor from '@/components/ResultRoutesEditor.vue'
+import TriggerManageModal from '@/components/TriggerManageModal.vue'
 import { auditApi, metaApi, providerApi } from '@/api'
 import { copyText } from '@/utils/clipboard'
 import type { Audit, AuditAssistantConfig, AuditAssistantMessage, AuditCategory, Provider, RuleTemplate, TriggerSource } from '@/api/types'
@@ -68,6 +70,8 @@ const guideAuditId = ref<number | null>(null)
 const detailShow = ref(false)
 const detailAudit = ref<Audit | null>(null)
 const detailTriggers = ref<TriggerSource[]>([])
+const triggerModalShow = ref(false)
+const activeTrigger = ref<TriggerSource | null>(null)
 const decisionFilter = ref<string | null>(null)
 const exportShow = ref(false)
 const exportTarget = ref<Audit | null>(null)
@@ -110,6 +114,19 @@ const defaultRoutesText = JSON.stringify({
   REJECT: { exec_mode: 'sequential', on_error: 'continue', actions: [] },
   REVIEW: { exec_mode: 'sequential', on_error: 'to_review', actions: [] },
 }, null, 2)
+
+const classifierUnknownCategory: AuditCategory = {
+  code: 'unknown',
+  name: '未知',
+  description: '无法判断，或不属于当前已配置的任何类型',
+  result: 'PASS',
+}
+
+function ensureClassifierUnknownCategory() {
+  if (form.decisionMode !== 'CLASSIFY_ONLY') return
+  if (form.categories.some((category) => category.code.trim().toLowerCase() === 'unknown')) return
+  form.categories.push({ ...classifierUnknownCategory })
+}
 
 const fallbackCategories: AuditCategory[] = [
   { code: 'contract', name: '合同协议', description: '合同、协议、补充条款、盖章的签约文件', result: 'PASS' },
@@ -312,6 +329,7 @@ function setDecisionMode(value: string | number) {
     } else if (mode === 'CLASSIFY_ONLY') {
       form.categories = form.categories.map((category) => ({ ...category, result: 'PASS' }))
     }
+    if (mode === 'CLASSIFY_ONLY') ensureClassifierUnknownCategory()
     form.rulesPreset = mode === 'CLASSIFY_ONLY' ? 'classifier' : 'classify'
     form.rulesText = mode === 'CLASSIFY_ONLY' ? '[]' : rulesTextForPreset('classify')
     if (!editing.value) {
@@ -495,6 +513,7 @@ async function onCategoryFilePicked(event: Event) {
     const imported = normalizeImportedCategories(rows)
     const applyImport = () => {
       form.categories = imported
+      ensureClassifierUnknownCategory()
       message.success(`已导入 ${imported.length} 个分类类型`)
     }
     if (form.categories.length > 0) {
@@ -516,6 +535,7 @@ async function onCategoryFilePicked(event: Event) {
 function loadExampleCategories() {
   const pure = form.decisionMode === 'CLASSIFY_ONLY'
   form.categories = exampleCategories.value.map((category) => ({ ...category, result: pure ? 'PASS' : category.result }))
+  ensureClassifierUnknownCategory()
   message.success('已载入分类示例，可按业务调整')
 }
 
@@ -868,6 +888,7 @@ function applyAssistantDraft(config: AuditAssistantConfig) {
   form.rulesPreset = form.decisionMode === 'CLASSIFY_ONLY' ? 'classifier' : form.decisionMode === 'CLASSIFY' ? 'classify' : 'standard'
   form.rulesText = JSON.stringify(config.rules || [], null, 2)
   form.routesText = JSON.stringify(config.routes || JSON.parse(defaultRoutesText), null, 2)
+  if (form.decisionMode === 'CLASSIFY_ONLY') ensureClassifierUnknownCategory()
   form.defaultResult = form.decisionMode === 'CLASSIFY_ONLY' ? 'PASS' : config.default_result || 'REVIEW'
   form.onModelFail = config.on_model_fail || 'REVIEW'
   form.dedupeWindowSec = config.dedupe_window_sec || 86400
@@ -1024,6 +1045,24 @@ function openSubmit(audit: Audit) {
 function openGuide(audit: Audit) {
   guideAuditId.value = audit.id
   guideShow.value = true
+}
+
+function openTriggerManage(trigger: TriggerSource) {
+  activeTrigger.value = trigger
+  triggerModalShow.value = true
+}
+
+async function reloadDetail() {
+  if (!detailAudit.value) return
+  try {
+    const data = await auditApi.get(detailAudit.value.id)
+    detailAudit.value = data.audit
+    detailTriggers.value = data.triggers
+    const updated = data.triggers.find((item) => item.id === activeTrigger.value?.id)
+    if (updated) activeTrigger.value = updated
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : '刷新审核详情失败')
+  }
 }
 
 async function openDetail(audit: Audit) {
@@ -1406,20 +1445,9 @@ onMounted(async () => {
                   placeholder='[{"name":"高风险驳回","priority":10,"logic":"OR","enabled":true,"conditions":[...],"result":"REJECT"}]'
                 />
               </div>
-              <div class="field">
-                <label>结果动作路由 JSON <span>结果落库前执行 HTTP / Redis / MySQL 动作</span></label>
-                <n-input
-                  v-model:value="form.routesText"
-                  type="textarea"
-                  :autosize="{ minRows: 6, maxRows: 14 }"
-                  class="code-input"
-                  spellcheck="false"
-                  placeholder='{"PASS":{"exec_mode":"sequential","on_error":"continue","actions":[]}}'
-                />
-                <div class="form-hint">
-                  动作支持 http（不得访问内网）、redis（publish / set / xadd）、mysql（经 dsn_env 读取 DSN）。
-                  on_error 可选 continue / stop / to_review，支持 ${task_no}、${result}、${score} 等变量。
-                </div>
+              <div class="field routes-field">
+                <label>结果动作回调 <span>按最终结论向业务系统推送结果</span></label>
+                <ResultRoutesEditor v-model="form.routesText" />
               </div>
             </div>
           </div>
@@ -1727,8 +1755,16 @@ onMounted(async () => {
           <div v-if="detailTriggers.length" class="trigger-list">
             <div v-for="trigger in detailTriggers" :key="trigger.id" class="trigger-row">
               <span class="trigger-type">{{ trigger.type }}</span>
-              <div><strong>{{ trigger.name }}</strong><span>优先级 {{ trigger.priority }}</span></div>
+              <div class="trigger-info">
+                <strong>{{ trigger.name }}</strong>
+                <span>
+                  优先级 {{ trigger.priority }}
+                  <template v-if="trigger.last_consume_at"> · 最近消费 {{ new Date(trigger.last_consume_at).toLocaleString() }}</template>
+                  <template v-if="trigger.last_error"> · <em class="trigger-error">{{ trigger.last_error }}</em></template>
+                </span>
+              </div>
               <StatusTag :status="trigger.status" type="provider" />
+              <n-button size="tiny" secondary @click="openTriggerManage(trigger)">配置</n-button>
             </div>
           </div>
           <p v-else class="muted small">暂无触发源。</p>
@@ -1746,6 +1782,11 @@ onMounted(async () => {
       v-model:show="guideShow"
       :audit-id="guideAuditId"
       @updated="load"
+    />
+    <TriggerManageModal
+      v-model:show="triggerModalShow"
+      :trigger="activeTrigger"
+      @updated="reloadDetail"
     />
   </div>
 </template>
@@ -2118,7 +2159,7 @@ onMounted(async () => {
 
 .json-editor-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 12px;
   margin-top: 12px;
 }
@@ -2584,6 +2625,19 @@ onMounted(async () => {
 
 .trigger-row > div {
   flex: 1;
+  min-width: 0;
+}
+
+.trigger-info > span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trigger-error {
+  color: #d03050;
+  font-style: normal;
 }
 
 .trigger-row strong {

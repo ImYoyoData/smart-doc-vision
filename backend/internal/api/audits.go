@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -269,8 +270,8 @@ func (s *Server) updateAudit(c *gin.Context) {
 		audit.Rules = catalog.RulesPayload(req.Strictness)
 	}
 	if len(req.Routes) > 0 && string(req.Routes) != "null" {
-		if !json.Valid(req.Routes) {
-			badRequest(c, "结果路由必须是合法 JSON")
+		if err := validateRoutesJSON(req.Routes); err != nil {
+			badRequest(c, err.Error())
 			return
 		}
 		audit.Routes = model.JSONText(req.Routes)
@@ -568,13 +569,8 @@ func applyCallbackConfig(s *Server, audit *model.Audit, req *auditInput, creatin
 		if audit.CallbackURL == "" {
 			return fmt.Errorf("启用回调时必须填写回调地址")
 		}
-		if err := validateBaseURL(audit.CallbackURL); err != nil {
-			return fmt.Errorf("回调地址格式错误")
-		}
-		if !s.cfg.AllowPrivate {
-			if err := media.ValidateOutboundURL(audit.CallbackURL); err != nil {
-				return fmt.Errorf("回调地址未通过 SSRF 校验: %w", err)
-			}
+		if err := validateCallbackURL(audit.CallbackURL, s.cfg.AllowPrivate); err != nil {
+			return err
 		}
 	}
 	if req.CallbackResults != nil {
@@ -641,6 +637,9 @@ func validateAuditInput(req *auditInput, creating bool) error {
 		return err
 	}
 	req.DecisionMode = normalizeDecisionMode(req.DecisionMode)
+	if creating && req.DecisionMode == model.DecisionClassifyOnly {
+		req.Categories = catalog.EnsureClassifierUnknown(req.Categories)
+	}
 	if err := validateDecisionConfig(req.DecisionMode, req.Categories); err != nil {
 		return err
 	}
@@ -655,6 +654,11 @@ func validateAuditInput(req *auditInput, creating bool) error {
 	}
 	if len(req.Rules) > 0 && string(req.Rules) != "null" {
 		if err := validateRulesJSON(req.Rules); err != nil {
+			return err
+		}
+	}
+	if len(req.Routes) > 0 && string(req.Routes) != "null" {
+		if err := validateRoutesJSON(req.Routes); err != nil {
 			return err
 		}
 	}
@@ -759,6 +763,120 @@ func validateRulesJSON(raw []byte) error {
 func validResult(v string) bool {
 	v = strings.ToUpper(strings.TrimSpace(v))
 	return v == model.ResultPass || v == model.ResultReject || v == model.ResultReview
+}
+
+type routeActionInput struct {
+	Type      string            `json:"type"`
+	Method    string            `json:"method"`
+	URL       string            `json:"url"`
+	Headers   map[string]string `json:"headers"`
+	Params    map[string]string `json:"params"`
+	Body      string            `json:"body"`
+	TimeoutMS int               `json:"timeout_ms"`
+	Command   string            `json:"command"`
+	Target    string            `json:"target"`
+	Payload   string            `json:"payload"`
+	DSNEnv    string            `json:"dsn_env"`
+	Query     string            `json:"query"`
+	Args      []any             `json:"args"`
+}
+
+type resultRouteInput struct {
+	ExecMode string             `json:"exec_mode"`
+	OnError  string             `json:"on_error"`
+	Actions  []routeActionInput `json:"actions"`
+}
+
+func validateRoutesJSON(raw []byte) error {
+	var routes map[string]resultRouteInput
+	if err := json.Unmarshal(raw, &routes); err != nil {
+		return fmt.Errorf("结果动作路由必须是 JSON 对象")
+	}
+	for result, route := range routes {
+		if !validResult(result) {
+			return fmt.Errorf("结果动作路由的键 %q 不合法，仅支持 PASS/REJECT/REVIEW", result)
+		}
+		if mode := strings.ToLower(strings.TrimSpace(route.ExecMode)); mode != "" && mode != "sequential" {
+			return fmt.Errorf("%s 的 exec_mode 仅支持 sequential", result)
+		}
+		if onError := strings.ToLower(strings.TrimSpace(route.OnError)); onError != "" && onError != "continue" && onError != "stop" && onError != "to_review" {
+			return fmt.Errorf("%s 的 on_error 仅支持 continue/stop/to_review", result)
+		}
+		for index, action := range route.Actions {
+			label := fmt.Sprintf("%s 的第 %d 个动作", result, index+1)
+			if action.TimeoutMS < 0 || action.TimeoutMS > 30000 {
+				return fmt.Errorf("%s timeout_ms 需在 0~30000 之间", label)
+			}
+			switch strings.ToLower(strings.TrimSpace(action.Type)) {
+			case "http":
+				if strings.TrimSpace(action.URL) == "" {
+					return fmt.Errorf("%s缺少 url", label)
+				}
+				if method := strings.ToUpper(strings.TrimSpace(action.Method)); method != "" &&
+					method != http.MethodGet && method != http.MethodPost && method != http.MethodPut &&
+					method != http.MethodPatch && method != http.MethodDelete && method != http.MethodHead {
+					return fmt.Errorf("%s的 method 不合法", label)
+				}
+			case "websocket":
+				if strings.TrimSpace(action.URL) == "" {
+					return fmt.Errorf("%s缺少 url", label)
+				}
+				scheme := strings.ToLower(strings.TrimSpace(action.URL))
+				if !strings.HasPrefix(scheme, "ws://") && !strings.HasPrefix(scheme, "wss://") &&
+					!strings.HasPrefix(scheme, "${") {
+					return fmt.Errorf("%s的 url 必须以 ws:// 或 wss:// 开头", label)
+				}
+			case "redis":
+				if strings.TrimSpace(action.Target) == "" {
+					return fmt.Errorf("%s缺少 target", label)
+				}
+				switch strings.ToLower(strings.TrimSpace(action.Command)) {
+				case "", "publish", "set", "xadd":
+				default:
+					return fmt.Errorf("%s的 command 仅支持 publish/set/xadd", label)
+				}
+			case "mysql":
+				if strings.TrimSpace(action.DSNEnv) == "" {
+					return fmt.Errorf("%s缺少 dsn_env", label)
+				}
+				if strings.TrimSpace(action.Query) == "" {
+					return fmt.Errorf("%s缺少 query", label)
+				}
+			default:
+				return fmt.Errorf("%s的类型 %q 不合法，仅支持 http/websocket/redis/mysql", label, action.Type)
+			}
+		}
+	}
+	return nil
+}
+
+func validateCallbackURL(raw string, allowPrivate bool) error {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return fmt.Errorf("回调地址格式错误")
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "http", "https":
+	case "ws", "wss":
+		if u.Host == "" {
+			return fmt.Errorf("回调地址缺少主机名")
+		}
+		if allowPrivate {
+			return nil
+		}
+		u.Scheme = map[string]string{"ws": "http", "wss": "https"}[strings.ToLower(u.Scheme)]
+	default:
+		return fmt.Errorf("回调地址必须以 http://、https://、ws:// 或 wss:// 开头")
+	}
+	if u.Host == "" {
+		return fmt.Errorf("回调地址缺少主机名")
+	}
+	if !allowPrivate {
+		if err := media.ValidateOutboundURL(u.String()); err != nil {
+			return fmt.Errorf("回调地址未通过 SSRF 校验: %w", err)
+		}
+	}
+	return nil
 }
 
 func defaultResult(v string) string {

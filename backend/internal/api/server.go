@@ -165,6 +165,7 @@ func (s *Server) Router() *gin.Engine {
 			auth.PUT("/roles/:code", s.updateRole)
 			auth.DELETE("/roles/:code", s.deleteRole)
 			auth.GET("/meta/system", s.systemInfo)
+			auth.GET("/system/monitor", s.systemMonitor)
 			auth.GET("/users", s.listUsers)
 			auth.POST("/users", s.createUser)
 			auth.PUT("/users/:id", s.updateUser)
