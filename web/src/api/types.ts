@@ -658,6 +658,8 @@ export interface MonitorPoint {
   errors: number
   avg_latency_ms: number
   gc_count: number
+  host_cpu_percent: number
+  host_mem_percent: number
 }
 
 export interface MonitorCurrent {
@@ -678,6 +680,11 @@ export interface MonitorCurrent {
   requests_total: number
   errors_total: number
   avg_latency_ms: number
+  host_cpu_percent: number
+  host_mem_percent: number
+  host_mem_used_mb: number
+  host_mem_total_mb: number
+  host_available: boolean
   sample_interval_seconds: number
   retention_hours: number
 }

@@ -27,21 +27,44 @@ type key struct {
 }
 
 type sample struct {
-	at           time.Time
-	heapAlloc    uint64
-	heapInuse    uint64
-	heapSys      uint64
-	stackInuse   uint64
-	sys          uint64
-	pauseTotal   uint64
-	goroutines   int
-	threads      int
-	inFlight     int64
-	requests     uint64
-	errors       uint64
-	latencyNanos uint64
-	gcCount      uint32
+	at             time.Time
+	heapAlloc      uint64
+	heapInuse      uint64
+	heapSys        uint64
+	stackInuse     uint64
+	sys            uint64
+	pauseTotal     uint64
+	goroutines     int
+	threads        int
+	inFlight       int64
+	requests       uint64
+	errors         uint64
+	latencyNanos   uint64
+	gcCount        uint32
+	hostCPUPercent float64
+	hostMemPercent float64
+	hostMemUsedMB  float64
+	hostMemTotalMB float64
+	hostAvailable  bool
 }
+
+// hostStats are host-wide reference values. They are intentionally coarse:
+// the monitor page shows them only as context for the process metrics.
+type hostStats struct {
+	cpuPercent float64
+	memPercent float64
+	memUsedMB  float64
+	memTotalMB float64
+	available  bool
+}
+
+var (
+	hostMu        sync.Mutex
+	hostPrevIdle  uint64
+	hostPrevTotal uint64
+	hostPrevValid bool
+	latestHost    hostStats
+)
 
 var (
 	startedAt = time.Now()
@@ -77,23 +100,30 @@ type Current struct {
 	RequestsTotal         uint64  `json:"requests_total"`
 	ErrorsTotal           uint64  `json:"errors_total"`
 	AvgLatencyMS          float64 `json:"avg_latency_ms"`
+	HostCPUPercent        float64 `json:"host_cpu_percent"`
+	HostMemPercent        float64 `json:"host_mem_percent"`
+	HostMemUsedMB         float64 `json:"host_mem_used_mb"`
+	HostMemTotalMB        float64 `json:"host_mem_total_mb"`
+	HostAvailable         bool    `json:"host_available"`
 	SampleIntervalSeconds int     `json:"sample_interval_seconds"`
 	RetentionHours        int     `json:"retention_hours"`
 }
 
 // Point is one downsampled bucket in the monitor time series.
 type Point struct {
-	Time         string  `json:"time"`
-	HeapAllocMB  float64 `json:"heap_alloc_mb"`
-	HeapSysMB    float64 `json:"heap_sys_mb"`
-	SysMB        float64 `json:"sys_mb"`
-	Goroutines   int     `json:"goroutines"`
-	Threads      int     `json:"threads"`
-	InFlight     int64   `json:"in_flight"`
-	Requests     uint64  `json:"requests"`
-	Errors       uint64  `json:"errors"`
-	AvgLatencyMS float64 `json:"avg_latency_ms"`
-	GCCount      uint32  `json:"gc_count"`
+	Time           string  `json:"time"`
+	HeapAllocMB    float64 `json:"heap_alloc_mb"`
+	HeapSysMB      float64 `json:"heap_sys_mb"`
+	SysMB          float64 `json:"sys_mb"`
+	Goroutines     int     `json:"goroutines"`
+	Threads        int     `json:"threads"`
+	InFlight       int64   `json:"in_flight"`
+	Requests       uint64  `json:"requests"`
+	Errors         uint64  `json:"errors"`
+	AvgLatencyMS   float64 `json:"avg_latency_ms"`
+	GCCount        uint32  `json:"gc_count"`
+	HostCPUPercent float64 `json:"host_cpu_percent"`
+	HostMemPercent float64 `json:"host_mem_percent"`
 }
 
 // BeginRequest marks one HTTP request as in flight.
@@ -153,6 +183,9 @@ func Snapshot() Current {
 	if total > 0 {
 		avgLatency = float64(latencyNanos.Load()) / float64(total) / float64(time.Millisecond)
 	}
+	sampleMu.RLock()
+	host := latestHost
+	sampleMu.RUnlock()
 	return Current{
 		StartedAt:             startedAt.Format(time.RFC3339),
 		UptimeSeconds:         int64(time.Since(startedAt).Seconds()),
@@ -171,6 +204,11 @@ func Snapshot() Current {
 		RequestsTotal:         total,
 		ErrorsTotal:           errorRequests.Load(),
 		AvgLatencyMS:          round2(avgLatency),
+		HostCPUPercent:        host.cpuPercent,
+		HostMemPercent:        host.memPercent,
+		HostMemUsedMB:         host.memUsedMB,
+		HostMemTotalMB:        host.memTotalMB,
+		HostAvailable:         host.available,
 		SampleIntervalSeconds: int(SampleInterval / time.Second),
 		RetentionHours:        int(Retention / time.Hour),
 	}
@@ -236,6 +274,8 @@ func historySince(since, now time.Time, maxPoints int) []Point {
 		item.point.Goroutines = current.goroutines
 		item.point.Threads = current.threads
 		item.point.InFlight = current.inFlight
+		item.point.HostCPUPercent = current.hostCPUPercent
+		item.point.HostMemPercent = current.hostMemPercent
 		if current.requests >= previous.requests {
 			item.point.Requests += current.requests - previous.requests
 		}
@@ -271,13 +311,15 @@ func historySince(since, now time.Time, maxPoints int) []Point {
 			continue
 		}
 		point := Point{
-			Time:        baseSince.Add(time.Duration(index) * step).Format(time.RFC3339),
-			HeapAllocMB: carry.HeapAllocMB,
-			HeapSysMB:   carry.HeapSysMB,
-			SysMB:       carry.SysMB,
-			Goroutines:  carry.Goroutines,
-			Threads:     carry.Threads,
-			InFlight:    carry.InFlight,
+			Time:           baseSince.Add(time.Duration(index) * step).Format(time.RFC3339),
+			HeapAllocMB:    carry.HeapAllocMB,
+			HeapSysMB:      carry.HeapSysMB,
+			SysMB:          carry.SysMB,
+			Goroutines:     carry.Goroutines,
+			Threads:        carry.Threads,
+			InFlight:       carry.InFlight,
+			HostCPUPercent: carry.HostCPUPercent,
+			HostMemPercent: carry.HostMemPercent,
 		}
 		points = append(points, point)
 	}
@@ -287,24 +329,31 @@ func historySince(since, now time.Time, maxPoints int) []Point {
 func capture() {
 	var mem runtime.MemStats
 	runtime.ReadMemStats(&mem)
+	host := sampleHost()
 	entry := sample{
-		at:           time.Now(),
-		heapAlloc:    mem.HeapAlloc,
-		heapInuse:    mem.HeapInuse,
-		heapSys:      mem.HeapSys,
-		stackInuse:   mem.StackInuse,
-		sys:          mem.Sys,
-		pauseTotal:   mem.PauseTotalNs,
-		goroutines:   runtime.NumGoroutine(),
-		threads:      threadCount(),
-		inFlight:     inFlight.Load(),
-		requests:     totalRequests.Load(),
-		errors:       errorRequests.Load(),
-		latencyNanos: latencyNanos.Load(),
-		gcCount:      mem.NumGC,
+		at:             time.Now(),
+		heapAlloc:      mem.HeapAlloc,
+		heapInuse:      mem.HeapInuse,
+		heapSys:        mem.HeapSys,
+		stackInuse:     mem.StackInuse,
+		sys:            mem.Sys,
+		pauseTotal:     mem.PauseTotalNs,
+		goroutines:     runtime.NumGoroutine(),
+		threads:        threadCount(),
+		inFlight:       inFlight.Load(),
+		requests:       totalRequests.Load(),
+		errors:         errorRequests.Load(),
+		latencyNanos:   latencyNanos.Load(),
+		gcCount:        mem.NumGC,
+		hostCPUPercent: host.cpuPercent,
+		hostMemPercent: host.memPercent,
+		hostMemUsedMB:  host.memUsedMB,
+		hostMemTotalMB: host.memTotalMB,
+		hostAvailable:  host.available,
 	}
 	cutoff := entry.at.Add(-Retention)
 	sampleMu.Lock()
+	latestHost = host
 	samples = append(samples, entry)
 	trimmed := samples[:0]
 	for _, item := range samples {
@@ -314,6 +363,29 @@ func capture() {
 	}
 	samples = trimmed
 	sampleMu.Unlock()
+}
+
+// sampleHost computes host-wide CPU and memory usage. CPU needs two readings,
+// so it reports 0 on the first call after process start.
+func sampleHost() hostStats {
+	stats := hostStats{}
+	hostMu.Lock()
+	defer hostMu.Unlock()
+	if idle, total, ok := readCPUTimes(); ok {
+		if hostPrevValid && total > hostPrevTotal && idle >= hostPrevIdle {
+			totalDelta := total - hostPrevTotal
+			idleDelta := idle - hostPrevIdle
+			stats.cpuPercent = round2(float64(totalDelta-idleDelta) / float64(totalDelta) * 100)
+		}
+		hostPrevIdle, hostPrevTotal, hostPrevValid = idle, total, true
+	}
+	if used, total, ok := readHostMemory(); ok && total > 0 {
+		stats.memUsedMB = toMB(used)
+		stats.memTotalMB = toMB(total)
+		stats.memPercent = round2(float64(used) / float64(total) * 100)
+		stats.available = true
+	}
+	return stats
 }
 
 func threadCount() int {

@@ -52,6 +52,8 @@ const taskEntries = computed(() => {
   return Object.entries(labels).map(([key, label]) => ({ key, label, value: tasks[key] || 0 }))
 })
 const hasHistory = computed(() => history.value.length > 1)
+const hostCpu = computed(() => Number(current.value?.host_cpu_percent || 0))
+const hostMem = computed(() => Number(current.value?.host_mem_percent || 0))
 
 function formatUptime(seconds?: number) {
   if (!seconds || seconds < 0) return '—'
@@ -151,6 +153,7 @@ const concurrencyOption = computed<EChartsOption>(() => ({
       symbol: 'none',
       data: history.value.map((point) => point.in_flight),
       lineStyle: { width: 2, color: '#2b6cf6' },
+      itemStyle: { color: '#2b6cf6' },
       areaStyle: { color: 'rgba(43, 108, 246, 0.12)' },
     },
     {
@@ -160,6 +163,7 @@ const concurrencyOption = computed<EChartsOption>(() => ({
       symbol: 'none',
       data: history.value.map((point) => point.goroutines),
       lineStyle: { width: 1.5, color: '#8b5cf6' },
+      itemStyle: { color: '#8b5cf6' },
     },
     {
       name: '线程数',
@@ -168,6 +172,7 @@ const concurrencyOption = computed<EChartsOption>(() => ({
       symbol: 'none',
       data: history.value.map((point) => point.threads),
       lineStyle: { width: 1.5, color: '#f59e0b' },
+      itemStyle: { color: '#f59e0b' },
     },
   ],
 }))
@@ -193,6 +198,7 @@ const memoryOption = computed<EChartsOption>(() => ({
       symbol: 'none',
       data: history.value.map((point) => point.heap_alloc_mb),
       lineStyle: { width: 2, color: '#28b875' },
+      itemStyle: { color: '#28b875' },
       areaStyle: { color: 'rgba(40, 184, 117, 0.13)' },
     },
     {
@@ -202,6 +208,7 @@ const memoryOption = computed<EChartsOption>(() => ({
       symbol: 'none',
       data: history.value.map((point) => point.heap_sys_mb),
       lineStyle: { width: 1.5, color: '#2b6cf6' },
+      itemStyle: { color: '#2b6cf6' },
     },
     {
       name: '进程总内存',
@@ -210,6 +217,7 @@ const memoryOption = computed<EChartsOption>(() => ({
       symbol: 'none',
       data: history.value.map((point) => point.sys_mb),
       lineStyle: { width: 1.5, color: '#94a3b8', type: 'dashed' },
+      itemStyle: { color: '#94a3b8' },
     },
   ],
 }))
@@ -384,9 +392,26 @@ onBeforeUnmount(() => {
 
       <section class="panel">
         <div class="panel-head">
-          <div><h3 class="panel-title">依赖与连接池</h3><p class="panel-subtitle">数据库与缓存的健康状态和连接使用情况</p></div>
+          <div><h3 class="panel-title">主机资源与依赖</h3><p class="panel-subtitle">主机 CPU/内存仅供参考；下方为数据库与缓存状态</p></div>
         </div>
         <div class="panel-body dep-list">
+          <div v-if="current?.host_available" class="host-strip">
+            <div class="host-line">
+              <div class="host-head">
+                <span>主机 CPU 使用率</span>
+                <b>{{ hostCpu.toFixed(1) }}%</b>
+              </div>
+              <div class="host-track"><i :style="{ width: `${Math.min(100, hostCpu)}%` }"></i></div>
+            </div>
+            <div class="host-line">
+              <div class="host-head">
+                <span>主机内存占用</span>
+                <b>{{ hostMem.toFixed(1) }}%</b>
+                <em>{{ current.host_mem_used_mb }} / {{ current.host_mem_total_mb }} MB</em>
+              </div>
+              <div class="host-track mem"><i :style="{ width: `${Math.min(100, hostMem)}%` }"></i></div>
+            </div>
+          </div>
           <div class="dep-item" :class="{ down: data && !data.dependencies.mysql }">
             <span class="dep-icon"><ServerOutline /></span>
             <div>
@@ -599,14 +624,74 @@ onBeforeUnmount(() => {
   gap: 9px;
 }
 
+.host-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 2px 2px 10px;
+  border-bottom: 1px dashed #eaf0f7;
+}
+
+.host-line {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.host-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 9.5px;
+}
+
+.host-head b {
+  margin-left: auto;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.host-head em {
+  color: var(--muted-light);
+  font-family: var(--mono);
+  font-size: 8.5px;
+  font-style: normal;
+}
+
+.host-track {
+  height: 4px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: #eef2f8;
+}
+
+.host-track i {
+  display: block;
+  height: 100%;
+  border-radius: 99px;
+  background: #c3d4f5;
+  transition: width 0.3s ease;
+}
+
+.host-track.mem i {
+  background: #bfe6d1;
+}
+
 .dep-item {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 9px;
   padding: 10px 11px;
   border: 1px solid #e6f5ec;
   border-radius: 9px;
   background: #f8fdfa;
+}
+
+.dep-item > div {
+  min-width: 0;
 }
 
 .dep-item.down {
