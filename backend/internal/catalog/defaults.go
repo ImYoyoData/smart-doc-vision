@@ -242,5 +242,6 @@ func RuleTemplates() []RuleTemplate {
 		{Key: "classify", Name: "分类标准", Description: "按分类映射结论；置信度 < 0.60 的通过结果转人工", Kind: model.DecisionClassify, Rules: ClassificationRulesPayload(0.60)},
 		{Key: "classify_strict", Name: "分类严格", Description: "按分类映射结论；置信度 < 0.75 的通过结果转人工", Kind: model.DecisionClassify, Rules: ClassificationRulesPayload(0.75)},
 		{Key: "classify_loose", Name: "分类宽松", Description: "按分类映射结论；置信度 < 0.45 的通过结果转人工", Kind: model.DecisionClassify, Rules: ClassificationRulesPayload(0.45)},
+		{Key: "classifier", Name: "纯分类器", Description: "只返回分类类型，成功审核一律 PASS，不做驳回判定", Kind: model.DecisionClassifyOnly, Rules: model.JSONText("[]")},
 	}
 }

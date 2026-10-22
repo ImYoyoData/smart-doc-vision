@@ -473,8 +473,8 @@ watch(
             <div class="identity-copy">
               <h2>{{ guide.audit.name }}</h2>
               <p>{{ guide.project.name }} · 项目编码 <code>{{ guide.project.code }}</code> · 审核编码 <code>{{ guide.audit.code }}</code></p>
-              <span v-if="guide.audit.decision_mode === 'CLASSIFY'" class="identity-mode">
-                分类审核 · {{ (guide.audit.categories || []).length }} 个分类 · 结果含 category / category_confidence
+              <span v-if="guide.audit.decision_mode === 'CLASSIFY' || guide.audit.decision_mode === 'CLASSIFY_ONLY'" class="identity-mode">
+                {{ guide.audit.decision_mode === 'CLASSIFY_ONLY' ? '纯分类器 · 全部 PASS' : '分类审核' }} · {{ (guide.audit.categories || []).length }} 个类型 · 结果含 category / category_confidence
               </span>
             </div>
             <n-button quaternary circle @click="load()">

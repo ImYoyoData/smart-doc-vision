@@ -178,7 +178,7 @@ func (s *TaskService) Submit(ctx context.Context, in SubmitInput) (*SubmitOutcom
 	}
 	enqueueCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := s.engine.Enqueue(enqueueCtx, task.ID); err != nil {
+	if err := s.engine.Enqueue(enqueueCtx, task.ProjectID, task.ID); err != nil {
 		_ = s.db.Model(&task).Updates(map[string]any{
 			"status": model.TaskFailed, "error_message": "任务队列已满或引擎不可用，请稍后重试",
 		})

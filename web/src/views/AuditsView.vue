@@ -88,12 +88,22 @@ const assistantChat = ref<HTMLElement | null>(null)
 const hasGeneralProvider = computed(() =>
   providers.value.some((p) => p.status === 'ACTIVE' && p.kind !== 'JEV'),
 )
+const isClassifyMode = computed(() =>
+  form.decisionMode === 'CLASSIFY' || form.decisionMode === 'CLASSIFY_ONLY',
+)
+const categoryExportOptions = [
+  { label: '导出 CSV', key: 'csv' },
+  { label: '导出 JSON', key: 'json' },
+]
 
 const defaultPrompt =
   '你是“智审图档”平台的档案图档审核专家。请依据档案管理规范、内容安全要求与审核要点，判断文档是否清晰完整、是否存在敏感或违规内容，以及印章、签名、日期等关键要素是否齐全。无法确认时返回 REVIEW。'
 
 const defaultClassifyPrompt = ref(
   '你是“智审图档”平台的档案分类专家。请根据文本、OCR 内容和图片版面，从配置的分类列表中选择唯一最匹配的类别，并给出 0~1 的置信度和判断依据。无法可靠判断时选择其他类别，不要臆测。',
+)
+const defaultClassifierPrompt = ref(
+  '你是“智审图档”平台的档案类型分类器。请根据文本、OCR 内容和图片版面，从配置的类型列表中选择唯一最匹配的类型编码，并给出 0~1 的置信度和判断依据。分类器不需要判定通过或驳回，平台会把成功分类的结论固定为 PASS；无法可靠判断时选择最接近的类型，不要臆测。',
 )
 const defaultRoutesText = JSON.stringify({
   PASS: { exec_mode: 'sequential', on_error: 'continue', actions: [] },
@@ -115,7 +125,7 @@ const form = reactive({
   code: '',
   description: '',
   mediaTypes: ['text', 'image'] as string[],
-  decisionMode: 'REVIEW' as 'REVIEW' | 'CLASSIFY',
+  decisionMode: 'REVIEW' as 'REVIEW' | 'CLASSIFY' | 'CLASSIFY_ONLY',
   categories: [] as AuditCategory[],
   providerId: null as number | null,
   reviewPrompt: defaultPrompt,
@@ -144,10 +154,12 @@ const statusFilterOptions = [
 const decisionFilterOptions = [
   { label: '合规审核', value: 'REVIEW' },
   { label: '分类审核', value: 'CLASSIFY' },
+  { label: '纯分类器', value: 'CLASSIFY_ONLY' },
 ]
 const decisionFormOptions = [
   { label: '合规审核 · PASS / REJECT / REVIEW', value: 'REVIEW' },
   { label: '分类审核 · 按分类映射终审结论', value: 'CLASSIFY' },
+  { label: '纯分类器 · 全部通过并返回类型编码', value: 'CLASSIFY_ONLY' },
 ]
 const resultOptions = [
   { label: '通过 PASS', value: 'PASS' },
@@ -223,7 +235,7 @@ function applyRulesPreset(key: string) {
 }
 
 const activeCount = computed(() => audits.value.filter((a) => a.status === 'ACTIVE').length)
-const classifyCount = computed(() => audits.value.filter((a) => a.decision_mode === 'CLASSIFY').length)
+const classifyCount = computed(() => audits.value.filter((a) => a.decision_mode === 'CLASSIFY' || a.decision_mode === 'CLASSIFY_ONLY').length)
 const todayCount = computed(() => audits.value.reduce((sum, a) => sum + (a.today_tasks || 0), 0))
 const selectedProvider = computed(() => providers.value.find((p) => p.id === form.providerId))
 const jevProviders = computed(() => providers.value.filter((p) => p.kind === 'JEV' && p.status === 'ACTIVE'))
@@ -272,14 +284,14 @@ function openEdit(audit: Audit) {
   form.code = audit.code
   form.description = audit.description || ''
   form.mediaTypes = [...(audit.media_types || [])]
-  form.decisionMode = audit.decision_mode === 'CLASSIFY' ? 'CLASSIFY' : 'REVIEW'
+  form.decisionMode = audit.decision_mode === 'CLASSIFY_ONLY' ? 'CLASSIFY_ONLY' : audit.decision_mode === 'CLASSIFY' ? 'CLASSIFY' : 'REVIEW'
   form.categories = (audit.categories || []).map((category) => ({ ...category }))
   form.providerId = audit.provider_id
   form.reviewPrompt = audit.review_prompt || defaultPrompt
   form.rulesPreset = 'keep'
   form.rulesText = JSON.stringify(audit.rules || [], null, 2)
   form.routesText = JSON.stringify(audit.routes || JSON.parse(defaultRoutesText), null, 2)
-  form.defaultResult = audit.default_result
+  form.defaultResult = audit.decision_mode === 'CLASSIFY_ONLY' ? 'PASS' : audit.default_result
   form.onModelFail = audit.on_model_fail
   form.dedupeWindowSec = audit.dedupe_window_sec
   errorText.value = ''
@@ -287,15 +299,23 @@ function openEdit(audit: Audit) {
 }
 
 function setDecisionMode(value: string | number) {
-  const mode = value === 'CLASSIFY' ? 'CLASSIFY' : 'REVIEW'
+  const mode = value === 'CLASSIFY_ONLY' ? 'CLASSIFY_ONLY' : value === 'CLASSIFY' ? 'CLASSIFY' : 'REVIEW'
   if (mode === form.decisionMode) return
   form.decisionMode = mode
-  if (mode === 'CLASSIFY') {
-    if (form.categories.length < 2) form.categories = exampleCategories.value.map((category) => ({ ...category }))
-    form.rulesPreset = 'classify'
-    form.rulesText = rulesTextForPreset('classify')
+  if (mode === 'CLASSIFY' || mode === 'CLASSIFY_ONLY') {
+    if (mode === 'CLASSIFY_ONLY') form.defaultResult = 'PASS'
+    if (form.categories.length < 2) {
+      form.categories = exampleCategories.value.map((category) => ({
+        ...category,
+        result: mode === 'CLASSIFY_ONLY' ? 'PASS' : category.result,
+      }))
+    } else if (mode === 'CLASSIFY_ONLY') {
+      form.categories = form.categories.map((category) => ({ ...category, result: 'PASS' }))
+    }
+    form.rulesPreset = mode === 'CLASSIFY_ONLY' ? 'classifier' : 'classify'
+    form.rulesText = mode === 'CLASSIFY_ONLY' ? '[]' : rulesTextForPreset('classify')
     if (!editing.value) {
-      form.reviewPrompt = defaultClassifyPrompt.value
+      form.reviewPrompt = mode === 'CLASSIFY_ONLY' ? defaultClassifierPrompt.value : defaultClassifyPrompt.value
       if (jevProviders.value.length) form.providerId = jevProviders.value[0].id
     }
   } else {
@@ -333,14 +353,177 @@ function removeCategory(index: number) {
   form.categories.splice(index, 1)
 }
 
+function csvEscape(value: string) {
+  const text = value || ''
+  return /[",\r\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text
+}
+
+function categoriesAsRows() {
+  return form.categories.map((category) => ({
+    code: category.code,
+    name: category.name,
+    description: category.description || '',
+    result: form.decisionMode === 'CLASSIFY_ONLY' ? 'PASS' : category.result,
+  }))
+}
+
+function onCategoryExport(key: string) {
+  downloadCategories(key === 'json' ? 'json' : 'csv')
+}
+
+function downloadCategories(format: 'csv' | 'json') {
+  if (!form.categories.length) {
+    message.warning('当前没有可导出的分类类型')
+    return
+  }
+  const rows = categoriesAsRows()
+  let content = ''
+  let mime = 'text/plain;charset=utf-8'
+  if (format === 'json') {
+    content = JSON.stringify(rows, null, 2)
+    mime = 'application/json;charset=utf-8'
+  } else {
+    content = '\uFEFF' + ['code,name,description,result', ...rows.map((row) => [row.code, row.name, row.description, row.result].map(csvEscape).join(','))].join('\r\n')
+    mime = 'text/csv;charset=utf-8'
+  }
+  const blob = new Blob([content], { type: mime })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `${editing.value?.code || 'classifier'}-categories.${format}`
+  link.click()
+  URL.revokeObjectURL(url)
+  message.success(`已导出 ${rows.length} 个分类类型`)
+}
+
+const categoryImportInput = ref<HTMLInputElement | null>(null)
+
+function triggerCategoryImport() {
+  categoryImportInput.value?.click()
+}
+
+function parseCSVRows(text: string): string[][] {
+  const rows: string[][] = []
+  let row: string[] = []
+  let cell = ''
+  let quoted = false
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i]
+    if (quoted) {
+      if (char === '"' && text[i + 1] === '"') {
+        cell += '"'
+        i += 1
+      } else if (char === '"') {
+        quoted = false
+      } else {
+        cell += char
+      }
+    } else if (char === '"') {
+      quoted = true
+    } else if (char === ',') {
+      row.push(cell)
+      cell = ''
+    } else if (char === '\n' || char === '\r') {
+      if (char === '\r' && text[i + 1] === '\n') i += 1
+      row.push(cell)
+      if (row.some((value) => value.trim() !== '')) rows.push(row)
+      row = []
+      cell = ''
+    } else {
+      cell += char
+    }
+  }
+  row.push(cell)
+  if (row.some((value) => value.trim() !== '')) rows.push(row)
+  return rows
+}
+
+function normalizeImportedCategories(rows: Array<Record<string, string>>): AuditCategory[] {
+  const pure = form.decisionMode === 'CLASSIFY_ONLY'
+  const seen = new Set<string>()
+  const out: AuditCategory[] = []
+  for (const raw of rows) {
+    const code = String(raw.code || raw['分类编码'] || raw['编码'] || '').trim().toLowerCase()
+    const name = String(raw.name || raw['分类名称'] || raw['名称'] || '').trim()
+    const description = String(raw.description || raw['说明'] || raw['判定说明'] || '').trim()
+    const result = String(raw.result || raw['结论'] || raw['映射结论'] || '').trim().toUpperCase()
+    if (!code && !name) continue
+    if (!/^[a-z][a-z0-9_]{1,31}$/.test(code)) {
+      throw new Error(`分类编码「${code || '(空)'}」不合法，需小写字母开头，仅含小写字母、数字下划线`)
+    }
+    if (!name) throw new Error(`分类 ${code} 缺少名称`)
+    if (seen.has(code)) continue
+    seen.add(code)
+    const mapped = ['PASS', 'REJECT', 'REVIEW'].includes(result) ? result : (pure ? 'PASS' : 'REVIEW')
+    out.push({ code, name, description, result: pure ? 'PASS' : mapped })
+  }
+  if (!out.length) throw new Error('文件里没有可导入的分类类型')
+  if (out.length > (pure ? 200 : 20)) throw new Error(`分类数量不能超过 ${pure ? 200 : 20} 个`)
+  return out
+}
+
+async function onCategoryFilePicked(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  try {
+    const text = await file.text()
+    let rows: Array<Record<string, string>> = []
+    if (file.name.toLowerCase().endsWith('.json') || text.trim().startsWith('[') || text.trim().startsWith('{')) {
+      const parsed = JSON.parse(text)
+      const list = Array.isArray(parsed) ? parsed : parsed.categories
+      if (!Array.isArray(list)) throw new Error('JSON 需为分类数组或包含 categories 数组')
+      rows = list
+    } else {
+      const parsed = parseCSVRows(text.replace(/^\uFEFF/, ''))
+      if (parsed.length < 2) throw new Error('CSV 至少需要表头和一行分类')
+      const header = parsed[0].map((value) => value.trim().toLowerCase())
+      const indexOf = (names: string[]) => header.findIndex((value) => names.includes(value))
+      const codeIndex = indexOf(['code', '分类编码', '编码'])
+      const nameIndex = indexOf(['name', '分类名称', '名称'])
+      const descIndex = indexOf(['description', '说明', '判定说明'])
+      const resultIndex = indexOf(['result', '结论', '映射结论'])
+      if (codeIndex < 0 || nameIndex < 0) throw new Error('CSV 表头需包含 code,name（或 分类编码,分类名称）')
+      rows = parsed.slice(1).map((cells) => ({
+        code: cells[codeIndex] || '',
+        name: cells[nameIndex] || '',
+        description: descIndex >= 0 ? cells[descIndex] || '' : '',
+        result: resultIndex >= 0 ? cells[resultIndex] || '' : '',
+      }))
+    }
+    const imported = normalizeImportedCategories(rows)
+    const applyImport = () => {
+      form.categories = imported
+      message.success(`已导入 ${imported.length} 个分类类型`)
+    }
+    if (form.categories.length > 0) {
+      dialog.warning({
+        title: '导入分类类型',
+        content: `将用文件中的 ${imported.length} 个类型覆盖当前 ${form.categories.length} 个类型，是否继续？`,
+        positiveText: '覆盖导入',
+        negativeText: '取消',
+        onPositiveClick: applyImport,
+      })
+    } else {
+      applyImport()
+    }
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : '导入分类失败')
+  }
+}
+
 function loadExampleCategories() {
-  form.categories = exampleCategories.value.map((category) => ({ ...category }))
+  const pure = form.decisionMode === 'CLASSIFY_ONLY'
+  form.categories = exampleCategories.value.map((category) => ({ ...category, result: pure ? 'PASS' : category.result }))
   message.success('已载入分类示例，可按业务调整')
 }
 
 function validateCategoryForm(): string {
-  if (form.categories.length < 2) return '分类审核至少需要 2 个分类'
-  if (form.categories.length > 20) return '分类数量不能超过 20 个'
+  const pure = form.decisionMode === 'CLASSIFY_ONLY'
+  if (pure && form.categories.length < 1) return '纯分类器至少需要 1 个分类类型'
+  if (!pure && form.categories.length < 2) return '分类审核至少需要 2 个分类'
+  if (form.categories.length > (pure ? 200 : 20)) return `分类数量不能超过 ${pure ? 200 : 20} 个`
   const seen = new Set<string>()
   for (const [index, category] of form.categories.entries()) {
     const code = category.code.trim()
@@ -480,7 +663,7 @@ async function save(): Promise<boolean> {
     errorText.value = '至少选择一种媒体类型'
     return false
   }
-  if (form.decisionMode === 'CLASSIFY') {
+  if (form.decisionMode === 'CLASSIFY' || form.decisionMode === 'CLASSIFY_ONLY') {
     const error = validateCategoryForm()
     if (error) {
       errorText.value = error
@@ -507,7 +690,7 @@ async function save(): Promise<boolean> {
     code: category.code.trim(),
     name: category.name.trim(),
     description: (category.description || '').trim(),
-    result: category.result,
+    result: form.decisionMode === 'CLASSIFY_ONLY' ? 'PASS' : category.result,
   }))
   const payload: Record<string, unknown> = {
     project_id: workspace.currentProjectId,
@@ -550,11 +733,22 @@ async function save(): Promise<boolean> {
   return true
 }
 
+function auditModeLabel(mode?: string) {
+  if (mode === 'CLASSIFY_ONLY') return '纯分类器'
+  if (mode === 'CLASSIFY') return '分类审核'
+  return '合规审核'
+}
+
 function describeAudit(audit: Audit) {
-  const mode = audit.decision_mode === 'CLASSIFY' ? '分类审核' : '合规审核'
+  const mode = auditModeLabel(audit.decision_mode)
   const media = (audit.media_types || []).join(' + ') || '文本'
   const categories = audit.categories?.length || 0
-  return `${mode} · ${media} · 默认结论 ${audit.default_result}${mode === '分类审核' ? ` · ${categories} 个分类` : ''}`
+  const tail = audit.decision_mode === 'CLASSIFY_ONLY'
+    ? ` · ${categories} 个类型 · 结论固定 PASS`
+    : audit.decision_mode === 'CLASSIFY'
+      ? ` · ${categories} 个分类 · 默认结论 ${audit.default_result}`
+      : ` · 默认结论 ${audit.default_result}`
+  return `${mode} · ${media}${tail}`
 }
 
 function openAssistantEditPicker() {
@@ -660,18 +854,21 @@ function applyAssistantDraft(config: AuditAssistantConfig) {
   form.description = config.description || ''
   form.mediaTypes = (config.media_types || ['text', 'image']).filter((type) => type === 'text' || type === 'image')
   if (!form.mediaTypes.length) form.mediaTypes = ['text', 'image']
-  form.decisionMode = config.decision_mode === 'CLASSIFY' ? 'CLASSIFY' : 'REVIEW'
-  form.categories = (config.categories || []).map((category) => ({ ...category }))
+  form.decisionMode = config.decision_mode === 'CLASSIFY_ONLY' ? 'CLASSIFY_ONLY' : config.decision_mode === 'CLASSIFY' ? 'CLASSIFY' : 'REVIEW'
+  form.categories = (config.categories || []).map((category) => ({
+    ...category,
+    result: form.decisionMode === 'CLASSIFY_ONLY' ? 'PASS' : category.result,
+  }))
   if (editing.value) {
     form.providerId = editing.value.provider_id
   } else if (config.provider_id) {
     form.providerId = config.provider_id
   }
   form.reviewPrompt = config.review_prompt || form.reviewPrompt
-  form.rulesPreset = form.decisionMode === 'CLASSIFY' ? 'classify' : 'standard'
+  form.rulesPreset = form.decisionMode === 'CLASSIFY_ONLY' ? 'classifier' : form.decisionMode === 'CLASSIFY' ? 'classify' : 'standard'
   form.rulesText = JSON.stringify(config.rules || [], null, 2)
   form.routesText = JSON.stringify(config.routes || JSON.parse(defaultRoutesText), null, 2)
-  form.defaultResult = config.default_result || 'REVIEW'
+  form.defaultResult = form.decisionMode === 'CLASSIFY_ONLY' ? 'PASS' : config.default_result || 'REVIEW'
   form.onModelFail = config.on_model_fail || 'REVIEW'
   form.dedupeWindowSec = config.dedupe_window_sec || 86400
 }
@@ -684,7 +881,7 @@ function summarizeAssistantChanges(config: AuditAssistantConfig) {
   const beforeMedia = [...(before.media_types || [])].sort().join('+')
   const afterMedia = [...(config.media_types || [])].sort().join('+')
   if (beforeMedia !== afterMedia) changes.push(`媒体类型：${beforeMedia || '无'} → ${afterMedia || '无'}`)
-  if (config.decision_mode !== before.decision_mode) changes.push(`审核模式：${before.decision_mode === 'CLASSIFY' ? '分类审核' : '合规审核'} → ${config.decision_mode === 'CLASSIFY' ? '分类审核' : '合规审核'}`)
+  if (config.decision_mode !== before.decision_mode) changes.push(`审核模式：${auditModeLabel(String(before.decision_mode))} → ${auditModeLabel(config.decision_mode)}`)
   const beforeCategories = (before.categories || []).map((item) => `${item.code}:${item.name}:${item.result}`).join('|')
   const afterCategories = (config.categories || []).map((item) => `${item.code}:${item.name}:${item.result}`).join('|')
   if (beforeCategories !== afterCategories) changes.push(`分类映射：${(before.categories || []).length} 个 → ${(config.categories || []).length} 个`)
@@ -847,6 +1044,7 @@ function mediaLabel(type: string) {
 }
 
 function decisionModeLabel(audit: Audit) {
+  if (audit.decision_mode === 'CLASSIFY_ONLY') return `纯分类器 · ${(audit.categories || []).length} 个类型 · 全部 PASS`
   return audit.decision_mode === 'CLASSIFY' ? `分类审核 · ${(audit.categories || []).length} 类` : '合规审核'
 }
 
@@ -974,9 +1172,9 @@ onMounted(async () => {
             <span class="audit-code mono">{{ audit.code }}</span>
             <StatusTag :status="audit.status" type="audit" />
             <StatusTag v-if="audit.provider_kind" :status="audit.provider_kind" type="kind" />
-            <span v-if="audit.decision_mode === 'CLASSIFY'" class="audit-mode-badge">
+            <span v-if="audit.decision_mode === 'CLASSIFY' || audit.decision_mode === 'CLASSIFY_ONLY'" class="audit-mode-badge" :class="{ classifier: audit.decision_mode === 'CLASSIFY_ONLY' }">
               <SparklesOutline />
-              分类审核 · {{ (audit.categories || []).length }} 类
+              {{ audit.decision_mode === 'CLASSIFY_ONLY' ? '纯分类器' : '分类审核' }} · {{ (audit.categories || []).length }} {{ audit.decision_mode === 'CLASSIFY_ONLY' ? '个类型' : '类' }}
             </span>
           </div>
           <p class="audit-desc">{{ audit.description || '暂无说明' }}</p>
@@ -1065,10 +1263,12 @@ onMounted(async () => {
             <label>说明</label>
             <n-input v-model:value="form.description" placeholder="这条审核流程适用的业务场景" maxlength="255" />
           </div>
-          <div class="mode-picker" :class="{ classify: form.decisionMode === 'CLASSIFY' }">
+          <div class="mode-picker" :class="{ classify: isClassifyMode, classifier: form.decisionMode === 'CLASSIFY_ONLY' }">
             <div>
               <strong><SparklesOutline /> 审核类型</strong>
-              <span>{{ form.decisionMode === 'CLASSIFY' ? '模型先选分类，系统再按分类映射终审结论，并支持分类置信度转人工。' : '模型直接给出 PASS / REJECT / REVIEW，按风险阈值和规则组判定。' }}</span>
+              <span v-if="form.decisionMode === 'CLASSIFY_ONLY'">模型只返回分类类型编码；成功审核一律 PASS，类型写入结果的 category 字段，不做驳回判定。</span>
+              <span v-else-if="form.decisionMode === 'CLASSIFY'">模型先选分类，系统再按分类映射终审结论，并支持分类置信度转人工。</span>
+              <span v-else>模型直接给出 PASS / REJECT / REVIEW，按风险阈值和规则组判定。</span>
             </div>
             <n-select
               :value="form.decisionMode"
@@ -1085,12 +1285,12 @@ onMounted(async () => {
               <div v-if="providers.every((p) => p.status !== 'ACTIVE')" class="form-hint warn">
                 当前项目没有已启用的模型，请先前往「模型接入」配置。
               </div>
-              <div v-else-if="form.decisionMode === 'CLASSIFY' && selectedProvider?.kind !== 'JEV'" class="form-hint warn classify-recommend">
-                <span>分类审核建议使用 JEV 决策模型：原生 choice 分类、概率可解释。</span>
+              <div v-else-if="isClassifyMode && selectedProvider?.kind !== 'JEV'" class="form-hint warn classify-recommend">
+                <span>{{ form.decisionMode === 'CLASSIFY_ONLY' ? '纯分类器建议使用 JEV' : '分类审核建议使用 JEV' }}：原生 choice 分类、概率可解释。</span>
                 <n-button v-if="jevProviders.length" text size="tiny" type="primary" @click="useJevProvider">切换到 JEV</n-button>
               </div>
-              <div v-else-if="form.decisionMode === 'CLASSIFY'" class="form-hint good">
-                已选择 JEV：分类会通过 System One choice 输出编码与置信度。
+              <div v-else-if="isClassifyMode" class="form-hint good">
+                已选择 JEV：会通过 System One choice 输出类型编码与置信度。
               </div>
             </div>
             <div class="field">
@@ -1116,27 +1316,54 @@ onMounted(async () => {
             />
             <div class="form-hint">这段要求会作为审核 Prompt 发送给通用模型，并作为 JEV 的 state 审核要求。</div>
           </div>
-          <div v-if="form.decisionMode === 'CLASSIFY'" class="category-panel">
+          <div v-if="isClassifyMode" class="category-panel">
             <div class="category-head">
               <div>
-                <strong>分类与终审结论映射</strong>
-                <span>分类编码会写入结果的 category 字段；每个分类的映射结论由规则引擎直接采用，低置信度通过自动转人工。</span>
+                <strong>{{ form.decisionMode === 'CLASSIFY_ONLY' ? '可返回的分类类型' : '分类与终审结论映射' }}</strong>
+                <span v-if="form.decisionMode === 'CLASSIFY_ONLY'">这里预设模型可以返回的类型；成功审核的终审结论固定 PASS，类型编码和名称会写入结果的 category / category_name。</span>
+                <span v-else>分类编码会写入结果的 category 字段；每个分类的映射结论由规则引擎直接采用，低置信度通过自动转人工。</span>
               </div>
-              <n-button size="tiny" secondary @click="loadExampleCategories">
-                <template #icon><SparklesOutline /></template>
-                载入示例分类
-              </n-button>
+              <div class="category-actions">
+                <n-button size="tiny" secondary @click="triggerCategoryImport">
+                  <template #icon><CloudOutline /></template>
+                  导入分类
+                </n-button>
+                <n-dropdown :options="categoryExportOptions" trigger="click" @select="onCategoryExport">
+                  <n-button size="tiny" secondary>
+                    <template #icon><DownloadOutline /></template>
+                    导出分类
+                  </n-button>
+                </n-dropdown>
+                <n-button size="tiny" secondary @click="loadExampleCategories">
+                  <template #icon><SparklesOutline /></template>
+                  载入示例
+                </n-button>
+                <input
+                  ref="categoryImportInput"
+                  type="file"
+                  accept=".csv,.json,text/csv,application/json"
+                  hidden
+                  @change="onCategoryFilePicked"
+                />
+              </div>
             </div>
             <div class="category-grid-head">
-              <span>分类编码</span><span>显示名称</span><span>判定说明</span><span>映射结论</span><span></span>
+              <span>分类编码</span><span>显示名称</span><span>判定说明</span><span>{{ form.decisionMode === 'CLASSIFY_ONLY' ? '审核结论' : '映射结论' }}</span><span></span>
             </div>
             <div class="category-list">
               <div v-for="(category, index) in form.categories" :key="index" class="category-row">
                 <n-input v-model:value="category.code" size="small" placeholder="contract" class="mono-input" />
                 <n-input v-model:value="category.name" size="small" placeholder="合同协议" />
                 <n-input v-model:value="category.description" size="small" placeholder="判定依据与典型特征" />
-                <n-select v-model:value="category.result" size="small" :options="categoryResultOptions" />
-                <n-button quaternary circle size="tiny" :disabled="form.categories.length <= 2" @click="removeCategory(index)">
+                <span v-if="form.decisionMode === 'CLASSIFY_ONLY'" class="fixed-pass">固定 PASS</span>
+                <n-select v-else v-model:value="category.result" size="small" :options="categoryResultOptions" />
+                <n-button
+                  quaternary
+                  circle
+                  size="tiny"
+                  :disabled="form.categories.length <= (form.decisionMode === 'CLASSIFY_ONLY' ? 1 : 2)"
+                  @click="removeCategory(index)"
+                >
                   <template #icon><TrashOutline /></template>
                 </n-button>
               </div>
@@ -1145,12 +1372,15 @@ onMounted(async () => {
               <template #icon><AddOutline /></template>
               添加分类
             </n-button>
+            <div class="form-hint">支持 CSV（code,name,description,result）和 JSON（分类数组）导入；纯分类器会忽略 result 并统一使用 PASS。</div>
           </div>
           <div class="rule-template">
             <div class="rule-template-head">
               <div>
-                <strong>{{ form.decisionMode === 'CLASSIFY' ? '分类规则模板' : '风险规则模板' }}</strong>
-                <span>{{ form.decisionMode === 'CLASSIFY' ? '按分类映射结论，并对低置信度的通过结果转人工。' : '决定模型输出后的 PASS / REJECT / REVIEW 阈值。' }}仅支持多文本/多图片，不支持视频。</span>
+                <strong>{{ form.decisionMode === 'CLASSIFY_ONLY' ? '分类器规则' : form.decisionMode === 'CLASSIFY' ? '分类规则模板' : '风险规则模板' }}</strong>
+                <span v-if="form.decisionMode === 'CLASSIFY_ONLY'">纯分类器成功审核固定 PASS，规则仅用于记录或附加标签，不会把结果改成驳回。仅支持多文本/多图片。</span>
+                <span v-else-if="form.decisionMode === 'CLASSIFY'">按分类映射结论，并对低置信度的通过结果转人工。仅支持多文本/多图片，不支持视频。</span>
+                <span v-else>决定模型输出后的 PASS / REJECT / REVIEW 阈值。仅支持多文本/多图片，不支持视频。</span>
               </div>
               <n-select
                 :value="form.rulesPreset"
@@ -1198,12 +1428,14 @@ onMounted(async () => {
               <label>默认结论</label>
               <n-select
                 v-model:value="form.defaultResult"
+                :disabled="form.decisionMode === 'CLASSIFY_ONLY'"
                 :options="[
                   { label: '待议 REVIEW', value: 'REVIEW' },
                   { label: '通过 PASS', value: 'PASS' },
                   { label: '不通过 REJECT', value: 'REJECT' },
                 ]"
               />
+              <div v-if="form.decisionMode === 'CLASSIFY_ONLY'" class="form-hint">纯分类器成功审核固定 PASS；模型失败仍按右侧兜底策略。</div>
             </div>
             <div class="field">
               <label>模型失败兜底</label>
@@ -1310,7 +1542,7 @@ onMounted(async () => {
           </div>
           <div v-if="assistantReadyConfig" class="assistant-ready">
             <strong>{{ assistantMode === 'edit' ? '已按你的要求更新并保存' : '配置已生成并创建' }}：{{ assistantReadyConfig.name }}</strong>
-            <span>{{ assistantReadyConfig.decision_mode === 'CLASSIFY' ? '分类审核' : '合规审核' }} · {{ assistantReadyConfig.categories.length }} 个分类 · {{ assistantReadyConfig.media_types.join(' + ') }}</span>
+            <span>{{ auditModeLabel(assistantReadyConfig.decision_mode) }} · {{ assistantReadyConfig.categories.length }} 个分类 · {{ assistantReadyConfig.media_types.join(' + ') }}</span>
             <ul v-if="assistantMode === 'edit' && assistantChanges.length" class="assistant-changes">
               <li v-for="change in assistantChanges" :key="change">{{ change }}</li>
             </ul>
@@ -1460,8 +1692,8 @@ onMounted(async () => {
           <h4 class="section-label">审核要求</h4>
           <div class="prompt-card">{{ detailAudit.review_prompt }}</div>
 
-          <template v-if="detailAudit.decision_mode === 'CLASSIFY'">
-            <h4 class="section-label">分类与结论映射</h4>
+          <template v-if="detailAudit.decision_mode === 'CLASSIFY' || detailAudit.decision_mode === 'CLASSIFY_ONLY'">
+            <h4 class="section-label">{{ detailAudit.decision_mode === 'CLASSIFY_ONLY' ? '分类类型（结论固定 PASS）' : '分类与结论映射' }}</h4>
             <div class="detail-categories">
               <div v-for="category in detailAudit.categories || []" :key="category.code" class="detail-category">
                 <code>{{ category.code }}</code>
@@ -1469,7 +1701,7 @@ onMounted(async () => {
                   <strong>{{ category.name }}</strong>
                   <span>{{ category.description || '未填写判定说明' }}</span>
                 </div>
-                <span class="category-result" :class="category.result.toLowerCase()">{{ categoryResultLabel(category.result) }}</span>
+                <span class="category-result" :class="(detailAudit.decision_mode === 'CLASSIFY_ONLY' ? 'pass' : category.result.toLowerCase())">{{ detailAudit.decision_mode === 'CLASSIFY_ONLY' ? '通过 PASS' : categoryResultLabel(category.result) }}</span>
               </div>
             </div>
           </template>
@@ -2449,6 +2681,35 @@ onMounted(async () => {
   border: 1px solid #e7deff;
   border-radius: 12px;
   background: #fcfbff;
+}
+
+.category-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.fixed-pass {
+  display: inline-flex;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: #ecfdf3;
+  color: #15803d;
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 600;
+}
+
+.audit-mode-badge.classifier {
+  background: #eef8f0;
+  color: #16794a;
+}
+
+.mode-picker.classifier {
+  border-color: #d7f0e0;
+  background: #f7fffa;
 }
 
 .category-head {

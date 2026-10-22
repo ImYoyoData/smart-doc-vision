@@ -55,6 +55,7 @@ const form = reactive({
   description: '',
   retentionDays: 30,
   maxTasksPerDay: 0,
+  maxConcurrentTasks: 2,
   openapiRateLimit: 120,
 })
 
@@ -83,6 +84,7 @@ function openCreate() {
     description: '',
     retentionDays: 30,
     maxTasksPerDay: 0,
+    maxConcurrentTasks: 2,
     openapiRateLimit: 120,
   })
   errorText.value = ''
@@ -98,6 +100,7 @@ function openEdit(project: Project) {
     description: project.description || '',
     retentionDays: project.retention_days || 30,
     maxTasksPerDay: project.max_tasks_per_day || 0,
+    maxConcurrentTasks: project.max_concurrent_tasks ?? 2,
     openapiRateLimit: project.openapi_rate_limit ?? 120,
   })
   errorText.value = ''
@@ -134,6 +137,7 @@ async function save() {
         description: form.description,
         retention_days: form.retentionDays,
         max_tasks_per_day: form.maxTasksPerDay,
+        max_concurrent_tasks: form.maxConcurrentTasks,
         openapi_rate_limit: form.openapiRateLimit,
       })
       message.success('项目已更新')
@@ -145,6 +149,7 @@ async function save() {
         description: form.description,
         retention_days: form.retentionDays,
         max_tasks_per_day: form.maxTasksPerDay,
+        max_concurrent_tasks: form.maxConcurrentTasks,
         openapi_rate_limit: form.openapiRateLimit,
       })
       message.success('项目创建成功')
@@ -399,10 +404,17 @@ onMounted(load)
               <div class="form-hint">0 表示不限制；所有触发来源合计计算。</div>
             </div>
           </div>
-          <div class="field">
-            <label>开放 API 限流（次/分钟）</label>
-            <n-input-number v-model:value="form.openapiRateLimit" :min="0" :max="10000" style="width: 160px" />
-            <div class="form-hint">0 表示不限制；仅限制开放 API 提交，Redis/WebSocket/轮询不受此限。</div>
+          <div class="two-col">
+            <div class="field">
+              <label>项目并发 Worker 上限</label>
+              <n-input-number v-model:value="form.maxConcurrentTasks" :min="1" :max="32" style="width: 100%" />
+              <div class="form-hint">该项目同时执行的任务数，受全局 Worker 总数约束；其他项目仍可并行。</div>
+            </div>
+            <div class="field">
+              <label>开放 API 限流（次/分钟）</label>
+              <n-input-number v-model:value="form.openapiRateLimit" :min="0" :max="10000" style="width: 100%" />
+              <div class="form-hint">0 表示不限制；仅限制开放 API 提交。</div>
+            </div>
           </div>
           <div v-if="form.env === 'prod'" class="prod-warning">
             <span></span>

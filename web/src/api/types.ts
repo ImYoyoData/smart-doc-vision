@@ -77,6 +77,7 @@ export interface Project {
   owner_id: number
   retention_days: number
   max_tasks_per_day: number
+  max_concurrent_tasks: number
   openapi_rate_limit: number
   deleted_at?: string | null
   created_at: string
@@ -128,7 +129,7 @@ export interface RuleGroup {
   items: RuleItem[]
 }
 
-export type AuditDecisionMode = 'REVIEW' | 'CLASSIFY'
+export type AuditDecisionMode = 'REVIEW' | 'CLASSIFY' | 'CLASSIFY_ONLY'
 
 export interface AuditCategory {
   code: string

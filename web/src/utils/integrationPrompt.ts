@@ -63,17 +63,18 @@ function scopeLine(methods: IntegrationMethod[]): string {
 }
 
 function classificationSection(ctx: IntegrationPromptContext): string {
-  if (ctx.decisionMode !== 'CLASSIFY') return ''
+  if (ctx.decisionMode !== 'CLASSIFY' && ctx.decisionMode !== 'CLASSIFY_ONLY') return ''
   const categories = ctx.categories || []
   const mapping = categories.length
     ? categories
         .map((category) => `- ${category.code}：${category.name} → ${category.result}${category.description ? `（${category.description}）` : ''}`)
         .join('\n')
     : '- 当前配置未读取到分类列表，请提醒业务方在审核配置中补齐。'
+  const pure = ctx.decisionMode === 'CLASSIFY_ONLY'
   return `
 ## 分类审核结果（必须处理）
 
-这是一条分类审核配置，平台结果除 result 外还会返回：
+这是一条${pure ? '纯分类器' : '分类审核'}配置，平台结果除 result 外还会返回：
 
 - category：分类编码
 - category_name：分类名称
@@ -82,7 +83,7 @@ function classificationSection(ctx: IntegrationPromptContext): string {
 分类映射：
 ${mapping}
 
-业务端必须原样保存分类编码和置信度，不要自行根据名称重新分类，也不要把 category 当作 PASS/REJECT 使用；终审结论以 result 为准。
+业务端必须原样保存分类编码和置信度，不要自行根据名称重新分类，也不要把 category 当作 PASS/REJECT 使用；终审结论以 result 为准。${pure ? '\n\n纯分类器的成功审核结论固定为 PASS，category 就是业务需要的具体类型值。' : ''}
 `
 }
 

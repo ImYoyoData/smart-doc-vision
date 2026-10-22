@@ -23,6 +23,7 @@ type projectInput struct {
 	OwnerID          uint64 `json:"owner_id"`
 	RetentionDays    int    `json:"retention_days"`
 	MaxTasksPerDay   *int   `json:"max_tasks_per_day"`
+	MaxConcurrent    *int   `json:"max_concurrent_tasks"`
 	OpenAPIRateLimit *int   `json:"openapi_rate_limit"`
 }
 
@@ -157,6 +158,14 @@ func (s *Server) createProject(c *gin.Context) {
 		badRequest(c, "每日任务配额需在 0~100000 之间（0 表示不限制）")
 		return
 	}
+	maxConcurrent := 2
+	if req.MaxConcurrent != nil {
+		maxConcurrent = *req.MaxConcurrent
+	}
+	if maxConcurrent < 1 || maxConcurrent > 32 {
+		badRequest(c, "项目并发 Worker 上限需在 1~32 之间")
+		return
+	}
 	if rateLimit < 0 || rateLimit > 10000 {
 		badRequest(c, "开放 API 每分钟限流需在 0~10000 之间（0 表示不限制）")
 		return
@@ -175,7 +184,7 @@ func (s *Server) createProject(c *gin.Context) {
 		Name: req.Name, Code: req.Code, Env: req.Env, Status: model.ProjectActive,
 		Description: strings.TrimSpace(req.Description), OwnerID: ownerID,
 		RetentionDays: req.RetentionDays, MaxTasksPerDay: maxTasksPerDay,
-		OpenAPIRateLimit: rateLimit, CreatedBy: user.ID,
+		MaxConcurrent: maxConcurrent, OpenAPIRateLimit: rateLimit, CreatedBy: user.ID,
 	}
 	if err := s.db.Create(&project).Error; err != nil {
 		serverError(c, err)
@@ -241,6 +250,13 @@ func (s *Server) updateProject(c *gin.Context) {
 			return
 		}
 		project.OpenAPIRateLimit = *req.OpenAPIRateLimit
+	}
+	if req.MaxConcurrent != nil {
+		if *req.MaxConcurrent < 1 || *req.MaxConcurrent > 32 {
+			badRequest(c, "项目并发 Worker 上限需在 1~32 之间")
+			return
+		}
+		project.MaxConcurrent = *req.MaxConcurrent
 	}
 	if err := s.db.Save(project).Error; err != nil {
 		serverError(c, err)

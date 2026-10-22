@@ -131,9 +131,13 @@ func (a *JEVAdapter) Review(ctx context.Context, req Request) (*model.Verdict, e
 
 	questions := map[string]jevQuestion{}
 	if classify {
+		instruction := "根据 state 中的 document_text、图片、audit_requirements 和 categories，从给定分类中选择唯一最匹配的编码。不要创建新类别；证据不足时选择 other（若有）并降低置信度。"
+		if IsClassifyOnly(req.Audit) {
+			instruction += " 这是纯分类器任务，平台会将最终审核结论固定为 PASS；只关注分类结果。"
+		}
 		questions["document_category"] = jevQuestion{
 			Type:         "choice",
-			Instructions: "根据 state 中的 document_text、图片、audit_requirements 和 categories，从给定分类中选择唯一最匹配的编码。不要创建新类别；证据不足时选择 other（若有）并降低置信度。",
+			Instructions: instruction,
 			Criteria:     CategoryCriteria(categories),
 		}
 	} else {

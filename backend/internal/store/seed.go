@@ -45,6 +45,9 @@ func (s *Seeder) Run() error {
 	if err := s.ensureClassificationAudit(project.ID, admin.ID); err != nil {
 		return err
 	}
+	if err := s.ensureClassifierAudit(project.ID, admin.ID); err != nil {
+		return err
+	}
 	if err := s.ensureDefaultAPICredentials(); err != nil {
 		return err
 	}
@@ -319,6 +322,55 @@ func (s *Seeder) ensureClassificationAudit(projectID uint64, adminID uint64) err
 		return err
 	}
 	log.Printf("seeded classification demo audit: %s", audit.Code)
+	return nil
+}
+
+func (s *Seeder) ensureClassifierAudit(projectID uint64, adminID uint64) error {
+	var count int64
+	if err := s.DB.Model(&model.Audit{}).
+		Where("project_id = ? AND code = ?", projectID, "archive_classifier").
+		Count(&count).Error; err != nil {
+		return err
+	}
+	if count > 0 {
+		return nil
+	}
+	var provider model.AIProvider
+	if err := s.DB.Where("project_id = ? AND status = ?", projectID, model.ProviderActive).
+		Order("CASE WHEN kind = 'JEV' THEN 0 ELSE 1 END, id asc").First(&provider).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			log.Printf("skip pure classifier demo audit: no active provider configured")
+			return nil
+		}
+		return err
+	}
+	categories := catalog.ExampleClassificationCategories()
+	for i := range categories {
+		categories[i].Result = model.ResultPass
+	}
+	audit := model.Audit{
+		ProjectID:       projectID,
+		Name:            "档案类型分类器（纯分类示例）",
+		Code:            "archive_classifier",
+		Description:     "只返回档案类型，不做驳回判定；成功审核结论固定 PASS，类型写入 category / category_name。",
+		MediaTypes:      catalog.MediaTypesJSON([]string{"text", "image"}),
+		DecisionMode:    model.DecisionClassifyOnly,
+		Categories:      model.JSONBytes(categories),
+		ProviderID:      provider.ID,
+		ReviewPrompt:    catalog.DefaultClassifyPrompt + "\n\n这是纯分类器任务：只返回最匹配的分类类型和置信度，不需要判定通过或驳回，平台会把成功分类的结论固定为 PASS。",
+		Rules:           model.JSONBytes([]any{}),
+		Routes:          catalog.DefaultRoutes(),
+		DefaultResult:   model.ResultPass,
+		OnModelFail:     model.ResultReview,
+		DedupeWindowSec: 86400,
+		Status:          model.AuditActive,
+		Version:         1,
+		CreatedBy:       adminID,
+	}
+	if err := s.DB.Create(&audit).Error; err != nil {
+		return err
+	}
+	log.Printf("seeded pure classifier demo audit: %s", audit.Code)
 	return nil
 }
 

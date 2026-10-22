@@ -110,7 +110,14 @@ func deriveMediaType(input model.TaskInput) string {
 func MediaType(input model.TaskInput) string { return deriveMediaType(input) }
 
 func IsClassification(audit model.Audit) bool {
-	return strings.EqualFold(strings.TrimSpace(audit.DecisionMode), model.DecisionClassify)
+	mode := strings.TrimSpace(audit.DecisionMode)
+	return strings.EqualFold(mode, model.DecisionClassify) || strings.EqualFold(mode, model.DecisionClassifyOnly)
+}
+
+// IsClassifyOnly identifies a pure classifier: it always returns the selected
+// category while the platform fixes the final result to PASS.
+func IsClassifyOnly(audit model.Audit) bool {
+	return strings.EqualFold(strings.TrimSpace(audit.DecisionMode), model.DecisionClassifyOnly)
 }
 
 func AuditCategories(audit model.Audit) []model.AuditCategory {

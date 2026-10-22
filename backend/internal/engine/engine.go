@@ -28,17 +28,42 @@ import (
 	"smartdoc-vision/backend/internal/security"
 )
 
+type queueEntry struct {
+	taskID    uint64
+	projectID uint64
+}
+
+// ProjectQueueStat is a point-in-time view used by /metrics and operations.
+type ProjectQueueStat struct {
+	ProjectID uint64
+	Active    int
+	Pending   int
+	Limit     int
+}
+
 type Engine struct {
 	db      *gorm.DB
 	redis   *redis.Client
 	cipher  *security.Cipher
 	cfg     config.Config
 	fetcher *media.Fetcher
-	queue   chan uint64
+	queue   chan queueEntry
 	ctx     context.Context
 	cancel  context.CancelFunc
 	wg      sync.WaitGroup
 	once    sync.Once
+
+	// Per-project scheduler: each project has a bounded concurrency slot and
+	// its own pending FIFO. The dispatcher round-robins projects, so a single
+	// project cannot occupy every worker or starve another project.
+	schedMu    sync.Mutex
+	pending    map[uint64][]uint64
+	projectOrd []uint64
+	limits     map[uint64]int
+	active     map[uint64]int
+	rrIndex    int
+	pendingN   int
+	wake       chan struct{}
 }
 
 func New(db *gorm.DB, cache *redis.Client, cipher *security.Cipher, cfg config.Config) *Engine {
@@ -49,9 +74,13 @@ func New(db *gorm.DB, cache *redis.Client, cipher *security.Cipher, cfg config.C
 		cipher:  cipher,
 		cfg:     cfg,
 		fetcher: media.NewFetcher(cfg.AllowPrivate),
-		queue:   make(chan uint64, 2000),
+		queue:   make(chan queueEntry, 2000),
 		ctx:     ctx,
 		cancel:  cancel,
+		pending: map[uint64][]uint64{},
+		limits:  map[uint64]int{},
+		active:  map[uint64]int{},
+		wake:    make(chan struct{}, 1),
 	}
 }
 
@@ -60,11 +89,13 @@ func (e *Engine) Start() {
 		if err := e.recoverQueue(); err != nil {
 			log.Printf("engine recover queue: %v", err)
 		}
+		e.wg.Add(1)
+		go e.scheduler()
 		for i := 0; i < e.cfg.WorkerCount; i++ {
 			e.wg.Add(1)
 			go e.worker(i + 1)
 		}
-		log.Printf("audit engine started with %d workers", e.cfg.WorkerCount)
+		log.Printf("audit engine started with %d workers and per-project scheduling", e.cfg.WorkerCount)
 	})
 }
 
@@ -73,13 +104,120 @@ func (e *Engine) Stop() {
 	e.wg.Wait()
 }
 
-func (e *Engine) Enqueue(ctx context.Context, taskID uint64) error {
-	select {
-	case e.queue <- taskID:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
+func (e *Engine) Enqueue(ctx context.Context, projectID, taskID uint64) error {
+	if projectID == 0 || taskID == 0 {
+		return fmt.Errorf("invalid project/task id")
 	}
+	limit := e.projectLimit(projectID)
+	e.schedMu.Lock()
+	if e.pendingN >= 4000 {
+		e.schedMu.Unlock()
+		return fmt.Errorf("project queue is full")
+	}
+	if _, exists := e.limits[projectID]; !exists {
+		e.projectOrd = append(e.projectOrd, projectID)
+	}
+	e.limits[projectID] = limit
+	e.pending[projectID] = append(e.pending[projectID], taskID)
+	e.pendingN++
+	e.schedMu.Unlock()
+	e.signal()
+	return nil
+}
+
+func (e *Engine) signal() {
+	select {
+	case e.wake <- struct{}{}:
+	default:
+	}
+}
+
+func (e *Engine) projectLimit(projectID uint64) int {
+	var project model.Project
+	if err := e.db.Select("id", "max_concurrent_tasks").First(&project, projectID).Error; err != nil {
+		return 1
+	}
+	value := project.MaxConcurrent
+	if value <= 0 {
+		value = 2
+	}
+	if value > e.cfg.WorkerCount {
+		value = e.cfg.WorkerCount
+	}
+	if value < 1 {
+		value = 1
+	}
+	return value
+}
+
+func (e *Engine) scheduler() {
+	defer e.wg.Done()
+	for {
+		entry, ok := e.nextEntry()
+		if ok {
+			select {
+			case e.queue <- entry:
+				continue
+			case <-e.ctx.Done():
+				e.releaseSlot(entry.projectID)
+				return
+			}
+		}
+		select {
+		case <-e.ctx.Done():
+			return
+		case <-e.wake:
+		}
+	}
+}
+
+func (e *Engine) nextEntry() (queueEntry, bool) {
+	e.schedMu.Lock()
+	defer e.schedMu.Unlock()
+	if len(e.projectOrd) == 0 || e.pendingN == 0 {
+		return queueEntry{}, false
+	}
+	for scanned := 0; scanned < len(e.projectOrd); scanned++ {
+		if e.rrIndex >= len(e.projectOrd) {
+			e.rrIndex = 0
+		}
+		projectID := e.projectOrd[e.rrIndex]
+		e.rrIndex++
+		pending := e.pending[projectID]
+		if len(pending) == 0 || e.active[projectID] >= e.limits[projectID] {
+			continue
+		}
+		taskID := pending[0]
+		e.pending[projectID] = pending[1:]
+		e.pendingN--
+		e.active[projectID]++
+		return queueEntry{taskID: taskID, projectID: projectID}, true
+	}
+	return queueEntry{}, false
+}
+
+func (e *Engine) releaseSlot(projectID uint64) {
+	e.schedMu.Lock()
+	if e.active[projectID] > 0 {
+		e.active[projectID]--
+	}
+	e.schedMu.Unlock()
+	e.signal()
+}
+
+func (e *Engine) QueueStats() []ProjectQueueStat {
+	e.schedMu.Lock()
+	defer e.schedMu.Unlock()
+	stats := make([]ProjectQueueStat, 0, len(e.projectOrd))
+	for _, projectID := range e.projectOrd {
+		stats = append(stats, ProjectQueueStat{
+			ProjectID: projectID,
+			Active:    e.active[projectID],
+			Pending:   len(e.pending[projectID]),
+			Limit:     e.limits[projectID],
+		})
+	}
+	return stats
 }
 
 func (e *Engine) recoverQueue() error {
@@ -91,21 +229,19 @@ func (e *Engine) recoverQueue() error {
 		}).Error; err != nil {
 		return err
 	}
-	var ids []uint64
-	if err := e.db.Model(&model.Task{}).
+	var tasks []model.Task
+	if err := e.db.Select("id", "project_id").
 		Where("status = ?", model.TaskQueued).
-		Order("id asc").Limit(5000).Pluck("id", &ids).Error; err != nil {
+		Order("id asc").Limit(5000).Find(&tasks).Error; err != nil {
 		return err
 	}
-	for _, id := range ids {
-		select {
-		case e.queue <- id:
-		default:
-			return fmt.Errorf("queue full while recovering task %d", id)
+	for _, task := range tasks {
+		if err := e.Enqueue(e.ctx, task.ProjectID, task.ID); err != nil {
+			return fmt.Errorf("queue full while recovering task %d: %w", task.ID, err)
 		}
 	}
-	if len(ids) > 0 {
-		log.Printf("requeued %d audit tasks", len(ids))
+	if len(tasks) > 0 {
+		log.Printf("requeued %d audit tasks", len(tasks))
 	}
 	return nil
 }
@@ -116,11 +252,11 @@ func (e *Engine) worker(n int) {
 		select {
 		case <-e.ctx.Done():
 			return
-		case id, ok := <-e.queue:
-			if !ok {
-				return
-			}
-			e.process(id)
+		case entry := <-e.queue:
+			func() {
+				defer e.releaseSlot(entry.projectID)
+				e.process(entry.taskID)
+			}()
 		}
 	}
 }
@@ -214,7 +350,7 @@ func (e *Engine) process(taskID uint64) {
 	if verdict.Provider == model.ProviderJEV && reviewErr != nil {
 		verdict.Provider = model.ProviderJEV
 	}
-	if reviewErr == nil && strings.EqualFold(audit.DecisionMode, model.DecisionClassify) {
+	if reviewErr == nil && ai.IsClassification(audit) {
 		applyClassificationMapping(audit, verdict)
 	}
 
@@ -232,6 +368,13 @@ func (e *Engine) process(taskID uint64) {
 	}
 	if finalResult == "" {
 		finalResult = model.ResultReview
+	}
+	if reviewErr == nil && ai.IsClassifyOnly(audit) {
+		// A pure classifier always passes; the category is the payload. Rules
+		// may annotate the verdict but must not turn a successful classification
+		// into a rejection.
+		finalResult = model.ResultPass
+		verdict.Result = model.ResultPass
 	}
 
 	routeResults, routeOverride := e.runRoutes(audit, task, finalResult, input, map[string]any{
@@ -519,35 +662,63 @@ func (e *Engine) runCallback(taskID uint64) {
 }
 
 func applyClassificationMapping(audit model.Audit, verdict *model.Verdict) {
+	pure := ai.IsClassifyOnly(audit)
 	categories := ai.AuditCategories(audit)
 	if len(categories) == 0 {
-		verdict.Result = model.ResultReview
-		verdict.Reasons = append(verdict.Reasons, "审核配置缺少分类列表，已转人工复核")
+		if pure {
+			verdict.Category = "unclassified"
+			verdict.CategoryName = "未分类"
+			verdict.Result = model.ResultPass
+			verdict.Reasons = append(verdict.Reasons, "分类器没有配置类型，返回未分类且结论固定为 PASS")
+			verdict.Labels = append(verdict.Labels, "分类:未分类")
+		} else {
+			verdict.Result = model.ResultReview
+			verdict.Reasons = append(verdict.Reasons, "审核配置缺少分类列表，已转人工复核")
+		}
 		return
 	}
 	code := strings.ToLower(strings.TrimSpace(verdict.Category))
 	if code == "" {
-		verdict.Result = model.ResultReview
-		verdict.Reasons = append(verdict.Reasons, "模型未返回分类编码，已转人工复核")
+		if pure {
+			verdict.Category = "unclassified"
+			verdict.CategoryName = "未分类"
+			verdict.Result = model.ResultPass
+			verdict.Reasons = append(verdict.Reasons, "模型未返回分类编码，按纯分类器固定为 PASS")
+			verdict.Labels = append(verdict.Labels, "分类:未分类")
+		} else {
+			verdict.Result = model.ResultReview
+			verdict.Reasons = append(verdict.Reasons, "模型未返回分类编码，已转人工复核")
+		}
 		return
 	}
 	category, found := ai.FindCategory(categories, code)
 	if !found {
 		verdict.Category = code
 		verdict.CategoryName = "未知分类"
-		verdict.Result = model.ResultReview
-		verdict.Reasons = append(verdict.Reasons, fmt.Sprintf("分类编码 %s 不在配置中，已转人工复核", code))
+		if pure {
+			verdict.Result = model.ResultPass
+			verdict.Reasons = append(verdict.Reasons, fmt.Sprintf("分类编码 %s 不在配置中，按纯分类器固定为 PASS", code))
+			verdict.Labels = append(verdict.Labels, "分类:未知分类")
+		} else {
+			verdict.Result = model.ResultReview
+			verdict.Reasons = append(verdict.Reasons, fmt.Sprintf("分类编码 %s 不在配置中，已转人工复核", code))
+		}
 		return
 	}
 	verdict.Category = category.Code
 	verdict.CategoryName = category.Name
+	if !containsText(verdict.Labels, "分类:"+category.Name) {
+		verdict.Labels = append(verdict.Labels, "分类:"+category.Name)
+	}
+	if pure {
+		verdict.Result = model.ResultPass
+		verdict.Reasons = append(verdict.Reasons, fmt.Sprintf("分类结果：%s（纯分类器，结论固定 PASS）", category.Name))
+		return
+	}
 	if category.Result == model.ResultPass || category.Result == model.ResultReject || category.Result == model.ResultReview {
 		verdict.Result = category.Result
 	} else {
 		verdict.Result = model.ResultReview
-	}
-	if !containsText(verdict.Labels, "分类:"+category.Name) {
-		verdict.Labels = append(verdict.Labels, "分类:"+category.Name)
 	}
 	verdict.Reasons = append(verdict.Reasons, fmt.Sprintf("分类映射：%s → %s", category.Name, verdict.Result))
 }

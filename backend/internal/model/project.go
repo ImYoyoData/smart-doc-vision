@@ -14,6 +14,7 @@ type Project struct {
 	AppSecretEnc     string     `gorm:"type:text" json:"-"`
 	RetentionDays    int        `gorm:"not null;default:30" json:"retention_days"`
 	MaxTasksPerDay   int        `gorm:"not null;default:0" json:"max_tasks_per_day"`
+	MaxConcurrent    int        `gorm:"not null;default:2" json:"max_concurrent_tasks"`
 	OpenAPIRateLimit int        `gorm:"not null;default:120" json:"openapi_rate_limit"`
 	DeletedAt        *time.Time `gorm:"index" json:"deleted_at,omitempty"`
 	CreatedBy        uint64     `json:"created_by"`

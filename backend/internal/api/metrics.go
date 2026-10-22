@@ -49,6 +49,18 @@ func (s *Server) prometheusMetrics(c *gin.Context) {
 			"# HELP smartdoc_tasks_created_today Tasks created since local midnight.\n# TYPE smartdoc_tasks_created_today gauge",
 			fmt.Sprintf("smartdoc_tasks_created_today %d", today))
 	}
+	if stats := s.engine.QueueStats(); len(stats) > 0 {
+		lines = append(lines,
+			"# HELP smartdoc_project_worker_active In-flight tasks per project worker pool.\n# TYPE smartdoc_project_worker_active gauge",
+			"# HELP smartdoc_project_worker_pending Queued tasks waiting for a project worker slot.\n# TYPE smartdoc_project_worker_pending gauge",
+			"# HELP smartdoc_project_worker_limit Configured per-project concurrency limit.\n# TYPE smartdoc_project_worker_limit gauge")
+		for _, stat := range stats {
+			lines = append(lines,
+				fmt.Sprintf("smartdoc_project_worker_active{project_id=\"%d\"} %d", stat.ProjectID, stat.Active),
+				fmt.Sprintf("smartdoc_project_worker_pending{project_id=\"%d\"} %d", stat.ProjectID, stat.Pending),
+				fmt.Sprintf("smartdoc_project_worker_limit{project_id=\"%d\"} %d", stat.ProjectID, stat.Limit))
+		}
+	}
 	var projects int64
 	if err := s.db.WithContext(ctx).Model(&model.Project{}).Where("status = ? AND deleted_at IS NULL", "ACTIVE").Count(&projects).Error; err == nil {
 		lines = append(lines,

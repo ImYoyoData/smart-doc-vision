@@ -148,9 +148,12 @@ func (s *Server) createAudit(c *gin.Context) {
 	}
 	storedRules := req.Rules
 	if len(storedRules) == 0 || string(storedRules) == "null" {
-		if req.DecisionMode == model.DecisionClassify {
+		switch req.DecisionMode {
+		case model.DecisionClassify:
 			storedRules = json.RawMessage(catalog.ClassificationRulesPayload(0.60))
-		} else {
+		case model.DecisionClassifyOnly:
+			storedRules = json.RawMessage("[]")
+		default:
 			storedRules = json.RawMessage(catalog.RulesPayload(req.Strictness))
 		}
 	}
@@ -238,9 +241,12 @@ func (s *Server) updateAudit(c *gin.Context) {
 		audit.DecisionMode = mode
 		audit.Categories = model.JSONBytes(categories)
 		if len(req.Rules) == 0 && req.Strictness == "" {
-			if mode == model.DecisionClassify {
+			switch mode {
+			case model.DecisionClassify:
 				audit.Rules = catalog.ClassificationRulesPayload(0.60)
-			} else if strings.EqualFold(audit.DecisionMode, model.DecisionReview) {
+			case model.DecisionClassifyOnly:
+				audit.Rules = model.JSONBytes([]any{})
+			default:
 				audit.Rules = catalog.RulesPayload("standard")
 			}
 		}
@@ -678,8 +684,8 @@ func validateMediaTypes(types []string) error {
 
 func normalizeDecisionMode(mode string) string {
 	mode = strings.ToUpper(strings.TrimSpace(mode))
-	if mode == model.DecisionClassify {
-		return model.DecisionClassify
+	if mode == model.DecisionClassify || mode == model.DecisionClassifyOnly {
+		return mode
 	}
 	return model.DecisionReview
 }
@@ -694,8 +700,15 @@ func validateDecisionConfig(mode string, categories []model.AuditCategory) error
 	if mode == model.DecisionClassify && len(categories) < 2 {
 		return fmt.Errorf("分类审核至少需要 2 个分类")
 	}
-	if len(categories) > 20 {
-		return fmt.Errorf("分类数量不能超过 20 个")
+	if mode == model.DecisionClassifyOnly && len(categories) < 1 {
+		return fmt.Errorf("纯分类器至少需要 1 个分类类型")
+	}
+	maxCategories := 20
+	if mode == model.DecisionClassifyOnly {
+		maxCategories = 200
+	}
+	if len(categories) > maxCategories {
+		return fmt.Errorf("分类数量不能超过 %d 个", maxCategories)
 	}
 	seen := map[string]bool{}
 	for i := range categories {
@@ -717,7 +730,9 @@ func validateDecisionConfig(mode string, categories []model.AuditCategory) error
 		if len([]rune(category.Description)) > 255 {
 			return fmt.Errorf("分类 %q 的说明不能超过 255 个字符", category.Code)
 		}
-		if !validResult(category.Result) {
+		if mode == model.DecisionClassifyOnly {
+			category.Result = model.ResultPass
+		} else if !validResult(category.Result) {
 			return fmt.Errorf("分类 %q 的映射结论必须为 PASS/REJECT/REVIEW", category.Code)
 		}
 	}

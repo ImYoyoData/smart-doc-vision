@@ -229,7 +229,7 @@ func (s *Server) resetForRetry(task *model.Task) error {
 		ToStatus: model.TaskQueued, Message: "手动重试，重新进入队列",
 	}
 	_ = s.db.Create(&ev).Error
-	if err := s.engine.Enqueue(context.Background(), task.ID); err != nil {
+	if err := s.engine.Enqueue(context.Background(), task.ProjectID, task.ID); err != nil {
 		return fmt.Errorf("重新入队失败: %w", err)
 	}
 	return nil

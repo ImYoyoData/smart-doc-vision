@@ -287,7 +287,7 @@ func parseAssistantReply(content string, providerID, projectID, auditID uint64, 
 		draft.Code = fmt.Sprintf("ai_%d", time.Now().Unix()%1000000)
 	}
 	draft.MediaTypes = normalizeAssistantMediaTypes(draft.MediaTypes)
-	if len(draft.Categories) == 0 && draft.DecisionMode == model.DecisionClassify {
+	if len(draft.Categories) == 0 && (draft.DecisionMode == model.DecisionClassify || draft.DecisionMode == model.DecisionClassifyOnly) {
 		draft.Categories = catalog.ExampleClassificationCategories()
 	}
 	filteredCategories := make([]model.AuditCategory, 0, len(draft.Categories))
@@ -304,10 +304,16 @@ func parseAssistantReply(content string, providerID, projectID, auditID uint64, 
 	if draft.DecisionMode == model.DecisionClassify && len(draft.Categories) < 2 {
 		return "", false, assistantDraft{}, fmt.Errorf("分类审核至少需要两个有效分类")
 	}
+	if draft.DecisionMode == model.DecisionClassifyOnly && len(draft.Categories) < 1 {
+		return "", false, assistantDraft{}, fmt.Errorf("纯分类器至少需要一个有效分类")
+	}
 	if draft.ReviewPrompt == "" {
-		if draft.DecisionMode == model.DecisionClassify {
+		switch draft.DecisionMode {
+		case model.DecisionClassifyOnly:
+			draft.ReviewPrompt = catalog.DefaultClassifyPrompt + "\n\n这是纯分类器任务：只返回最匹配的分类类型，不需要判定通过或驳回，平台会把成功分类的结论固定为 PASS。"
+		case model.DecisionClassify:
 			draft.ReviewPrompt = catalog.DefaultClassifyPrompt
-		} else {
+		default:
 			draft.ReviewPrompt = catalog.DefaultReviewPrompt
 		}
 	}
@@ -318,7 +324,9 @@ func parseAssistantReply(content string, providerID, projectID, auditID uint64, 
 		}
 	}
 	if len(draft.Rules) == 0 || string(draft.Rules) == "[]" {
-		if draft.DecisionMode == model.DecisionClassify {
+		if draft.DecisionMode == model.DecisionClassifyOnly {
+			draft.Rules = json.RawMessage("[]")
+		} else if draft.DecisionMode == model.DecisionClassify {
 			draft.Rules = json.RawMessage(catalog.ClassificationRulesPayload(0.60))
 		} else {
 			preset := strings.ToLower(strings.TrimSpace(raw.Config.RulesPreset))
@@ -398,8 +406,8 @@ const assistantSystemPrompt = `你是「智审图档 SmartDoc Vision」的审核
 
 【平台能力边界】
 - 仅支持多文本 + 多图片审核，不支持视频/音频。
-- decision_mode 只能是 REVIEW（合规审核）或 CLASSIFY（分类审核）。
-- 分类审核需要提供至少两个分类，每个分类映射最终结论 PASS / REJECT / REVIEW。
+- decision_mode 只能是 REVIEW（合规审核）、CLASSIFY（分类并映射结论）或 CLASSIFY_ONLY（纯分类器，全部通过、只返回类型）。
+- 分类审核需要提供至少两个分类；纯分类器可提供任意数量分类，分类结果始终 PASS，不需要映射驳回。
 - 可绑定通用大模型（OpenAI 兼容 / Anthropic 协议）或 JEV 决策模型；分类场景优先建议 JEV。
 - rules 是规则组数组；routes 是 PASS / REJECT / REVIEW 三路结果动作对象，通常保持空动作，除非用户明确要求。
 
@@ -433,7 +441,8 @@ const assistantSystemPrompt = `你是「智审图档 SmartDoc Vision」的审核
 【字段约束】
 - media_types 仅可包含 text、image。
 - rules_preset 可选 standard / strict / loose；分类模式由服务端使用分类规则。rules 可留空数组，由平台补默认规则。
-- 分类模式下 categories 必须给出至少两个分类：{"code":"contract","name":"合同协议","description":"判定说明","result":"PASS"}。
+- 分类模式下 categories 必须给出至少两个分类；纯分类器可给任意数量类型，result 会被平台统一为 PASS。
+- 纯分类器使用 decision_mode=CLASSIFY_ONLY，categories 中每项仍填写 code/name/description，result 写 PASS 即可。
 - routes 的键必须是 PASS、REJECT、REVIEW；动作默认空数组。
 - 编辑已有配置时，只修改用户要求的部分，保留未提及的字段和名称；code 由平台保持原值。
 - 不要输出任何密钥、内网地址或虚构的业务事实。`

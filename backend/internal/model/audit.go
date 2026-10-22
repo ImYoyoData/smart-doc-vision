@@ -48,8 +48,9 @@ const (
 )
 
 const (
-	DecisionReview   = "REVIEW"
-	DecisionClassify = "CLASSIFY"
+	DecisionReview       = "REVIEW"
+	DecisionClassify     = "CLASSIFY"
+	DecisionClassifyOnly = "CLASSIFY_ONLY"
 )
 
 // AuditCategory maps one model-selected category to a final audit decision.
