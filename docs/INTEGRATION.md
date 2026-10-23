@@ -545,6 +545,14 @@ if not hmac.compare_digest(expected, request.headers["X-SmartDoc-Signature"]):
 
 每个结论可配置 `on_error`：`continue` 继续执行、`stop` 停止后续动作、`to_review` 转人工复核。模板变量：`${task_no}`、`${task_id}`、`${biz_key}`、`${source_type}`、`${project_code}`、`${project_id}`、`${audit_code}`、`${audit_id}`、`${result}`、`${summary}`、`${reasons}`、`${labels}`、`${risk_level}`、`${score}`、`${category}`、`${category_name}`、`${category_confidence}`、`${review_note}`。
 
+取值须知：
+
+- 模板按纯文本替换，替换结果一律是字符串，数字变量（`${task_id}` 等）写进 JSON 也会变成字符串；
+- `${result}` 为 `PASS` / `REJECT` / `REVIEW`，人工复核后以人工结论为准；
+- `${score}` 为 0~1 的风险分，**越高越危险**，不是通过率；模型失败兜底时按结论取 `0.2` / `0.5` / `0.9`；
+- `${category}` 系列只对分类类审核有值，普通文本审核通常为空；
+- `${reasons}` / `${labels}` 是数组，替换后为空格分隔的裸文本，会破坏 JSON —— 需要结构化字段时把请求体 / 消息内容留空，改用标准结果 JSON。
+
 > HTTP 与 WebSocket 动作同样受 SSRF 防护约束；后台提供结构化编辑器与「高级 JSON」两种编辑方式，保存时会校验动作类型、必填字段和失败策略。
 
 ---

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
-import { NButton, NIcon, NInput, NInputNumber, NSelect, NSwitch, NTabPane, NTabs, NTag } from 'naive-ui'
-import { AddOutline, ArrowDownOutline, ArrowUpOutline, TrashOutline } from '@vicons/ionicons5'
+import { NButton, NIcon, NInput, NInputNumber, NPopover, NSelect, NSwitch, NTabPane, NTabs, NTag } from 'naive-ui'
+import { AddOutline, ArrowDownOutline, ArrowUpOutline, HelpCircleOutline, TrashOutline } from '@vicons/ionicons5'
 
 interface RouteAction {
   type: string
@@ -52,6 +52,46 @@ const onErrorOptions = [
   { label: 'stop · 停止后续动作', value: 'stop' },
   { label: 'to_review · 转人工复核', value: 'to_review' },
 ]
+
+// 模板变量说明。替换后一律是字符串，这里标注的是原始数据类型与取值形式。
+const templateVarGroups = [
+  {
+    title: '任务与来源',
+    vars: [
+      { name: 'task_no', desc: '任务号，平台生成的任务唯一编号', form: '字符串，SDV + 14 位时间 + 6 位大写 hex，如 SDV20261023233001A1B2C3' },
+      { name: 'task_id', desc: '任务内部自增 ID', form: '整数，如 1024' },
+      { name: 'biz_key', desc: '业务方提交时携带的业务主键', form: '字符串，可能为空' },
+      { name: 'source_type', desc: '任务来源', form: '枚举：OPENAPI / ADMIN / REDIS / POLLING / WEBSOCKET' },
+      { name: 'project_code', desc: '项目编码', form: '字符串，如 arch-review' },
+      { name: 'project_id', desc: '项目内部 ID', form: '整数' },
+      { name: 'audit_code', desc: '审核配置编码', form: '字符串，如 doc-audit' },
+      { name: 'audit_id', desc: '审核配置内部 ID', form: '整数' },
+    ],
+  },
+  {
+    title: '结论与风险',
+    vars: [
+      { name: 'result', desc: '最终结论，人工复核后以人工结论为准', form: '枚举：PASS / REJECT / REVIEW' },
+      { name: 'summary', desc: '一句话结论摘要', form: '字符串' },
+      { name: 'reasons', desc: '判定原因列表', form: '字符串数组；模板替换后是空格分隔的裸文本' },
+      { name: 'labels', desc: '命中标签列表', form: '字符串数组；模板替换后是空格分隔的裸文本' },
+      { name: 'risk_level', desc: '风险等级', form: '枚举：low / medium / high' },
+      { name: 'score', desc: '风险分，越高越危险（不是通过率）', form: '0~1 小数，如 0.12；模型失败兜底时按结论取 0.2 / 0.5 / 0.9' },
+      { name: 'review_note', desc: '人工复核备注', form: '字符串，未复核时为空' },
+    ],
+  },
+  {
+    title: '分类',
+    vars: [
+      { name: 'category', desc: '分类编码，机器可读', form: '字符串，如 contract；仅分类类审核有值，普通审核通常为空' },
+      { name: 'category_name', desc: '分类中文名', form: '字符串，如 合同协议' },
+      { name: 'category_confidence', desc: '分类置信度', form: '0~1 小数，如 0.88' },
+    ],
+  },
+]
+
+// 模板里展示变量占位符用：避免在 SFC 里直接写 ${...} 引起插值歧义。
+const tpl = (name: string) => '${' + name + '}'
 
 const active = ref('PASS')
 const advanced = ref(false)
@@ -216,7 +256,35 @@ function actionTitle(action: RouteAction, index: number): string {
 <template>
   <div class="routes-editor">
     <div class="routes-toolbar">
-      <span class="toolbar-note">按最终结论执行回调动作，模板变量支持 <code>${task_no}</code>、<code>${result}</code>、<code>${score}</code>、<code>${category}</code> 等。</span>
+      <span class="toolbar-note">
+        按最终结论执行回调动作，模板变量支持 <code>${task_no}</code>、<code>${result}</code>、<code>${score}</code>、<code>${category}</code> 等。
+        <n-popover trigger="click" placement="bottom-start" :width="560" :show-arrow="false">
+          <template #trigger>
+            <button type="button" class="vars-trigger">
+              <n-icon :component="HelpCircleOutline" :size="14" />
+              变量说明
+            </button>
+          </template>
+          <div class="vars-panel">
+            <p class="vars-intro">
+              模板按纯文本替换。变量原始类型只在「请求体 / 消息内容 / SQL 参数」留空、发送标准结果 JSON 时保持；写进 URL、Header、SQL 时一律按字符串拼接。
+            </p>
+            <div v-for="group in templateVarGroups" :key="group.title" class="vars-group">
+              <div class="vars-group-title">{{ group.title }}</div>
+              <div v-for="item in group.vars" :key="item.name" class="vars-item">
+                <div class="vars-item-head">
+                  <code class="vars-item-name">{{ tpl(item.name) }}</code>
+                  <span class="vars-item-desc">{{ item.desc }}</span>
+                </div>
+                <div class="vars-item-form">{{ item.form }}</div>
+              </div>
+            </div>
+            <p class="vars-foot">
+              注意：<code>{{ tpl('reasons') }}</code> / <code>{{ tpl('labels') }}</code> 是数组，替换后为空格分隔的裸文本，塞进 JSON 会破坏格式 —— 需要结构化字段时请留空请求体，走标准结果 JSON。<code>{{ tpl('score') }}</code> 是风险分，不是通过率。
+            </p>
+          </div>
+        </n-popover>
+      </span>
       <div class="toolbar-actions">
         <span class="advanced-label">高级 JSON</span>
         <n-switch :value="advanced" size="small" @update:value="toggleAdvanced" />
@@ -387,6 +455,26 @@ function actionTitle(action: RouteAction, index: number): string {
   background: #eef2f8;
   font-size: 11px;
 }
+.vars-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 2px;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #fff;
+  color: #3a4a5f;
+  font-size: 12px;
+  line-height: 18px;
+  cursor: pointer;
+  vertical-align: baseline;
+}
+.vars-trigger:hover {
+  border-color: #8fb4e8;
+  color: #1f6fd0;
+  background: #f2f7ff;
+}
 .toolbar-actions {
   display: flex;
   align-items: center;
@@ -497,5 +585,65 @@ function actionTitle(action: RouteAction, index: number): string {
     flex-direction: column;
     align-items: stretch;
   }
+}
+</style>
+
+<!-- popover 内容会被 teleport 到 body，scoped 样式命中不到，故用唯一前缀类名单独声明。 -->
+<style>
+.vars-panel {
+  max-height: 420px;
+  overflow-y: auto;
+  font-size: 12px;
+  line-height: 1.55;
+  color: #33415c;
+}
+.vars-intro,
+.vars-foot {
+  margin: 0 0 8px;
+  color: #6b7787;
+}
+.vars-foot {
+  margin: 8px 0 0;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border, #e3e8ef);
+}
+.vars-group + .vars-group {
+  margin-top: 10px;
+}
+.vars-group-title {
+  margin-bottom: 2px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #1f2d3d;
+}
+.vars-item {
+  padding: 5px 0;
+  border-top: 1px solid #eef1f6;
+}
+.vars-group-title + .vars-item {
+  border-top: none;
+}
+.vars-item-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.vars-item-name {
+  flex-shrink: 0;
+}
+.vars-item-desc {
+  color: #33415c;
+}
+.vars-item-form {
+  margin-top: 1px;
+  padding-left: 2px;
+  color: #6b7787;
+  font-size: 11.5px;
+}
+.vars-panel code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: #eef2f8;
+  font-size: 11px;
 }
 </style>

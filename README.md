@@ -367,7 +367,15 @@ AI 对接助手按触发方式拆分：每个方式都有独立的专用提示�
 | Redis | command、target、payload | command 支持 `publish` / `set` / `xadd` |
 | MySQL | dsn_env、query、args | DSN 从服务端环境变量读取，SQL 使用 `?` 占位符，args 每行一个 |
 
-动作支持模板变量：`${task_no}`、`${task_id}`、`${biz_key}`、`${source_type}`、`${project_code}`、`${audit_code}`、`${result}`、`${summary}`、`${reasons}`、`${labels}`、`${risk_level}`、`${score}`、`${category}`、`${category_name}`、`${category_confidence}`、`${review_note}`。`on_error` 可选 `continue` / `stop` / `to_review`，执行结果写入任务详情的 `routes` 字段。后台已提供结构化编辑器，也可切换「高级 JSON」直接编辑。
+动作支持模板变量：`${task_no}`、`${task_id}`、`${biz_key}`、`${source_type}`、`${project_code}`、`${audit_code}`、`${result}`、`${summary}`、`${reasons}`、`${labels}`、`${risk_level}`、`${score}`、`${category}`、`${category_name}`、`${category_confidence}`、`${review_note}`。`on_error` 可选 `continue` / `stop` / `to_review`，执行结果写入任务详情的 `routes` 字段。后台已提供结构化编辑器，也可切换「高级 JSON」直接编辑；编辑器右上角的「变量说明」可查看每个变量的含义与取值形式。
+
+变量的语义与坑：
+
+- `${result}` 只会是 `PASS` / `REJECT` / `REVIEW`；人工复核后以人工结论为准。
+- `${score}` 是 **0~1 的风险分，越高越危险**，不是通过率或置信度。模型调用失败走兜底时按结论取 `0.2`（PASS）/ `0.5`（REVIEW）/ `0.9`（REJECT）。
+- `${category}` / `${category_name}` / `${category_confidence}` 只对分类类审核（分类器、JEV 分类）有值，普通文本审核通常为空；类别以审核配置里的分类列表为准，未知类型落在 `other`。
+- `${reasons}` / `${labels}` 是数组。模板替换走纯文本拼接，渲染成空格分隔的裸文本（如 `[关键页缺失 缺章]`），直接塞进 JSON 会破坏格式 —— 需要结构化字段时把请求体 / 消息内容留空，让平台发送标准结果 JSON。
+- 替换结果是字符串：`${task_id}`、`${project_id}` 等数字变量写进 JSON 时也会变成字符串，需要数值类型的业务方应改用标准结果 JSON。
 
 > HTTP / WebSocket 结果动作默认启用 SSRF 防护，禁止访问内网与回环地址。本地联调需要回调到 `127.0.0.1` 时，仅在测试环境设置 `MEDIA_ALLOW_PRIVATE=true` 后重启后端。
 
