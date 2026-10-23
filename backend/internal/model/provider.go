@@ -17,8 +17,15 @@ type AIProvider struct {
 	LastTestOK  bool       `json:"last_test_ok"`
 	LastTestMS  int64      `json:"last_test_ms"`
 	LastTestMsg string     `gorm:"size:512" json:"last_test_message"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
+
+	// Runtime circuit breaker. Status stays under the administrator's control;
+	// these fields only describe automatic failover health.
+	BreakerUntil  *time.Time `json:"breaker_until"`
+	BreakerReason string     `gorm:"size:512" json:"breaker_reason"`
+	FailureCount  int        `gorm:"not null;default:0" json:"failure_count"`
+
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 const (
@@ -31,10 +38,14 @@ const (
 )
 
 type ProviderConfig struct {
-	SupportsVision bool    `json:"supports_vision"`
-	MaxTokens      int     `json:"max_tokens"`
-	Temperature    float64 `json:"temperature"`
-	MaxImages      int     `json:"max_images"`
+	SupportsVision   bool              `json:"supports_vision"`
+	MaxTokens        int               `json:"max_tokens"`
+	Temperature      float64           `json:"temperature"`
+	MaxImages        int               `json:"max_images"`
+	ContextWindow    int               `json:"context_window,omitempty"`
+	SupportsThinking bool              `json:"supports_thinking,omitempty"`
+	PreferReasoning  bool              `json:"prefer_reasoning,omitempty"`
+	Headers          map[string]string `json:"headers,omitempty"`
 }
 
 func (AIProvider) TableName() string { return "ai_providers" }

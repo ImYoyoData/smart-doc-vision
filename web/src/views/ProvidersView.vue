@@ -27,7 +27,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import { providerApi } from '@/api'
-import type { Provider } from '@/api/types'
+import type { Provider, ProviderModel } from '@/api/types'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 const workspace = useWorkspaceStore()
@@ -40,6 +40,9 @@ const modalShow = ref(false)
 const editing = ref<Provider | null>(null)
 const errorText = ref('')
 const providers = ref<Provider[]>([])
+const modelOptions = ref<ProviderModel[]>([])
+const modelsLoading = ref(false)
+const modelsError = ref('')
 
 const form = reactive({
   name: '',
@@ -49,14 +52,23 @@ const form = reactive({
   apiKey: '',
   prompt: '',
   supportsVision: false,
-  maxTokens: 2400,
+  supportsThinking: false,
+  preferReasoning: false,
+  contextWindow: null as number | null,
+  maxTokens: null as number | null,
   maxImages: 6,
   temperature: 0.1,
+  headersText: '',
   status: 'ACTIVE',
 })
 
 const isJEV = computed(() => form.kind === 'JEV')
 const isAnthropic = computed(() => form.kind === 'ANTHROPIC')
+const selectedModel = computed(() => modelOptions.value.find((item) => item.id === form.model))
+const modelSelectOptions = computed(() => modelOptions.value.map((item) => ({
+  label: modelOptionLabel(item),
+  value: item.id,
+})))
 const activeProvider = computed(() => providers.value.find((p) => p.id === testingId.value))
 const baseUrlHint = computed(() => {
   if (form.kind === 'JEV') return 'JEV 会追加 /systemone（若 BaseURL 已含 /v1）。'
@@ -66,8 +78,120 @@ const baseUrlHint = computed(() => {
 
 function providerKindLabel(kind?: string) {
   if (kind === 'JEV') return 'JEV 决策模型'
-  if (kind === 'ANTHROPIC') return '通用大模型 · Anthropic 协议'
-  return '通用大模型 · OpenAI 协议'
+  return '通用大模型'
+}
+
+function providerProtocolLabel(kind?: string) {
+  if (kind === 'JEV') return 'JEV System One'
+  return kind === 'ANTHROPIC' ? 'Anthropic 协议' : 'OpenAI 兼容协议'
+}
+
+function providerBreakerOpen(provider: Provider) {
+  return Boolean(provider.breaker_until)
+}
+
+function providerBreakerLabel(provider: Provider) {
+  if (!provider.breaker_until) return ''
+  const remaining = new Date(provider.breaker_until).getTime() - Date.now()
+  if (remaining <= 0) return '等待恢复探测'
+  const minutes = Math.ceil(remaining / 60000)
+  return minutes <= 1 ? '即将重试' : `${minutes} 分钟后重试`
+}
+
+watch(() => form.supportsThinking, (value) => {
+  if (!value) form.preferReasoning = false
+})
+
+function formatTokenCount(value?: number) {
+  if (!value || value <= 0) return '—'
+  if (value >= 1_000_000) {
+    const millions = value / 1_000_000
+    return `${Number.isInteger(millions) ? millions : millions.toFixed(1)}M`
+  }
+  if (value >= 1_000) return `${Math.round(value / 1_000)}K`
+  return String(value)
+}
+
+function modelOptionLabel(model: ProviderModel) {
+  const parts = [model.id]
+  if (model.context_window > 0) parts.push(`${formatTokenCount(model.context_window)} 上下文`)
+  if (model.supports_vision) parts.push('图片')
+  if (model.supports_thinking) parts.push('思考')
+  return parts.join(' · ')
+}
+
+function modelSourceLabel(source?: string) {
+  return source === 'metadata' ? '接口返回' : '能力未提供，请手动填写'
+}
+
+function parseProviderHeaders(text: string) {
+  const headers: Record<string, string> = {}
+  for (const line of text.split(/\r?\n/)) {
+    const index = line.indexOf(':')
+    if (index <= 0) continue
+    const key = line.slice(0, index).trim()
+    const value = line.slice(index + 1).trim()
+    if (key) headers[key] = value
+  }
+  return headers
+}
+
+function headersToText(headers?: Record<string, string>) {
+  return Object.entries(headers || {})
+    .map(([key, value]) => `${key}: ${value}`)
+    .join('\n')
+}
+
+function applySelectedModel() {
+  const model = selectedModel.value
+  if (!model) return
+  form.supportsVision = model.vision_known ? model.supports_vision : false
+  form.supportsThinking = model.thinking_known ? model.supports_thinking : false
+  if (!model.thinking_known || !model.supports_thinking) form.preferReasoning = false
+  form.contextWindow = model.context_window_known && model.context_window > 0 ? model.context_window : null
+  form.maxTokens = model.max_output_known && model.max_output_tokens > 0 ? model.max_output_tokens : null
+}
+
+const kindDefaults: Record<string, {
+  baseUrl: string
+  model: string
+  name: string
+  prompt: string
+  supportsVision: boolean
+  maxTokens: number | null
+  maxImages: number
+  temperature: number
+}> = {
+  OPENAI_COMPATIBLE: {
+    baseUrl: 'https://api.openai.com/v1',
+    model: 'gpt-4o-mini',
+    name: '通用大模型',
+    prompt: '',
+    supportsVision: false,
+    maxTokens: null,
+    maxImages: 6,
+    temperature: 0.1,
+  },
+  ANTHROPIC: {
+    baseUrl: 'https://api.anthropic.com/v1',
+    model: 'claude-sonnet-4-5',
+    name: '通用大模型',
+    prompt: '',
+    supportsVision: true,
+    maxTokens: null,
+    maxImages: 6,
+    temperature: 0.1,
+  },
+  JEV: {
+    baseUrl: 'https://api.typesafe.ai/v1',
+    model: 'jev-latest',
+    name: 'JEV 决策模型',
+    prompt: '使用 TypeSafe Jev System One 进行结构化裁决，输出 Choice/Noul 概率，不生成自由文本。',
+    supportsVision: true,
+    maxTokens: null,
+    maxImages: 8,
+    temperature: 0,
+  },
 }
 
 function resetForm() {
@@ -78,45 +202,43 @@ function resetForm() {
   form.apiKey = ''
   form.prompt = ''
   form.supportsVision = false
-  form.maxTokens = 2400
+  form.supportsThinking = false
+  form.preferReasoning = false
+  form.contextWindow = null
+  form.maxTokens = null
   form.maxImages = 6
   form.temperature = 0.1
+  form.headersText = ''
   form.status = 'ACTIVE'
+  modelOptions.value = []
+  modelsError.value = ''
+  modelsLoading.value = false
   errorText.value = ''
   editing.value = null
 }
 
 function chooseKind(kind: string) {
   if (editing.value) return
+  const previous = kindDefaults[form.kind] || kindDefaults.OPENAI_COMPATIBLE
+  const next = kindDefaults[kind] || kindDefaults.OPENAI_COMPATIBLE
+  const keepBase = form.baseUrl && form.baseUrl !== previous.baseUrl
+  const keepModel = form.model && form.model !== previous.model
+  const keepName = form.name && form.name !== previous.name
+  const keepPrompt = form.prompt && form.prompt !== previous.prompt
   form.kind = kind
-  if (kind === 'JEV') {
-    form.baseUrl = 'https://api.typesafe.ai/v1'
-    form.model = 'jev-latest'
-    form.supportsVision = true
-    form.maxImages = 8
-    form.maxTokens = 0
-    form.temperature = 0
-    form.name = form.name || 'JEV 决策模型'
-    form.prompt = form.prompt || '使用 TypeSafe Jev System One 进行结构化裁决，输出 Choice/Noul 概率，不生成自由文本。'
-  } else if (kind === 'ANTHROPIC') {
-    form.baseUrl = 'https://api.anthropic.com/v1'
-    form.model = 'claude-sonnet-4-5'
-    form.supportsVision = true
-    form.maxImages = 6
-    form.maxTokens = 2400
-    form.temperature = 0.1
-    form.name = form.name || 'Anthropic Claude'
-    form.prompt = form.prompt || '使用 Anthropic Messages API 进行档案图档审核，按要求的 JSON 结构返回结论。'
-  } else {
-    form.baseUrl = 'https://api.openai.com/v1'
-    form.model = 'gpt-4o-mini'
-    form.supportsVision = false
-    form.maxTokens = 2400
-    form.temperature = 0.1
-    form.maxImages = 6
-    form.name = ['JEV 决策模型', 'Anthropic Claude'].includes(form.name) ? '' : form.name
-    form.prompt = form.prompt.startsWith('使用 TypeSafe') || form.prompt.startsWith('使用 Anthropic') ? '' : form.prompt
-  }
+  if (!keepBase) form.baseUrl = next.baseUrl
+  if (!keepModel) form.model = next.model
+  if (!keepName) form.name = next.name
+  if (!keepPrompt) form.prompt = next.prompt
+  form.supportsVision = next.supportsVision
+  form.supportsThinking = false
+  form.preferReasoning = false
+  form.contextWindow = null
+  form.maxTokens = next.maxTokens
+  form.maxImages = next.maxImages
+  form.temperature = next.temperature
+  modelOptions.value = []
+  modelsError.value = ''
 }
 
 function openCreate() {
@@ -137,11 +259,17 @@ function openEdit(provider: Provider) {
   form.model = provider.model
   form.apiKey = ''
   form.prompt = provider.prompt || ''
-  form.supportsVision = Boolean(provider.config?.supports_vision)
-  form.maxTokens = provider.config?.max_tokens ?? (provider.kind === 'JEV' ? 0 : 2400)
+  form.supportsVision = provider.kind === 'JEV' ? true : Boolean(provider.config?.supports_vision)
+  form.supportsThinking = Boolean(provider.config?.supports_thinking)
+  form.preferReasoning = Boolean(provider.config?.prefer_reasoning)
+  form.contextWindow = provider.config?.context_window ?? null
+  form.maxTokens = provider.config?.max_tokens && provider.config.max_tokens > 0 ? provider.config.max_tokens : null
   form.maxImages = provider.config?.max_images ?? 6
   form.temperature = provider.config?.temperature ?? 0.1
+  form.headersText = headersToText(provider.config?.headers)
   form.status = provider.status
+  modelOptions.value = []
+  modelsError.value = ''
   errorText.value = ''
   modalShow.value = true
 }
@@ -182,9 +310,13 @@ async function save() {
   }
   const config = {
     supports_vision: form.supportsVision,
-    max_tokens: form.maxTokens,
+    supports_thinking: form.supportsThinking,
+    prefer_reasoning: form.supportsThinking && form.preferReasoning,
+    context_window: form.contextWindow ?? 0,
+    max_tokens: form.maxTokens ?? 0,
     temperature: form.temperature,
     max_images: form.maxImages,
+    headers: parseProviderHeaders(form.headersText),
   }
   const payload: Record<string, unknown> = {
     project_id: workspace.currentProjectId,
@@ -213,6 +345,48 @@ async function save() {
     errorText.value = error instanceof Error ? error.message : '保存失败'
   } finally {
     saving.value = false
+  }
+}
+
+async function fetchModels() {
+  if (isJEV.value) return
+  if (!workspace.currentProjectId) {
+    modelsError.value = '请先选择项目'
+    return
+  }
+  if (!form.baseUrl.trim()) {
+    modelsError.value = '请先填写 BaseURL'
+    return
+  }
+  if (!editing.value && !form.apiKey.trim()) {
+    modelsError.value = '请先填写 API Key'
+    return
+  }
+  modelsLoading.value = true
+  modelsError.value = ''
+  try {
+    const data = await providerApi.models({
+      project_id: workspace.currentProjectId,
+      provider_id: editing.value?.id,
+      kind: form.kind,
+      base_url: form.baseUrl.trim(),
+      api_key: form.apiKey.trim() || undefined,
+      headers: parseProviderHeaders(form.headersText),
+    })
+    modelOptions.value = data.items
+    if (!data.items.length) {
+      modelsError.value = '供应商没有返回可用模型'
+      return
+    }
+    if (!data.items.some((item) => item.id === form.model)) {
+      form.model = data.items[0].id
+    }
+    applySelectedModel()
+    message.success(`已获取 ${data.items.length} 个模型`)
+  } catch (error) {
+    modelsError.value = error instanceof Error ? error.message : '获取模型列表失败'
+  } finally {
+    modelsLoading.value = false
   }
 }
 
@@ -284,7 +458,7 @@ onMounted(load)
     <PageHeader
       eyebrow="MODEL GATEWAY"
       title="模型接入"
-      subtitle="统一管理通用大模型（OpenAI 兼容 / Anthropic 协议）与 JEV 决策模型，为审核流程提供可切换、可审计的推理能力。"
+      subtitle="统一管理通用大模型与 JEV 决策模型。通用大模型是一个业务分类，OpenAI 兼容 / Anthropic 只是两种 API 协议。"
     >
       <template #actions>
         <n-button quaternary circle :loading="loading" @click="load">
@@ -301,24 +475,16 @@ onMounted(load)
       <div class="mode-card generic">
         <span class="mode-icon"><CloudOutline /></span>
         <div>
-          <div class="mode-title">通用大模型 <span>OpenAI 协议 · Chat Completions</span></div>
-          <p>适合文本审核、文档语义分析与多模态视觉模型。按模型能力决定是否开启图片理解。</p>
+          <div class="mode-title">通用大模型 <span>OpenAI 兼容 · Anthropic</span></div>
+          <p>统一的大模型分类，协议只是不同的 API 接入方式；按模型能力决定是否支持图片理解与思考。</p>
         </div>
-        <span class="mode-badge">CHAT COMPLETIONS</span>
-      </div>
-      <div class="mode-card anthropic">
-        <span class="mode-icon"><LinkOutline /></span>
-        <div>
-          <div class="mode-title">通用大模型 <span>Anthropic 协议 · Messages API</span></div>
-          <p>原生兼容 Claude 的 /v1/messages 协议，文本与 base64 图片块一起提交，适合多模态审核。</p>
-        </div>
-        <span class="mode-badge">/v1/messages</span>
+        <span class="mode-badge">CHAT · MESSAGES</span>
       </div>
       <div class="mode-card jev">
         <span class="mode-icon"><SparklesOutline /></span>
         <div>
           <div class="mode-title">JEV 决策模型 <span>TypeSafe System One</span></div>
-          <p>结构化裁决引擎，输出 Choice / Score / Noul 与置信度，原生支持图片资产，不生成自由文本。</p>
+          <p>结构化裁决引擎，原生支持文本 + 图片，输出 Choice / Score / Noul 与置信度，不生成自由文本。</p>
         </div>
         <span class="mode-badge">/v1/systemone</span>
       </div>
@@ -339,15 +505,18 @@ onMounted(load)
           <div class="provider-top">
             <span class="provider-icon">
               <SparklesOutline v-if="provider.kind === 'JEV'" />
-              <LinkOutline v-else-if="provider.kind === 'ANTHROPIC'" />
               <CloudOutline v-else />
             </span>
             <div class="provider-heading">
               <div class="provider-name-row">
                 <h3>{{ provider.name }}</h3>
                 <StatusTag :status="provider.kind" type="kind" />
+                <span v-if="providerBreakerOpen(provider)" class="provider-breaker" :title="provider.breaker_reason">
+                  熔断中 · {{ providerBreakerLabel(provider) }}
+                </span>
               </div>
               <span class="provider-model mono">{{ provider.model }}</span>
+              <span class="provider-protocol">{{ providerProtocolLabel(provider.kind) }}</span>
             </div>
             <n-switch
               :value="provider.status === 'ACTIVE'"
@@ -364,7 +533,19 @@ onMounted(load)
           <div class="provider-capabilities">
             <span :class="{ on: provider.kind === 'JEV' || provider.config?.supports_vision }">
               <ImagesOutline />
-              {{ provider.kind === 'JEV' || provider.config?.supports_vision ? '支持图片' : '纯文本' }}
+              {{ provider.kind === 'JEV' ? '文本 + 图片' : provider.config?.supports_vision ? '支持图片' : '纯文本' }}
+            </span>
+            <span v-if="provider.config?.context_window">
+              <CloudOutline />
+              {{ formatTokenCount(provider.config.context_window) }} 上下文
+            </span>
+            <span v-if="provider.config?.supports_thinking" class="on">
+              <SparklesOutline />
+              支持思考
+            </span>
+            <span v-if="provider.config?.prefer_reasoning" class="on">
+              <SparklesOutline />
+              优先推理
             </span>
             <span v-if="provider.kind !== 'JEV'">
               <FlashOutline />
@@ -449,28 +630,15 @@ onMounted(load)
             <button
               type="button"
               class="kind-card"
-              :class="{ active: form.kind === 'OPENAI_COMPATIBLE', disabled: Boolean(editing) }"
+              :class="{ active: !isJEV, disabled: Boolean(editing) }"
               @click="chooseKind('OPENAI_COMPATIBLE')"
             >
               <span class="kind-icon generic"><CloudOutline /></span>
               <span>
-                <strong>通用大模型 · OpenAI 协议</strong>
-                <small>兼容 /v1/chat/completions</small>
+                <strong>通用大模型</strong>
+                <small>OpenAI 兼容 / Anthropic Messages，协议可切换</small>
               </span>
-              <span v-if="form.kind === 'OPENAI_COMPATIBLE'" class="kind-check">✓</span>
-            </button>
-            <button
-              type="button"
-              class="kind-card"
-              :class="{ active: form.kind === 'ANTHROPIC', disabled: Boolean(editing) }"
-              @click="chooseKind('ANTHROPIC')"
-            >
-              <span class="kind-icon anthropic"><LinkOutline /></span>
-              <span>
-                <strong>通用大模型 · Anthropic 协议</strong>
-                <small>Messages API · /v1/messages</small>
-              </span>
-              <span v-if="form.kind === 'ANTHROPIC'" class="kind-check">✓</span>
+              <span v-if="!isJEV" class="kind-check">✓</span>
             </button>
             <button
               type="button"
@@ -487,11 +655,34 @@ onMounted(load)
             </button>
           </div>
 
+          <div v-if="!isJEV" class="protocol-row">
+            <span class="protocol-label">API 协议</span>
+            <button
+              type="button"
+              class="protocol-option"
+              :class="{ active: form.kind === 'OPENAI_COMPATIBLE' }"
+              :disabled="Boolean(editing)"
+              @click="chooseKind('OPENAI_COMPATIBLE')"
+            >
+              OpenAI 兼容 · /chat/completions
+            </button>
+            <button
+              type="button"
+              class="protocol-option"
+              :class="{ active: form.kind === 'ANTHROPIC' }"
+              :disabled="Boolean(editing)"
+              @click="chooseKind('ANTHROPIC')"
+            >
+              Anthropic · /messages
+            </button>
+            <span v-if="editing" class="protocol-locked">协议创建后不可变更</span>
+          </div>
+
           <div v-if="isJEV" class="jev-note">
             <SparklesOutline />
             <div>
-              <strong>JEV 采用结构化问题而非提示词生成</strong>
-              <p>平台会向 <code>/v1/systemone</code> 发送一个 Choice 裁决问题与两个 Noul 风险问题，并自动把图片转成 base64 资产；结果由概率和置信度归一化为风险分。</p>
+              <strong>JEV 原生支持文本 + 图片，采用结构化问题而非提示词生成</strong>
+              <p>平台会向 <code>/v1/systemone</code> 发送一个 Choice 裁决问题与两个 Noul 风险问题，文本与图片资产可同时提交；结果由概率和置信度归一化为风险分。</p>
             </div>
           </div>
 
@@ -518,20 +709,68 @@ onMounted(load)
             <div class="form-hint">{{ baseUrlHint }}</div>
           </div>
 
-          <div class="two-col">
-            <div class="field">
-              <label>模型 ID <span class="required">*</span></label>
-              <n-input v-model:value="form.model" placeholder="gpt-4o-mini / jev-latest" />
-            </div>
-            <div class="field">
-              <label>API Key <span v-if="!editing" class="required">*</span></label>
-              <n-input
-                v-model:value="form.apiKey"
-                type="password"
-                show-password-on="click"
-                :placeholder="editing && editing.has_api_key ? `留空保留现有密钥（${editing.api_key_masked}）` : '输入供应商 API Key'"
+          <div class="field">
+            <label>模型 ID <span class="required">*</span></label>
+            <div class="model-picker">
+              <n-select
+                v-if="modelOptions.length"
+                v-model:value="form.model"
+                filterable
+                tag
+                :options="modelSelectOptions"
+                placeholder="选择或输入模型 ID"
+                @update:value="applySelectedModel"
               />
+              <n-input v-else v-model:value="form.model" placeholder="gpt-4o-mini / claude-sonnet-4-5 / jev-latest" />
+              <n-button v-if="!isJEV" secondary :loading="modelsLoading" @click="fetchModels">
+                <template #icon><RefreshOutline /></template>
+                获取模型
+              </n-button>
             </div>
+            <div v-if="modelsError" class="form-hint model-picker-error">{{ modelsError }}</div>
+            <div v-if="selectedModel" class="model-caps">
+              <span>上下文 <strong>{{ selectedModel.context_window_known ? formatTokenCount(selectedModel.context_window) : '未提供' }}</strong></span>
+              <span>最大输出 <strong>{{ selectedModel.max_output_known ? formatTokenCount(selectedModel.max_output_tokens) : '未提供' }}</strong></span>
+              <span :class="{ on: selectedModel.vision_known && selectedModel.supports_vision }">
+                <ImagesOutline /> 图片 {{ selectedModel.vision_known ? (selectedModel.supports_vision ? '支持' : '不支持') : '未提供' }}
+              </span>
+              <span :class="{ on: selectedModel.thinking_known && selectedModel.supports_thinking }">
+                <SparklesOutline /> 思考 {{ selectedModel.thinking_known ? (selectedModel.supports_thinking ? '支持' : '不支持') : '未提供' }}
+              </span>
+              <span class="model-caps-source">{{ modelSourceLabel(selectedModel.source) }}</span>
+            </div>
+            <div v-else-if="!isJEV" class="model-caps">
+              <span>上下文 <strong>{{ form.contextWindow != null ? formatTokenCount(form.contextWindow) : '未填写' }}</strong></span>
+              <span>最大输出 <strong>{{ form.maxTokens != null ? formatTokenCount(form.maxTokens) : '未填写' }}</strong></span>
+              <span :class="{ on: form.supportsVision }">
+                <ImagesOutline /> 图片 {{ form.supportsVision ? '支持' : '不支持' }}
+              </span>
+              <span :class="{ on: form.supportsThinking }">
+                <SparklesOutline /> 思考 {{ form.supportsThinking ? '支持' : '不支持' }}
+              </span>
+            </div>
+            <div class="form-hint">选择模型后自动带入上下文、最大输出、图片理解与思考能力，仍可手动调整。</div>
+          </div>
+
+          <div class="field">
+            <label>API Key <span v-if="!editing" class="required">*</span></label>
+            <n-input
+              v-model:value="form.apiKey"
+              type="password"
+              show-password-on="click"
+              :placeholder="editing && editing.has_api_key ? `留空保留现有密钥（${editing.api_key_masked}）` : '输入供应商 API Key'"
+            />
+          </div>
+
+          <div class="field">
+            <label>自定义请求头</label>
+            <n-input
+              v-model:value="form.headersText"
+              type="textarea"
+              :autosize="{ minRows: 2, maxRows: 4 }"
+              placeholder="x-opencode-session: {{random}}"
+            />
+            <div class="form-hint">系统会默认附带 <code>x-opencode-session</code> 随机会话 ID；如需固定值或补充其他 Header，可按每行一个填写。测试连接会强制使用随机值，且不会覆盖 Authorization / x-api-key。</div>
           </div>
 
           <div class="field">
@@ -550,9 +789,23 @@ onMounted(load)
               <div class="switch-field">
                 <div>
                   <strong>图片理解</strong>
-                  <span>通用模型需模型本身支持视觉输入</span>
+                  <span>{{ isJEV ? 'JEV 原生支持文本 + 图片' : '通用模型需模型本身支持视觉输入' }}</span>
                 </div>
                 <n-switch v-model:value="form.supportsVision" :disabled="isJEV" />
+              </div>
+              <div class="switch-field">
+                <div>
+                  <strong>支持推理</strong>
+                  <span>模型本身支持推理 / 思考时开启</span>
+                </div>
+                <n-switch v-model:value="form.supportsThinking" :disabled="isJEV" />
+              </div>
+              <div class="switch-field">
+                <div>
+                  <strong>优先使用推理</strong>
+                  <span>失败切换时优先选择支持推理的模型</span>
+                </div>
+                <n-switch v-model:value="form.preferReasoning" :disabled="!form.supportsThinking" />
               </div>
               <div class="switch-field">
                 <div>
@@ -563,10 +816,17 @@ onMounted(load)
               </div>
               <div class="switch-field">
                 <div>
-                  <strong>最大输出 Token</strong>
-                  <span>JEV 无需设置</span>
+                  <strong>上下文窗口</strong>
+                  <span>模型可接收的上下文长度</span>
                 </div>
-                <n-input-number v-model:value="form.maxTokens" :min="0" :max="8000" :step="200" size="small" style="width: 100px" />
+                <n-input-number v-model:value="form.contextWindow" :min="0" :max="10000000" :step="1000" size="small" style="width: 120px" />
+              </div>
+              <div class="switch-field">
+                <div>
+                  <strong>最大输出 Token</strong>
+                  <span>按所选模型规格填写，JEV 无需设置</span>
+                </div>
+                <n-input-number v-model:value="form.maxTokens" :min="0" :max="200000" :step="1000" size="small" style="width: 120px" />
               </div>
               <div class="switch-field">
                 <div>
@@ -596,7 +856,7 @@ onMounted(load)
 <style scoped>
 .mode-banner {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
   margin-bottom: 18px;
 }
@@ -779,6 +1039,27 @@ onMounted(load)
   color: var(--muted-light);
   font-size: 9.5px;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.provider-protocol {
+  display: inline-block;
+  margin-top: 3px;
+  padding: 1px 6px;
+  border-radius: 99px;
+  background: #eef3fc;
+  color: #4b6a9b;
+  font-size: 8.5px;
+}
+
+.provider-breaker {
+  padding: 1px 6px;
+  border: 1px solid #fecaca;
+  border-radius: 99px;
+  background: #fef2f2;
+  color: #b91c1c;
+  font-size: 8.5px;
+  font-weight: 600;
   white-space: nowrap;
 }
 
@@ -1045,9 +1326,109 @@ onMounted(load)
 
 .kind-selector {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.protocol-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
   margin-bottom: 18px;
+  padding: 8px 10px;
+  border: 1px dashed #dfe7f3;
+  border-radius: 9px;
+  background: #fafcff;
+}
+
+.protocol-label {
+  color: var(--muted-light);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.protocol-option {
+  padding: 4px 9px;
+  border: 1px solid #e3e9f4;
+  border-radius: 7px;
+  background: #fff;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 9.5px;
+  cursor: pointer;
+}
+
+.protocol-option.active {
+  border-color: #aac6fb;
+  background: #f2f7ff;
+  color: #2b6cf6;
+}
+
+.protocol-option:disabled {
+  cursor: default;
+  opacity: 0.75;
+}
+
+.protocol-locked {
+  color: var(--muted-light);
+  font-size: 9px;
+}
+
+.model-picker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.model-picker > :first-child {
+  min-width: 0;
+  flex: 1;
+}
+
+.model-caps {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 7px;
+}
+
+.model-caps > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 99px;
+  background: #f4f7fc;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.model-caps > span.on {
+  background: #eefbf3;
+  color: #15803d;
+}
+
+.model-caps svg {
+  width: 11px;
+  height: 11px;
+}
+
+.model-caps strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.model-caps-source {
+  background: #f7f5ff !important;
+  color: #6d5bb5 !important;
+}
+
+.model-picker-error {
+  color: #dc2626;
 }
 
 .kind-card {

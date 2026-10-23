@@ -1,4 +1,4 @@
-import { del, get, patch, post, put, requestBlob } from './http'
+import { del, get, patch, post, postSSE, put, requestBlob, type SSEHandlers } from './http'
 import type {
   AnalyticsData,
   APICredential,
@@ -18,6 +18,7 @@ import type {
   Paged,
   Project,
   Provider,
+  ProviderModel,
   RecycleItem,
   ReviewSummary,
   RoleDefinition,
@@ -86,6 +87,14 @@ export const providerApi = {
   remove: (id: number) => del<{ deleted: boolean }>(`/providers/${id}`),
   test: (id: number) =>
     post<{ ok: boolean; latency_ms: number; message: string; model: string }>(`/providers/${id}/test`),
+  models: (payload: {
+    project_id: number
+    provider_id?: number
+    kind: string
+    base_url: string
+    api_key?: string
+    headers?: Record<string, string>
+  }) => post<{ items: ProviderModel[]; total: number }>('/providers/models', payload),
 }
 
 export const auditApi = {
@@ -93,6 +102,8 @@ export const auditApi = {
   get: (id: number) => get<{ audit: Audit; triggers: TriggerSource[] }>(`/audits/${id}`),
   create: (payload: Record<string, unknown>) => post<Audit>('/audits', payload),
   assistant: (payload: Record<string, unknown>) => post<AuditAssistantResult>('/audits/assistant', payload),
+  assistantStream: (payload: Record<string, unknown>, handlers: SSEHandlers) =>
+    postSSE('/audits/assistant/stream', payload, handlers),
   update: (id: number, payload: Record<string, unknown>) => put<Audit>(`/audits/${id}`, payload),
   setStatus: (id: number, status: string) => patch<{ status: string }>(`/audits/${id}/status`, { status }),
   clone: (id: number, payload: { name: string; code: string }) => post<Audit>(`/audits/${id}/clone`, payload),

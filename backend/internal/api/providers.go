@@ -255,14 +255,22 @@ func (s *Server) testProvider(c *gin.Context) {
 		serverError(c, err)
 		return
 	}
+	// Connection tests must not reuse a fixed gateway session ID, because some
+	// OpenCode-compatible gateways reject an already-seen session.
+	testProvider := ai.WithRandomSessionHeader(*provider)
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 150*time.Second)
 	defer cancel()
-	result, testErr := adapter.Test(ctx, ai.Request{Provider: *provider, APIKey: key})
+	result, testErr := adapter.Test(ctx, ai.Request{Provider: testProvider, APIKey: key})
 	updates := map[string]any{
 		"last_test_at":  time.Now(),
 		"last_test_ok":  result.OK,
 		"last_test_ms":  result.LatencyMS,
 		"last_test_msg": truncateText(result.Message, 500),
+	}
+	if result.OK {
+		updates["breaker_until"] = nil
+		updates["breaker_reason"] = ""
+		updates["failure_count"] = 0
 	}
 	message := result.Message
 	if message == "" && testErr != nil {

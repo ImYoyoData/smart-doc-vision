@@ -1,12 +1,15 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import dayjs from 'dayjs'
+import { marked } from 'marked'
+import DOMPurify from 'dompurify'
 import {
   NButton,
   NDatePicker,
   NDrawer,
   NDrawerContent,
+  NImage,
   NSpin,
   NDropdown,
   NInput,
@@ -20,6 +23,7 @@ import {
   AddOutline,
   CloudOutline,
   ChatbubbleEllipsesOutline,
+  CloseCircleOutline,
   CopyOutline,
   CreateOutline,
   DownloadOutline,
@@ -41,7 +45,7 @@ import ResultRoutesEditor from '@/components/ResultRoutesEditor.vue'
 import TriggerManageModal from '@/components/TriggerManageModal.vue'
 import { auditApi, metaApi, providerApi } from '@/api'
 import { copyText } from '@/utils/clipboard'
-import type { Audit, AuditAssistantConfig, AuditAssistantMessage, AuditCategory, Provider, RuleTemplate, TriggerSource } from '@/api/types'
+import type { Audit, AuditAssistantConfig, AuditAssistantMessage, AuditAssistantResult, AuditAssistantStep, AuditCategory, Provider, RuleTemplate, TriggerSource } from '@/api/types'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { useAuthStore } from '@/stores/auth'
 
@@ -89,8 +93,123 @@ const assistantSaved = ref(false)
 const assistantPickShow = ref(false)
 const assistantPickId = ref<number | null>(null)
 const assistantChat = ref<HTMLElement | null>(null)
+const assistantImages = ref<AssistantImage[]>([])
+let assistantAbort: AbortController | null = null
+
+interface AssistantImage {
+  id: string
+  name: string
+  dataUrl: string
+}
+
+function currentAssistantMessage(): AuditAssistantMessage | null {
+  for (let index = assistantMessages.value.length - 1; index >= 0; index -= 1) {
+    if (assistantMessages.value[index].role === 'assistant') {
+      return assistantMessages.value[index]
+    }
+  }
+  return null
+}
+
+function upsertAssistantStep(step: AuditAssistantStep) {
+  const target = currentAssistantMessage()
+  if (!target) return
+  target.steps ||= []
+  const index = target.steps.findIndex((item) => item.id === step.id)
+  if (index >= 0) target.steps[index] = step
+  else target.steps.push(step)
+}
+
+function dedupeAssistantSteps(steps: AuditAssistantStep[]) {
+  const result: AuditAssistantStep[] = []
+  for (const step of steps) {
+    const index = result.findIndex((item) => item.id === step.id)
+    if (index >= 0) result[index] = step
+    else result.push(step)
+  }
+  return result
+}
+
+function assistantStatusText(message: AuditAssistantMessage) {
+  const running = message.steps?.find((step) => step.status === 'running')
+  switch (running?.id) {
+    case 'context':
+      return 'AI 正在读取当前配置…'
+    case 'provider':
+      return 'AI 正在准备模型…'
+    case 'thinking':
+      return 'AI 正在思考…'
+    case 'draft':
+      return 'AI 正在整理配置…'
+    case 'save':
+      return assistantMode.value === 'edit' ? '正在保存修改…' : '正在添加审核配置…'
+    case 'access':
+      return '正在应用接入方式…'
+    default:
+      return assistantMode.value === 'edit' ? 'AI 正在编辑审核配置…' : 'AI 正在思考…'
+  }
+}
+
+function renderAssistantMarkdown(content: string) {
+  const html = marked.parse(content || '', { breaks: true, gfm: true })
+  return DOMPurify.sanitize(typeof html === 'string' ? html : '')
+}
+
+function readAssistantImage(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result || ''))
+    reader.onerror = () => reject(reader.error || new Error('读取图片失败'))
+    reader.readAsDataURL(file)
+  })
+}
+
+async function handleAssistantPaste(event: ClipboardEvent) {
+  const files = Array.from(event.clipboardData?.items || [])
+    .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+    .map((item) => item.getAsFile())
+    .filter((file): file is File => Boolean(file))
+  if (!files.length) return
+  event.preventDefault()
+  if (assistantImages.value.length + files.length > 4) {
+    message.warning('一次最多粘贴 4 张图片')
+    return
+  }
+  for (const file of files) {
+    if (file.size > 6 * 1024 * 1024) {
+      message.warning(`${file.name || '图片'} 超过 6MB，已跳过`)
+      continue
+    }
+    try {
+      const dataUrl = await readAssistantImage(file)
+      assistantImages.value.push({
+        id: `${Date.now()}-${assistantImages.value.length}-${file.name || 'pasted'}`,
+        name: file.name || '粘贴图片',
+        dataUrl,
+      })
+    } catch {
+      message.warning('图片读取失败，请重试')
+    }
+  }
+}
+
+function removeAssistantImage(id: string) {
+  assistantImages.value = assistantImages.value.filter((item) => item.id !== id)
+}
+
+onBeforeUnmount(() => {
+  assistantAbort?.abort()
+})
 const hasGeneralProvider = computed(() =>
   providers.value.some((p) => p.status === 'ACTIVE' && p.kind !== 'JEV'),
+)
+const assistantProviderOptions = computed(() =>
+  providers.value
+    .filter((p) => p.status === 'ACTIVE' && p.kind !== 'JEV')
+    .map((p) => ({
+      label: `${p.name} · ${p.model}${providerCooling(p) ? '（熔断中）' : ''}`,
+      value: p.id,
+    })),
 )
 const isClassifyMode = computed(() =>
   form.decisionMode === 'CLASSIFY' || form.decisionMode === 'CLASSIFY_ONLY',
@@ -226,9 +345,13 @@ function providerKindLabel(kind?: string) {
   return '通用大模型 · OpenAI 协议'
 }
 
+function providerCooling(provider: Provider) {
+  return Boolean(provider.breaker_until)
+}
+
 const providerOptions = computed(() =>
   providers.value.map((p) => ({
-    label: `${p.name} · ${providerKindLabel(p.kind)}`,
+    label: `${p.name} · ${p.model}${providerCooling(p) ? '（熔断中）' : ''}`,
     value: p.id,
     disabled: p.status !== 'ACTIVE',
   })),
@@ -669,25 +792,25 @@ async function load() {
   }
 }
 
-async function save(): Promise<boolean> {
+async function save(openGuide = true): Promise<Audit | null> {
   errorText.value = ''
   if (!form.name.trim() || (!editing.value && !form.code.trim())) {
     errorText.value = '请填写审核名称与编码'
-    return false
+    return null
   }
   if (!form.providerId) {
     errorText.value = '请选择模型供应商'
-    return false
+    return null
   }
   if (!form.mediaTypes.length) {
     errorText.value = '至少选择一种媒体类型'
-    return false
+    return null
   }
   if (form.decisionMode === 'CLASSIFY' || form.decisionMode === 'CLASSIFY_ONLY') {
     const error = validateCategoryForm()
     if (error) {
       errorText.value = error
-      return false
+      return null
     }
   }
   let rules: unknown
@@ -697,14 +820,14 @@ async function save(): Promise<boolean> {
     if (!Array.isArray(rules)) throw new Error('规则组 JSON 必须是数组')
   } catch (error) {
     errorText.value = error instanceof Error ? `规则组 JSON 无效：${error.message}` : '规则组 JSON 无效'
-    return false
+    return null
   }
   try {
     routes = JSON.parse(form.routesText)
     if (!routes || typeof routes !== 'object' || Array.isArray(routes)) throw new Error('结果动作路由 JSON 必须是对象')
   } catch (error) {
     errorText.value = error instanceof Error ? `结果动作路由 JSON 无效：${error.message}` : '结果动作路由 JSON 无效'
-    return false
+    return null
   }
   const categories = form.categories.map((category) => ({
     code: category.code.trim(),
@@ -732,25 +855,27 @@ async function save(): Promise<boolean> {
   saving.value = true
   try {
     if (editing.value) {
-      await auditApi.update(editing.value.id, payload)
+      const updated = await auditApi.update(editing.value.id, payload)
       message.success('审核配置已更新')
       modalShow.value = false
       await load()
-    } else {
-      const created = await auditApi.create(payload)
-      message.success('审核配置已创建，请选择触发方式接入')
-      modalShow.value = false
-      await load()
+      return updated
+    }
+    const created = await auditApi.create(payload)
+    message.success('审核配置已创建')
+    modalShow.value = false
+    await load()
+    if (openGuide) {
       guideAuditId.value = created.id
       guideShow.value = true
     }
+    return created
   } catch (error) {
     errorText.value = error instanceof Error ? error.message : '保存失败'
-    return false
+    return null
   } finally {
     saving.value = false
   }
-  return true
 }
 
 function auditModeLabel(mode?: string) {
@@ -807,14 +932,18 @@ function startAssistant(mode: 'create' | 'edit', audit?: Audit) {
     message.warning('AI 配置助手需要项目中至少有一个启用的通用大模型（OpenAI 兼容或 Anthropic 协议）')
     return
   }
-  const general = providers.value.find((p) => p.status === 'ACTIVE' && p.kind !== 'JEV')
-  assistantProviderId.value = general?.id || null
+  const candidates = providers.value.filter((p) => p.status === 'ACTIVE' && p.kind !== 'JEV')
+  const preferred = candidates.find((p) => p.id === assistantProviderId.value) || candidates[0]
+  assistantProviderId.value = preferred?.id || null
   assistantMode.value = mode
   assistantReadyConfig.value = null
   assistantChanges.value = []
   assistantSaved.value = false
   assistantError.value = ''
   assistantInput.value = ''
+  assistantImages.value = []
+  assistantAbort?.abort()
+  assistantAbort = null
   if (mode === 'create') {
     resetForm()
     editing.value = null
@@ -826,7 +955,7 @@ function startAssistant(mode: 'create' | 'edit', audit?: Audit) {
   assistantMessages.value = [{
     role: 'assistant',
     content: mode === 'create'
-      ? '你好，我是审核配置助手。请告诉我：这次要审核什么类型的档案？哪些情况必须驳回？是否需要按类别分类？我会根据你的回答逐步确认并直接生成配置。'
+      ? '你好，我是审核配置助手。请告诉我：这次要审核什么类型的档案？哪些情况必须驳回？是否需要按类别分类？任务通过什么方式接入（开放 API / Redis Stream / WebSocket / HTTP 轮询）？我会根据你的回答逐步确认并直接生成并保存配置。'
       : `当前正在编辑「${audit?.name || form.name}」（${audit?.code || form.code}）。它现在是${audit ? describeAudit(audit) : '当前表单中的配置'}。请告诉我：目前哪里不符合要求、你希望改成什么？例如“把默认结论改成 REVIEW”“新增发票分类并映射为通过”。我会只修改你指定的部分，其余配置保持不变。`,
   }]
   assistantShow.value = true
@@ -894,6 +1023,27 @@ function applyAssistantDraft(config: AuditAssistantConfig) {
   form.dedupeWindowSec = config.dedupe_window_sec || 86400
 }
 
+function assistantTriggerText(triggers?: Record<string, string>): string {
+  const active = Object.entries(triggers || {})
+    .filter(([, status]) => status === 'ACTIVE')
+    .map(([type]) => triggerLabel(type))
+  return active.length ? active.join(' / ') : '全部关闭'
+}
+
+function summarizeAssistantTriggers(config: AuditAssistantConfig): string | null {
+  if (!config.triggers) return null
+  const beforeTypes = assistantMode.value === 'edit'
+    ? (editing.value?.active_triggers || [])
+    : ['OPENAPI']
+  const before = beforeTypes.map((type) => triggerLabel(type)).sort()
+  const after = Object.entries(config.triggers)
+    .filter(([, status]) => status === 'ACTIVE')
+    .map(([type]) => triggerLabel(type))
+    .sort()
+  if (before.join('|') === after.join('|')) return null
+  return `接入方式：${before.length ? before.join(' / ') : '全部关闭'} → ${after.length ? after.join(' / ') : '全部关闭'}`
+}
+
 function summarizeAssistantChanges(config: AuditAssistantConfig) {
   const before = buildAssistantCurrentConfig()
   const changes: string[] = []
@@ -912,24 +1062,87 @@ function summarizeAssistantChanges(config: AuditAssistantConfig) {
   if (Number(config.dedupe_window_sec) !== Number(before.dedupe_window_sec)) changes.push(`去重窗口：${before.dedupe_window_sec}s → ${config.dedupe_window_sec}s`)
   if (JSON.stringify(config.rules || []) !== JSON.stringify(before.rules || [])) changes.push('规则组已更新')
   if (JSON.stringify(config.routes || {}) !== JSON.stringify(before.routes || {})) changes.push('结果动作路由已更新')
+  const triggerChange = summarizeAssistantTriggers(config)
+  if (triggerChange) changes.push(triggerChange)
   return changes
 }
 
+async function applyAssistantTriggers(auditId: number, triggers: Record<string, string>) {
+  const desired = Object.entries(triggers).filter(([type, status]) =>
+    ['OPENAPI', 'REDIS', 'WEBSOCKET', 'POLLING'].includes(type)
+    && (status === 'ACTIVE' || status === 'DISABLED'))
+  if (!desired.length) return
+  const detail = await auditApi.get(auditId)
+  const failures: string[] = []
+  for (const [type, status] of desired) {
+    const trigger = detail.triggers.find((item) => item.type === type)
+    if (!trigger || trigger.status === status) continue
+    try {
+      await auditApi.updateTrigger(trigger.id, { status })
+    } catch (error) {
+      failures.push(`${triggerLabel(type)}：${error instanceof Error ? error.message : '更新失败'}`)
+    }
+  }
+  if (failures.length) throw new Error(`审核配置已保存，但接入方式更新失败（${failures.join('；')}）`)
+}
+
 async function applyAssistantConfig(config: AuditAssistantConfig) {
-  assistantChanges.value = assistantMode.value === 'edit' ? summarizeAssistantChanges(config) : []
+  const target = currentAssistantMessage()
+  if (target) {
+    target.pending = true
+  }
+  assistantChanges.value = assistantMode.value === 'edit'
+    ? summarizeAssistantChanges(config)
+    : (() => {
+        const triggerChange = summarizeAssistantTriggers(config)
+        return triggerChange ? [triggerChange] : []
+      })()
   assistantReadyConfig.value = config
   applyAssistantDraft(config)
+  upsertAssistantStep({ id: 'save', label: '保存审核配置', status: 'running', at: Date.now() })
   await scrollAssistantToBottom()
-  const saved = await save()
-  if (saved) {
-    assistantSaved.value = true
-    if (assistantMode.value === 'create') {
-      assistantShow.value = false
-      assistantMessages.value = []
+  const saved = await save(false)
+  if (!saved) {
+    upsertAssistantStep({ id: 'save', label: '保存审核配置', status: 'error', detail: errorText.value, at: Date.now() })
+    if (target) {
+      target.pending = false
     }
-  } else {
     assistantError.value = errorText.value || '已应用配置，但保存失败，请检查表单后手动保存'
     modalShow.value = true
+    return
+  }
+  upsertAssistantStep({ id: 'save', label: '保存审核配置', status: 'done', detail: saved.name, at: Date.now() })
+  if (config.triggers && Object.keys(config.triggers).length) {
+    upsertAssistantStep({ id: 'access', label: '应用接入方式', status: 'running', at: Date.now() })
+    try {
+      await applyAssistantTriggers(saved.id, config.triggers)
+      await load()
+      upsertAssistantStep({
+        id: 'access', label: '应用接入方式', status: 'done',
+        detail: assistantTriggerText(config.triggers), at: Date.now(),
+      })
+    } catch (error) {
+      upsertAssistantStep({
+        id: 'access', label: '应用接入方式', status: 'error',
+        detail: error instanceof Error ? error.message : '更新失败', at: Date.now(),
+      })
+      if (target) {
+        target.pending = false
+      }
+      assistantSaved.value = true
+      assistantError.value = error instanceof Error ? error.message : '接入方式更新失败，请到接入指南中手动调整'
+      return
+    }
+  }
+  assistantSaved.value = true
+  if (target) {
+    target.pending = false
+  }
+  if (assistantMode.value === 'create') {
+    assistantShow.value = false
+    assistantMessages.value = []
+    guideAuditId.value = saved.id
+    guideShow.value = true
   }
 }
 
@@ -941,32 +1154,70 @@ function handleAssistantKeydown(event: KeyboardEvent) {
 
 async function sendAssistant() {
   const text = assistantInput.value.trim()
-  if (!text || assistantBusy.value) return
+  const images = assistantImages.value.map((item) => item.dataUrl)
+  if ((!text && !images.length) || assistantBusy.value) return
   if (!assistantProviderId.value) {
     assistantError.value = '没有可用的通用大模型，请先到「模型接入」启用一个通用大模型'
     return
   }
   assistantInput.value = ''
+  assistantImages.value = []
   assistantError.value = ''
-  assistantMessages.value.push({ role: 'user', content: text })
-  await scrollAssistantToBottom()
   assistantBusy.value = true
+  assistantMessages.value.push({ role: 'user', content: text, images })
+  const assistantMessage: AuditAssistantMessage = {
+    role: 'assistant', content: '', pending: true, steps: [],
+  }
+  assistantMessages.value.push(assistantMessage)
+  await scrollAssistantToBottom()
+  const controller = new AbortController()
+  assistantAbort = controller
+  let result: AuditAssistantResult | null = null
   try {
-    const result = await auditApi.assistant({
+    await auditApi.assistantStream({
       project_id: workspace.currentProjectId,
       audit_id: editing.value?.id || 0,
       provider_id: assistantProviderId.value,
-      messages: assistantMessages.value,
+      messages: assistantMessages.value.map((item) => ({
+        role: item.role,
+        content: item.content,
+        images: item.images || [],
+      })),
       current_config: buildAssistantCurrentConfig(),
+    }, {
+      signal: controller.signal,
+      onEvent: (event, data) => {
+        const payload = data as Record<string, any>
+        if (event === 'step') {
+          upsertAssistantStep(payload as unknown as AuditAssistantStep)
+          void scrollAssistantToBottom()
+        } else if (event === 'reply') {
+          result = payload as unknown as AuditAssistantResult
+        } else if (event === 'error') {
+          throw new Error(String(payload?.message || 'AI 配置助手请求失败'))
+        }
+      },
     })
-    assistantMessages.value.push({ role: 'assistant', content: result.reply })
+    const finalResult = result as AuditAssistantResult | null
+    if (!finalResult) throw new Error('模型没有返回结果')
+    if (finalResult.steps?.length) {
+      assistantMessage.steps = dedupeAssistantSteps(finalResult.steps)
+    }
+    assistantMessage.content = finalResult.reply
+    assistantMessage.pending = false
     await scrollAssistantToBottom()
-    if (result.ready && result.config) {
-      await applyAssistantConfig(result.config)
+    if (finalResult.ready && finalResult.config) {
+      await applyAssistantConfig(finalResult.config)
     }
   } catch (error) {
+    if (controller.signal.aborted) return
+    assistantMessage.pending = false
+    if (!assistantMessage.content && !assistantMessage.steps?.length) {
+      assistantMessages.value = assistantMessages.value.filter((item) => item !== assistantMessage)
+    }
     assistantError.value = error instanceof Error ? error.message : 'AI 配置助手请求失败'
   } finally {
+    if (assistantAbort === controller) assistantAbort = null
     assistantBusy.value = false
     await scrollAssistantToBottom()
   }
@@ -974,8 +1225,11 @@ async function sendAssistant() {
 
 function closeAssistant() {
   if (assistantBusy.value || saving.value) return
+  assistantAbort?.abort()
+  assistantAbort = null
   assistantShow.value = false
   assistantMessages.value = []
+  assistantImages.value = []
   assistantReadyConfig.value = null
   assistantChanges.value = []
   assistantSaved.value = false
@@ -1494,7 +1748,7 @@ onMounted(async () => {
             AI 帮我修改
           </n-button>
           <n-button :disabled="saving" @click="modalShow = false">取消</n-button>
-          <n-button v-if="auth.can('audit:write')" type="primary" :loading="saving" @click="save">{{ editing ? '保存修改' : '创建并查看接入方式' }}</n-button>
+          <n-button v-if="auth.can('audit:write')" type="primary" :loading="saving" @click="save()">{{ editing ? '保存修改' : '创建并查看接入方式' }}</n-button>
         </div>
       </div>
     </n-modal>
@@ -1544,7 +1798,7 @@ onMounted(async () => {
           <div>
             <div class="modal-kicker">AI CONFIG ASSISTANT</div>
             <h2>{{ assistantMode === 'edit' ? 'AI 帮我修改审核配置' : 'AI 帮我创建审核配置' }}</h2>
-            <p>{{ assistantMode === 'edit' ? 'AI 会读取当前配置，确认“现在是什么、要改成什么”后只修改你指定的部分。' : '通用大模型会先向你提问，信息足够后自动生成并保存配置。' }}</p>
+            <p>{{ assistantMode === 'edit' ? 'AI 会读取当前配置与接入方式，确认“现在是什么、要改成什么”后只修改你指定的部分。' : '通用大模型会先向你提问，信息足够后自动生成并保存配置，包括任务接入方式。' }}</p>
           </div>
           <span class="modal-icon"><ChatbubbleEllipsesOutline /></span>
         </div>
@@ -1559,39 +1813,68 @@ onMounted(async () => {
             v-for="(item, index) in assistantMessages"
             :key="index"
             class="assistant-message"
-            :class="item.role"
+            :class="[item.role, { pending: item.pending }]"
           >
             <span class="assistant-avatar">{{ item.role === 'user' ? '我' : 'AI' }}</span>
-            <div class="assistant-bubble">{{ item.content }}</div>
-          </div>
-          <div v-if="assistantBusy" class="assistant-message assistant">
-            <span class="assistant-avatar">AI</span>
-            <div class="assistant-bubble assistant-thinking"><n-spin size="small" /> 正在理解并生成配置，请稍候…</div>
-          </div>
-          <div v-if="assistantReadyConfig" class="assistant-ready">
-            <strong>{{ assistantMode === 'edit' ? '已按你的要求更新并保存' : '配置已生成并创建' }}：{{ assistantReadyConfig.name }}</strong>
-            <span>{{ auditModeLabel(assistantReadyConfig.decision_mode) }} · {{ assistantReadyConfig.categories.length }} 个分类 · {{ assistantReadyConfig.media_types.join(' + ') }}</span>
-            <ul v-if="assistantMode === 'edit' && assistantChanges.length" class="assistant-changes">
-              <li v-for="change in assistantChanges" :key="change">{{ change }}</li>
-            </ul>
-            <span v-else-if="assistantMode === 'edit'">未检测到与当前配置的字段差异。</span>
+            <div v-if="item.role === 'user'" class="assistant-bubble">
+              <div v-if="item.images?.length" class="assistant-message-images">
+                <n-image v-for="(src, imageIndex) in item.images" :key="imageIndex" :src="src" width="88" />
+              </div>
+              <span v-if="item.content">{{ item.content }}</span>
+            </div>
+            <div v-else class="assistant-content">
+              <div v-if="item.pending" class="assistant-pending-line">
+                <n-spin :size="12" />
+                <span>{{ assistantStatusText(item) }}</span>
+              </div>
+              <div v-if="item.content" class="assistant-answer markdown-body" v-html="renderAssistantMarkdown(item.content)"></div>
+              <div v-if="index === assistantMessages.length - 1 && assistantReadyConfig" class="assistant-ready">
+                <strong>{{ assistantMode === 'edit' ? '已按你的要求更新并保存' : '配置已生成并创建' }}：{{ assistantReadyConfig.name }}</strong>
+                <span>{{ auditModeLabel(assistantReadyConfig.decision_mode) }} · {{ assistantReadyConfig.categories.length }} 个分类 · {{ assistantReadyConfig.media_types.join(' + ') }}</span>
+                <span v-if="assistantReadyConfig.triggers">接入方式：{{ assistantTriggerText(assistantReadyConfig.triggers) }}</span>
+                <ul v-if="assistantMode === 'edit' && assistantChanges.length" class="assistant-changes">
+                  <li v-for="change in assistantChanges" :key="change">{{ change }}</li>
+                </ul>
+                <span v-else-if="assistantMode === 'edit'">未检测到与当前配置的字段差异。</span>
+              </div>
+            </div>
           </div>
         </div>
         <div class="assistant-composer">
+          <div v-if="assistantImages.length" class="assistant-attachments">
+            <div v-for="image in assistantImages" :key="image.id" class="assistant-attachment">
+              <n-image :src="image.dataUrl" width="64" />
+              <button type="button" class="assistant-attachment-remove" title="移除图片" @click="removeAssistantImage(image.id)">
+                <CloseCircleOutline />
+              </button>
+              <span class="assistant-attachment-name">{{ image.name }}</span>
+            </div>
+          </div>
           <n-input
             v-model:value="assistantInput"
             type="textarea"
             :autosize="{ minRows: 2, maxRows: 5 }"
             :disabled="assistantBusy || saving"
-            placeholder="回答 AI 的问题，或直接说「按你的建议生成」；Enter 发送，Shift+Enter 换行"
-            :input-props="{ onKeydown: handleAssistantKeydown }"
+            placeholder="回答 AI 的问题，或直接说「按你的建议生成」；支持粘贴截图，Enter 发送，Shift+Enter 换行"
+            :input-props="{ onKeydown: handleAssistantKeydown, onPaste: handleAssistantPaste }"
           />
+          <div class="assistant-model-row">
+            <span class="assistant-model-label">对话模型</span>
+            <n-select
+              v-model:value="assistantProviderId"
+              size="small"
+              :options="assistantProviderOptions"
+              :disabled="assistantBusy || saving"
+              placeholder="选择通用大模型"
+              class="assistant-model-select"
+            />
+          </div>
           <div class="assistant-actions">
             <span class="assistant-note">
-              {{ assistantSaved && assistantMode === 'edit' ? '修改已保存；可以继续描述调整，或关闭窗口' : hasGeneralProvider ? '使用项目内启用的通用大模型，不会调用 JEV' : '需要先配置通用大模型' }}
+              {{ assistantImages.length ? `已附加 ${assistantImages.length} 张图片（最多 4 张）` : assistantSaved && assistantMode === 'edit' ? '修改已保存；可以继续描述调整，或关闭窗口' : hasGeneralProvider ? '使用项目内启用的通用大模型，不会调用 JEV' : '需要先配置通用大模型' }}
             </span>
             <n-button :disabled="assistantBusy || saving" @click="closeAssistant">关闭</n-button>
-            <n-button type="primary" :loading="assistantBusy || saving" :disabled="!assistantInput.trim()" @click="sendAssistant">
+            <n-button type="primary" :loading="assistantBusy || saving" :disabled="(!assistantInput.trim() && !assistantImages.length) || assistantBusy || saving" @click="sendAssistant">
               发送
             </n-button>
           </div>
@@ -3505,5 +3788,274 @@ onMounted(async () => {
     align-items: flex-start;
     flex-direction: column;
   }
+}
+
+.assistant-message.assistant {
+  align-items: flex-start;
+}
+
+.assistant-content {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 7px;
+  padding-top: 2px;
+}
+
+.assistant-answer {
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1.8;
+  word-break: break-word;
+}
+
+.assistant-pending-line {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 10.5px;
+}
+
+.assistant-answer.markdown-body {
+  white-space: normal;
+}
+
+.assistant-answer.markdown-body p {
+  margin: 0 0 6px;
+}
+
+.assistant-answer.markdown-body p:last-child {
+  margin-bottom: 0;
+}
+
+.assistant-answer.markdown-body ul,
+.assistant-answer.markdown-body ol {
+  margin: 4px 0 6px;
+  padding-left: 18px;
+}
+
+.assistant-answer.markdown-body li {
+  margin: 2px 0;
+}
+
+.assistant-answer.markdown-body strong {
+  color: #1d4ed8;
+  font-weight: 600;
+}
+
+.assistant-answer.markdown-body code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: #eef2fa;
+  color: #334155;
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.assistant-answer.markdown-body pre {
+  margin: 6px 0;
+  padding: 8px 10px;
+  overflow-x: auto;
+  border: 1px solid #e3e9f4;
+  border-radius: 7px;
+  background: #f8fafd;
+}
+
+.assistant-answer.markdown-body pre code {
+  padding: 0;
+  background: transparent;
+  font-size: 9.5px;
+  line-height: 1.6;
+}
+
+.assistant-answer.markdown-body a {
+  color: #2b6cf6;
+}
+
+.assistant-answer.markdown-body table {
+  width: 100%;
+  margin: 6px 0;
+  border-collapse: collapse;
+  font-size: 10px;
+}
+
+.assistant-answer.markdown-body th,
+.assistant-answer.markdown-body td {
+  padding: 4px 6px;
+  border: 1px solid #e3e9f4;
+  text-align: left;
+}
+
+.assistant-answer.markdown-body blockquote {
+  margin: 6px 0;
+  padding-left: 8px;
+  border-left: 2px solid #cbd9f2;
+  color: var(--muted);
+}
+
+.assistant-message-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.assistant-message-images :deep(.n-image img) {
+  border-radius: 6px;
+}
+
+.assistant-trace {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 9px;
+  border: 1px solid #e8eef7;
+  border-radius: 9px;
+  background: #fff;
+}
+
+.assistant-trace-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 9.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.assistant-trace-toggle svg {
+  width: 12px;
+  height: 12px;
+}
+
+.assistant-trace-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 5px;
+  border-top: 1px solid #f0f3f8;
+}
+
+.assistant-step {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.assistant-step-icon {
+  display: flex;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+}
+
+.assistant-step-icon svg {
+  width: 13px;
+  height: 13px;
+}
+
+.assistant-step.done .assistant-step-icon {
+  color: #16a34a;
+}
+
+.assistant-step.error .assistant-step-icon {
+  color: #dc2626;
+}
+
+.assistant-step.running .assistant-step-icon {
+  color: #2b6cf6;
+}
+
+.assistant-step-label {
+  flex-shrink: 0;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.assistant-step-detail {
+  overflow: hidden;
+  color: var(--muted-light);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assistant-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.assistant-attachment {
+  position: relative;
+  display: flex;
+  width: 72px;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.assistant-attachment :deep(.n-image) {
+  overflow: hidden;
+  border-radius: 6px;
+}
+
+.assistant-attachment-remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  display: flex;
+  width: 18px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid #fecaca;
+  border-radius: 50%;
+  background: #fff;
+  color: #dc2626;
+  cursor: pointer;
+}
+
+.assistant-attachment-remove svg {
+  width: 12px;
+  height: 12px;
+}
+
+.assistant-attachment-name {
+  overflow: hidden;
+  color: var(--muted-light);
+  font-size: 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assistant-model-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.assistant-model-label {
+  color: var(--muted-light);
+  font-size: 9.5px;
+  white-space: nowrap;
+}
+
+.assistant-model-select {
+  max-width: 360px;
+  flex: 1;
 }
 </style>

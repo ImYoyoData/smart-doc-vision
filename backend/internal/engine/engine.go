@@ -91,6 +91,8 @@ func (e *Engine) Start() {
 		}
 		e.wg.Add(1)
 		go e.scheduler()
+		e.wg.Add(1)
+		go e.breakerRecovery()
 		for i := 0; i < e.cfg.WorkerCount; i++ {
 			e.wg.Add(1)
 			go e.worker(i + 1)
@@ -296,44 +298,19 @@ func (e *Engine) process(taskID uint64) {
 		e.fail(task, fmt.Errorf("模型供应商不存在: %w", err))
 		return
 	}
-	if provider.Status != model.ProviderActive {
-		e.fail(task, fmt.Errorf("模型供应商 %s 已停用", provider.Name))
-		return
-	}
-	apiKey, err := e.cipher.Decrypt(provider.APIKeyEnc)
-	if err != nil {
-		e.fail(task, fmt.Errorf("读取模型密钥失败: %w", err))
-		return
-	}
 	var input model.TaskInput
 	if err := model.DecodeJSON(task.InputJSON, &input); err != nil {
 		e.fail(task, fmt.Errorf("任务输入解析失败: %w", err))
 		return
 	}
-	adapter, err := ai.AdapterFor(provider.Kind)
-	if err != nil {
-		e.fail(task, err)
-		return
-	}
 
 	started := time.Now()
-	verdict, reviewErr := adapter.Review(ctx, ai.Request{
-		Provider: provider,
-		APIKey:   apiKey,
-		Audit:    audit,
-		Input:    input,
-	})
+	verdict, usedProvider, reviewErr := e.reviewWithFailover(ctx, task, audit, input, provider)
 	if verdict == nil {
 		verdict = &model.Verdict{}
 	}
-	if verdict.Provider == "" {
-		verdict.Provider = provider.Kind
-	}
-	if verdict.Model == "" {
-		verdict.Model = provider.Model
-	}
 	if reviewErr != nil {
-		log.Printf("task %s model review failed: %v", task.TaskNo, reviewErr)
+		log.Printf("task %s model review failed after all fallbacks: %v", task.TaskNo, reviewErr)
 		verdict.LatencyMS = time.Since(started).Milliseconds()
 		fallback := normalizeResult(audit.OnModelFail)
 		verdict.Result = fallback
@@ -343,13 +320,8 @@ func (e *Engine) process(taskID uint64) {
 		verdict.Reasons = []string{reviewErr.Error()}
 		verdict.Labels = []string{"模型异常兜底"}
 	}
-	verdict.Provider = provider.Kind
-	if verdict.Model == "" {
-		verdict.Model = provider.Model
-	}
-	if verdict.Provider == model.ProviderJEV && reviewErr != nil {
-		verdict.Provider = model.ProviderJEV
-	}
+	verdict.Provider = usedProvider.Kind
+	verdict.Model = usedProvider.Model
 	if reviewErr == nil && ai.IsClassification(audit) {
 		applyClassificationMapping(audit, verdict)
 	}

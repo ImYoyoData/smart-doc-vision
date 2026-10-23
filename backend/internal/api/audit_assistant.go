@@ -17,8 +17,9 @@ import (
 )
 
 type assistantMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role    string   `json:"role"`
+	Content string   `json:"content"`
+	Images  []string `json:"images"`
 }
 
 type auditAssistantRequest struct {
@@ -43,12 +44,24 @@ type assistantDraft struct {
 	DefaultResult   string                `json:"default_result"`
 	OnModelFail     string                `json:"on_model_fail"`
 	DedupeWindowSec int                   `json:"dedupe_window_sec"`
+	Triggers        map[string]string     `json:"triggers,omitempty"`
 }
 
 // auditAssistant runs a guided interview and, once the model considers the
 // answers sufficient, returns a complete audit-configuration draft. The
 // frontend applies the draft through the normal audited create/update API.
 func (s *Server) auditAssistant(c *gin.Context) {
+	s.handleAuditAssistant(c, false)
+}
+
+// auditAssistantStream exposes the same interview over SSE so the page can show
+// the real pipeline (context read, provider choice, model call, draft parsing)
+// while it is running.
+func (s *Server) auditAssistantStream(c *gin.Context) {
+	s.handleAuditAssistant(c, true)
+}
+
+func (s *Server) handleAuditAssistant(c *gin.Context, stream bool) {
 	user := currentUser(c)
 	if !s.hasPermission(user.Role, "audit:write") {
 		forbidden(c, "当前角色无权配置审核")
@@ -83,6 +96,15 @@ func (s *Server) auditAssistant(c *gin.Context) {
 		serverError(c, fmt.Errorf("模型密钥解密失败: %w", err))
 		return
 	}
+	providerConfig := model.ProviderConfig{}
+	_ = model.DecodeJSON(provider.ConfigJSON, &providerConfig)
+	maxImages := providerConfig.MaxImages
+	if maxImages <= 0 {
+		maxImages = 4
+	}
+	if maxImages > 8 {
+		maxImages = 8
+	}
 
 	var currentAudit *model.Audit
 	if req.AuditID > 0 {
@@ -94,39 +116,103 @@ func (s *Server) auditAssistant(c *gin.Context) {
 		currentAudit = &audit
 	}
 
+	currentTriggers := map[string]string{}
+	if currentAudit != nil {
+		var triggers []model.TriggerSource
+		_ = s.db.Where("audit_id = ?", currentAudit.ID).Order("priority asc").Find(&triggers).Error
+		for _, trigger := range triggers {
+			currentTriggers[trigger.Type] = trigger.Status
+		}
+	}
+
+	messages := make([]ai.ChatMessage, 0, len(req.Messages))
+	totalImages := 0
+	for _, item := range req.Messages {
+		content := strings.TrimSpace(item.Content)
+		images, imageErr := normalizeAssistantImages(item.Images)
+		if imageErr != nil {
+			badRequest(c, imageErr.Error())
+			return
+		}
+		if content == "" && len(images) == 0 {
+			continue
+		}
+		totalImages += len(images)
+		role := strings.ToLower(strings.TrimSpace(item.Role))
+		if role != "assistant" {
+			role = "user"
+		}
+		messages = append(messages, ai.ChatMessage{
+			Role: role, Content: truncateText(content, 4000), Images: images,
+		})
+	}
+	if len(messages) == 0 {
+		badRequest(c, "请输入需求描述")
+		return
+	}
+	if totalImages > maxImages {
+		badRequest(c, fmt.Sprintf("一次对话最多支持 %d 张图片", maxImages))
+		return
+	}
+	if totalImages > 0 && !providerConfig.SupportsVision {
+		fail(c, http.StatusUnprocessableEntity, "ASSISTANT_VISION_UNSUPPORTED",
+			"当前通用大模型未开启图片理解，请到「模型接入」开启视觉能力或更换支持视觉的模型", nil)
+		return
+	}
+
 	currentJSON := "无（新建审核配置）"
 	if req.CurrentConfig != nil {
 		if raw, err := json.Marshal(req.CurrentConfig); err == nil {
 			currentJSON = truncateText(string(raw), 6000)
 		}
 	} else if currentAudit != nil {
-		currentJSON = auditSnapshotJSON(*currentAudit)
+		currentJSON = auditSnapshotJSON(*currentAudit, currentTriggers)
 	}
 
 	systemPrompt := assistantSystemPrompt
 	systemPrompt += "\n\n【当前项目】\n项目编码：" + s.projectCode(req.ProjectID) + "\n"
 	if currentAudit != nil {
 		systemPrompt += "正在编辑已有审核配置，编码保持为 " + currentAudit.Code + "，除非用户明确要求改名。\n"
+		systemPrompt += "\n【当前接入方式（触发源）】\n" + assistantTriggerSnapshot(currentTriggers) + "\n"
+	} else {
+		systemPrompt += "\n【当前接入方式（触发源）】\n新建审核默认：OPENAPI=ACTIVE，REDIS/WEBSOCKET/POLLING=DISABLED。\n"
 	}
 	systemPrompt += "\n【当前配置快照】\n" + currentJSON + "\n"
 
-	messages := make([]ai.ChatMessage, 0, len(req.Messages))
-	for _, item := range req.Messages {
-		content := strings.TrimSpace(item.Content)
-		if content == "" {
-			continue
+	steps := make([]assistantStep, 0, 8)
+	emit := func(step assistantStep) {
+		step.At = time.Now().UnixMilli()
+		updated := false
+		for i := range steps {
+			if steps[i].ID == step.ID {
+				steps[i] = step
+				updated = true
+				break
+			}
 		}
-		role := strings.ToLower(strings.TrimSpace(item.Role))
-		if role != "assistant" {
-			role = "user"
+		if !updated {
+			steps = append(steps, step)
 		}
-		messages = append(messages, ai.ChatMessage{Role: role, Content: truncateText(content, 4000)})
+		if stream {
+			writeAssistantSSE(c, "step", step)
+		}
 	}
-	if len(messages) == 0 {
-		badRequest(c, "请输入需求描述")
-		return
+	if stream {
+		prepareAssistantSSE(c)
 	}
 
+	contextDetail := "新建审核配置"
+	if currentAudit != nil {
+		contextDetail = fmt.Sprintf("编辑「%s」（%s）", currentAudit.Name, currentAudit.Code)
+	}
+	emit(assistantStep{ID: "context", Label: "读取当前配置", Status: "done", Detail: contextDetail})
+	emit(assistantStep{ID: "provider", Label: "选择通用大模型", Status: "done", Detail: provider.Name + " · " + provider.Model})
+	if totalImages > 0 {
+		emit(assistantStep{ID: "images", Label: "读取粘贴图片", Status: "done", Detail: fmt.Sprintf("%d 张图片", totalImages)})
+	}
+
+	emit(assistantStep{ID: "thinking", Label: "调用大模型思考", Status: "running"})
+	started := time.Now()
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 150*time.Second)
 	defer cancel()
 	result, err := ai.Chat(ctx, ai.ChatRequest{
@@ -134,18 +220,47 @@ func (s *Server) auditAssistant(c *gin.Context) {
 		Messages: messages, MaxTokens: 2600, Temperature: 0.25,
 	})
 	if err != nil {
+		emit(assistantStep{ID: "thinking", Label: "调用大模型思考", Status: "error", Detail: err.Error()})
+		if stream {
+			writeAssistantSSE(c, "error", gin.H{"code": "ASSISTANT_FAILED", "message": err.Error()})
+			return
+		}
 		fail(c, http.StatusUnprocessableEntity, "ASSISTANT_FAILED", err.Error(), nil)
 		return
 	}
-	reply, ready, draft, parseErr := parseAssistantReply(result.Content, provider.ID, req.ProjectID, req.AuditID, currentAudit)
+	emit(assistantStep{ID: "thinking", Label: "调用大模型思考", Status: "done",
+		Detail: fmt.Sprintf("%s · %.1fs", result.Model, time.Since(started).Seconds())})
+
+	emit(assistantStep{ID: "draft", Label: "解析并校验配置", Status: "running"})
+	reply, ready, draft, parseErr := parseAssistantReply(result.Content, provider.ID, req.ProjectID, req.AuditID, currentAudit, currentTriggers)
 	if parseErr != nil && ready {
-		fail(c, http.StatusUnprocessableEntity, "ASSISTANT_CONFIG_INVALID", parseErr.Error(), gin.H{"raw": truncateText(result.Content, 3000)})
+		emit(assistantStep{ID: "draft", Label: "解析并校验配置", Status: "error", Detail: parseErr.Error()})
+		extra := gin.H{"raw": truncateText(result.Content, 3000)}
+		if stream {
+			writeAssistantSSE(c, "error", gin.H{"code": "ASSISTANT_CONFIG_INVALID", "message": parseErr.Error(), "raw": extra["raw"]})
+			return
+		}
+		fail(c, http.StatusUnprocessableEntity, "ASSISTANT_CONFIG_INVALID", parseErr.Error(), extra)
 		return
 	}
+	draftDetail := "信息不足，继续提问"
+	if ready {
+		draftDetail = assistantDecisionLabel(draft.DecisionMode)
+		if len(draft.Triggers) > 0 {
+			draftDetail += " · " + assistantTriggerSnapshot(draft.Triggers)
+		}
+	}
+	emit(assistantStep{ID: "draft", Label: "解析并校验配置", Status: "done", Detail: draftDetail})
+	if ready && len(draft.Triggers) > 0 {
+		emit(assistantStep{ID: "triggers", Label: "规划接入方式", Status: "done", Detail: assistantTriggerSnapshot(draft.Triggers)})
+	}
+
 	response := gin.H{
 		"reply": reply, "ready": ready, "model": result.Model,
 		"provider_id": provider.ID, "provider_name": provider.Name,
-		"mode": map[bool]string{true: "edit", false: "create"}[currentAudit != nil],
+		"mode":   map[bool]string{true: "edit", false: "create"}[currentAudit != nil],
+		"steps":  steps,
+		"images": totalImages,
 	}
 	if currentAudit != nil {
 		response["target"] = gin.H{"id": currentAudit.ID, "name": currentAudit.Name, "code": currentAudit.Code}
@@ -156,7 +271,65 @@ func (s *Server) auditAssistant(c *gin.Context) {
 		}
 		response["config"] = draft
 	}
+	if stream {
+		writeAssistantSSE(c, "reply", response)
+		writeAssistantSSE(c, "done", gin.H{})
+		return
+	}
 	ok(c, response)
+}
+
+type assistantStep struct {
+	ID     string `json:"id"`
+	Label  string `json:"label"`
+	Detail string `json:"detail,omitempty"`
+	Status string `json:"status"`
+	At     int64  `json:"at"`
+}
+
+func prepareAssistantSSE(c *gin.Context) {
+	header := c.Writer.Header()
+	header.Set("Content-Type", "text/event-stream; charset=utf-8")
+	header.Set("Cache-Control", "no-cache")
+	header.Set("Connection", "keep-alive")
+	header.Set("X-Accel-Buffering", "no")
+	c.Writer.WriteHeader(http.StatusOK)
+	c.Writer.Flush()
+}
+
+func writeAssistantSSE(c *gin.Context, event string, payload any) {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+	_, _ = fmt.Fprintf(c.Writer, "event: %s\ndata: %s\n\n", event, raw)
+	c.Writer.Flush()
+}
+
+func normalizeAssistantImages(values []string) ([]ai.ChatImage, error) {
+	out := make([]ai.ChatImage, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, _, ok := ai.ParseImageDataURL(value); !ok {
+			return nil, fmt.Errorf("图片格式不支持或超过 8MB，请粘贴 PNG/JPEG/WebP/GIF 图片")
+		}
+		out = append(out, ai.ChatImage{DataURL: value})
+	}
+	return out, nil
+}
+
+func assistantDecisionLabel(mode string) string {
+	switch mode {
+	case model.DecisionClassifyOnly:
+		return "纯分类器配置"
+	case model.DecisionClassify:
+		return "分类审核配置"
+	default:
+		return "合规审核配置"
+	}
 }
 
 func (s *Server) assistantProvider(projectID, preferred uint64) (*model.AIProvider, error) {
@@ -211,7 +384,7 @@ func (s *Server) projectCode(projectID uint64) string {
 	return project.Code
 }
 
-func auditSnapshotJSON(audit model.Audit) string {
+func auditSnapshotJSON(audit model.Audit, triggers map[string]string) string {
 	var mediaTypes, categories, rules, routes any
 	_ = model.DecodeJSON(audit.MediaTypes, &mediaTypes)
 	_ = model.DecodeJSON(audit.Categories, &categories)
@@ -224,11 +397,14 @@ func auditSnapshotJSON(audit model.Audit) string {
 		"rules": rules, "routes": routes, "default_result": audit.DefaultResult,
 		"on_model_fail": audit.OnModelFail, "dedupe_window_sec": audit.DedupeWindowSec,
 	}
+	if len(triggers) > 0 {
+		payload["triggers"] = triggers
+	}
 	raw, _ := json.Marshal(payload)
 	return truncateText(string(raw), 6000)
 }
 
-func parseAssistantReply(content string, providerID, projectID, auditID uint64, currentAudit *model.Audit) (string, bool, assistantDraft, error) {
+func parseAssistantReply(content string, providerID, projectID, auditID uint64, currentAudit *model.Audit, currentTriggers map[string]string) (string, bool, assistantDraft, error) {
 	text := strings.TrimSpace(content)
 	jsonText := extractJSONObject(text)
 	if jsonText == "" {
@@ -251,6 +427,7 @@ func parseAssistantReply(content string, providerID, projectID, auditID uint64, 
 			DefaultResult   string                `json:"default_result"`
 			OnModelFail     string                `json:"on_model_fail"`
 			DedupeWindowSec int                   `json:"dedupe_window_sec"`
+			Triggers        map[string]string     `json:"triggers"`
 		} `json:"config"`
 	}
 	if err := json.Unmarshal([]byte(jsonText), &raw); err != nil {
@@ -351,7 +528,72 @@ func parseAssistantReply(content string, providerID, projectID, auditID uint64, 
 	if draft.DedupeWindowSec <= 0 {
 		draft.DedupeWindowSec = 86400
 	}
+	draft.Triggers = normalizeAssistantTriggers(raw.Config.Triggers, auditID == 0, currentTriggers)
 	return reply, true, draft, nil
+}
+
+var assistantTriggerTypes = []string{model.TriggerOpenAPI, model.TriggerRedis, model.TriggerWebSocket, model.TriggerPolling}
+
+func assistantDefaultTriggerStatus(triggerType string) string {
+	if triggerType == model.TriggerOpenAPI {
+		return "ACTIVE"
+	}
+	return "DISABLED"
+}
+
+// normalizeAssistantTriggers turns the model's access-method choice into the full
+// desired state for all four trigger types. Because selecting any method disables
+// the unlisted ones, a user who asks for Redis can never end up with the default
+// Open API trigger silently left on.
+func normalizeAssistantTriggers(input map[string]string, creating bool, current map[string]string) map[string]string {
+	out := make(map[string]string, len(assistantTriggerTypes))
+	for key, value := range input {
+		key = strings.ToUpper(strings.TrimSpace(key))
+		if !containsString(assistantTriggerTypes, key) {
+			continue
+		}
+		status := strings.ToUpper(strings.TrimSpace(value))
+		if status != "ACTIVE" && status != "DISABLED" {
+			continue
+		}
+		out[key] = status
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	hasActive := false
+	for _, status := range out {
+		if status == "ACTIVE" {
+			hasActive = true
+			break
+		}
+	}
+	for _, triggerType := range assistantTriggerTypes {
+		if _, exists := out[triggerType]; exists {
+			continue
+		}
+		switch {
+		case creating || hasActive:
+			out[triggerType] = "DISABLED"
+		case current[triggerType] != "":
+			out[triggerType] = current[triggerType]
+		default:
+			out[triggerType] = assistantDefaultTriggerStatus(triggerType)
+		}
+	}
+	return out
+}
+
+func assistantTriggerSnapshot(triggers map[string]string) string {
+	parts := make([]string, 0, len(assistantTriggerTypes))
+	for _, triggerType := range assistantTriggerTypes {
+		status := triggers[triggerType]
+		if status == "" {
+			status = "DISABLED"
+		}
+		parts = append(parts, triggerType+"="+status)
+	}
+	return strings.Join(parts, "；")
 }
 
 func sanitizeAuditCode(value string) string {
@@ -405,7 +647,7 @@ func extractJSONObject(value string) string {
 	return strings.TrimSpace(value[start : end+1])
 }
 
-const assistantSystemPrompt = `你是「智审图档 SmartDoc Vision」的审核配置顾问。你的任务是通过简短问答，帮助管理员创建或修改一条图档审核配置。
+const assistantSystemPrompt = `你是「智审图档 SmartDoc Vision」的审核配置顾问。你的任务是通过简短问答，帮助管理员创建或修改一条图档审核配置，并同时确定任务接入方式。
 
 【平台能力边界】
 - 仅支持多文本 + 多图片审核，不支持视频/音频。
@@ -413,19 +655,22 @@ const assistantSystemPrompt = `你是「智审图档 SmartDoc Vision」的审核
 - 分类审核需要提供至少两个分类；纯分类器可提供任意数量分类，分类结果始终 PASS，不需要映射驳回。
 - 可绑定通用大模型（OpenAI 兼容 / Anthropic 协议）或 JEV 决策模型；分类场景优先建议 JEV。
 - rules 是规则组数组；routes 是 PASS / REJECT / REVIEW 三路结果动作对象，通常保持空动作，除非用户明确要求。
+- 接入方式（触发源）与审核配置一起保存，决定任务如何进入平台：OPENAPI（开放 API 提交）、REDIS（Redis Stream 消息）、WEBSOCKET（WebSocket）、POLLING（HTTP 定时轮询）。可以同时开启多种，也可以只开启一种。
 
 【对话规则】
-1. 用简体中文，每次最多问 2~3 个最关键的问题，不要一次罗列冗长清单。
-2. 先确认：审核对象/业务场景、通过标准、驳回红线、是否需要分类、是否需要人工复核、触发方式是否已知（触发方式不属于配置字段，可只在回复中提及）。
+1. 用简体中文，每次最多问 2~3 个最关键的问题，不要一次罗列冗长清单；用户已经说清楚的信息不要重复追问。
+2. 先确认：审核对象/业务场景、通过标准、驳回红线、是否需要分类、是否需要人工复核、任务通过什么方式接入（开放 API / Redis Stream / WebSocket / HTTP 轮询）。
 3. 如果用户回答“都行/你决定/直接生成/开始生成”，立即采用合理默认值并输出完整配置，不要继续追问。
 4. 最多进行 3 轮提问；信息足够时直接生成。不要声称已经保存，保存由前端执行。
-5. 你的每一轮回复都必须是严格 JSON 对象，不要输出 Markdown 代码块、解释或前后缀。
+5. 用户明确给出的要求必须原样落进配置，禁止被平台默认值覆盖。例如用户说“用 Redis 接收消息”，必须输出 REDIS=ACTIVE、OPENAPI=DISABLED；除非用户同时要求保留开放 API。
+6. reply 可以使用简洁的 Markdown（列表、加粗、行内代码、代码块），但整个回复仍必须是严格 JSON 对象，不要在 JSON 外面输出解释或前后缀。
+7. 用户可能直接粘贴界面截图、表单图片或参考图；请结合图片内容理解需求，不要说无法查看图片。
 
 【每轮输出 JSON】
 未准备好时：
 {"reply":"向用户提出的问题或说明","ready":false}
 准备好时：
-{"reply":"简短说明生成了什么配置","ready":true,"config":{
+{"reply":"简短说明生成了什么配置、启用了哪种接入方式","ready":true,"config":{
   "name":"2~64字审核名称",
   "code":"小写字母开头的英文编码，如 contract_review",
   "description":"审核用途说明",
@@ -438,7 +683,8 @@ const assistantSystemPrompt = `你是「智审图档 SmartDoc Vision」的审核
   "dedupe_window_sec":86400,
   "rules_preset":"standard",
   "rules":[],
-  "routes":{"PASS":{"exec_mode":"sequential","on_error":"continue","actions":[]},"REJECT":{"exec_mode":"sequential","on_error":"continue","actions":[]},"REVIEW":{"exec_mode":"sequential","on_error":"to_review","actions":[]}}
+  "routes":{"PASS":{"exec_mode":"sequential","on_error":"continue","actions":[]},"REJECT":{"exec_mode":"sequential","on_error":"continue","actions":[]},"REVIEW":{"exec_mode":"sequential","on_error":"to_review","actions":[]}},
+  "triggers":{"OPENAPI":"DISABLED","REDIS":"ACTIVE","WEBSOCKET":"DISABLED","POLLING":"DISABLED"}
 }}
 
 【字段约束】
@@ -447,5 +693,13 @@ const assistantSystemPrompt = `你是「智审图档 SmartDoc Vision」的审核
 - 分类模式下 categories 必须给出至少两个分类；纯分类器可给任意数量类型，result 会被平台统一为 PASS。
 - 纯分类器使用 decision_mode=CLASSIFY_ONLY，categories 中每项仍填写 code/name/description，result 写 PASS 即可。
 - routes 的键必须是 PASS、REJECT、REVIEW；动作默认空数组。
+- triggers 的键固定为 OPENAPI、REDIS、WEBSOCKET、POLLING，值只能是 ACTIVE 或 DISABLED，表示四种接入方式的最终期望状态。
+  - 用户提到接入方式时，必须输出完整的四个键；未提到的方式写 DISABLED，除非用户明确要求保留。
+  - 用户说“用 Redis 接收消息/走 Redis 队列”时：REDIS=ACTIVE、OPENAPI=DISABLED。
+  - 用户说“用开放 API / HTTP 接口提交”时：OPENAPI=ACTIVE，其他未要求的方式 DISABLED。
+  - 用户说“用 WebSocket 推送”时：WEBSOCKET=ACTIVE，其他未要求的方式 DISABLED。
+  - 用户说“定时拉取/轮询”时：POLLING=ACTIVE，其他未要求的方式 DISABLED。
+  - 新建且用户完全未提及接入方式时，可省略 triggers，平台默认启用开放 API；编辑且用户未提及接入方式时，必须省略 triggers，保持现有触发源不变。
+- 接入方式不能写进 review_prompt、rules 或 routes。
 - 编辑已有配置时，只修改用户要求的部分，保留未提及的字段和名称；code 由平台保持原值。
 - 不要输出任何密钥、内网地址或虚构的业务事实。`

@@ -13,9 +13,14 @@ import (
 	"smartdoc-vision/backend/internal/model"
 )
 
+type ChatImage struct {
+	DataURL string
+}
+
 type ChatMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role    string      `json:"role"`
+	Content string      `json:"content"`
+	Images  []ChatImage `json:"-"`
 }
 
 type ChatRequest struct {
@@ -38,8 +43,8 @@ func Chat(ctx context.Context, req ChatRequest) (*ChatResult, error) {
 	if req.MaxTokens <= 0 {
 		req.MaxTokens = 2400
 	}
-	if req.MaxTokens > 8000 {
-		req.MaxTokens = 8000
+	if req.MaxTokens > MaxOutputTokensLimit {
+		req.MaxTokens = MaxOutputTokensLimit
 	}
 	if req.Temperature <= 0 {
 		req.Temperature = 0.3
@@ -60,11 +65,13 @@ func chatOpenAI(ctx context.Context, req ChatRequest) (*ChatResult, error) {
 	if strings.TrimSpace(req.APIKey) == "" {
 		return nil, fmt.Errorf("供应商 API Key 未配置")
 	}
-	messages := make([]ChatMessage, 0, len(req.Messages)+1)
+	messages := make([]map[string]any, 0, len(req.Messages)+1)
 	if strings.TrimSpace(req.System) != "" {
-		messages = append(messages, ChatMessage{Role: "system", Content: req.System})
+		messages = append(messages, map[string]any{"role": "system", "content": req.System})
 	}
-	messages = append(messages, req.Messages...)
+	for _, message := range req.Messages {
+		messages = append(messages, openAIChatMessage(message))
+	}
 	body := map[string]any{
 		"model":       req.Provider.Model,
 		"messages":    messages,
@@ -82,6 +89,7 @@ func chatOpenAI(ctx context.Context, req ChatRequest) (*ChatResult, error) {
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+req.APIKey)
+	ApplyCustomHeaders(httpReq, ParseConfig(req.Provider).Headers)
 	client := &http.Client{Timeout: 120 * time.Second}
 	resp, err := client.Do(httpReq)
 	if err != nil {
@@ -119,20 +127,32 @@ func chatAnthropic(ctx context.Context, req ChatRequest) (*ChatResult, error) {
 	if strings.TrimSpace(req.APIKey) == "" {
 		return nil, fmt.Errorf("Anthropic API Key 未配置")
 	}
-	type contentBlock struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
-	}
 	messages := make([]map[string]any, 0, len(req.Messages))
 	for _, message := range req.Messages {
 		role := message.Role
 		if role != "assistant" {
 			role = "user"
 		}
-		messages = append(messages, map[string]any{
-			"role":    role,
-			"content": []contentBlock{{Type: "text", Text: message.Content}},
-		})
+		blocks := make([]any, 0, len(message.Images)+1)
+		if strings.TrimSpace(message.Content) != "" {
+			blocks = append(blocks, map[string]any{"type": "text", "text": message.Content})
+		}
+		for _, image := range message.Images {
+			mediaType, data, ok := ParseImageDataURL(image.DataURL)
+			if !ok {
+				return nil, fmt.Errorf("图片格式不支持或超过 8MB，请粘贴 PNG/JPEG/WebP/GIF 图片")
+			}
+			blocks = append(blocks, map[string]any{
+				"type": "image",
+				"source": map[string]any{
+					"type": "base64", "media_type": mediaType, "data": data,
+				},
+			})
+		}
+		if len(blocks) == 0 {
+			continue
+		}
+		messages = append(messages, map[string]any{"role": role, "content": blocks})
 	}
 	body := map[string]any{
 		"model":       req.Provider.Model,
@@ -154,6 +174,7 @@ func chatAnthropic(ctx context.Context, req ChatRequest) (*ChatResult, error) {
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("x-api-key", req.APIKey)
 	httpReq.Header.Set("anthropic-version", "2023-06-01")
+	ApplyCustomHeaders(httpReq, ParseConfig(req.Provider).Headers)
 	client := &http.Client{Timeout: 120 * time.Second}
 	resp, err := client.Do(httpReq)
 	if err != nil {
@@ -190,6 +211,54 @@ func chatAnthropic(ctx context.Context, req ChatRequest) (*ChatResult, error) {
 		return nil, fmt.Errorf("模型未返回内容")
 	}
 	return &ChatResult{Content: strings.TrimSpace(builder.String()), Model: parsed.Model}, nil
+}
+
+func openAIChatMessage(message ChatMessage) map[string]any {
+	if len(message.Images) == 0 {
+		return map[string]any{"role": message.Role, "content": message.Content}
+	}
+	parts := make([]map[string]any, 0, len(message.Images)+1)
+	if strings.TrimSpace(message.Content) != "" {
+		parts = append(parts, map[string]any{"type": "text", "text": message.Content})
+	}
+	for _, image := range message.Images {
+		parts = append(parts, map[string]any{
+			"type":      "image_url",
+			"image_url": map[string]any{"url": image.DataURL},
+		})
+	}
+	return map[string]any{"role": message.Role, "content": parts}
+}
+
+// ParseImageDataURL validates a pasted image data URL and splits it into the
+// media type and base64 payload required by the Anthropic message format.
+func ParseImageDataURL(value string) (mediaType, data string, ok bool) {
+	value = strings.TrimSpace(value)
+	if !strings.HasPrefix(value, "data:") {
+		return "", "", false
+	}
+	comma := strings.IndexByte(value, ',')
+	if comma < 0 {
+		return "", "", false
+	}
+	meta := value[len("data:"):comma]
+	if !strings.HasSuffix(meta, ";base64") {
+		return "", "", false
+	}
+	mediaType = strings.ToLower(strings.TrimSuffix(meta, ";base64"))
+	switch mediaType {
+	case "image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif":
+	default:
+		return "", "", false
+	}
+	if mediaType == "image/jpg" {
+		mediaType = "image/jpeg"
+	}
+	data = value[comma+1:]
+	if data == "" || len(data) > 8<<20 {
+		return "", "", false
+	}
+	return mediaType, data, true
 }
 
 func truncateErr(value string) string {

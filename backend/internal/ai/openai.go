@@ -152,6 +152,7 @@ func (a *OpenAIAdapter) Review(ctx context.Context, req Request) (*model.Verdict
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+req.APIKey)
+	ApplyCustomHeaders(httpReq, ParseConfig(req.Provider).Headers)
 
 	start := time.Now()
 	resp, err := a.client().Do(httpReq)
@@ -225,6 +226,7 @@ func (a *OpenAIAdapter) Test(ctx context.Context, req Request) (TestResult, erro
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+req.APIKey)
+	ApplyCustomHeaders(httpReq, ParseConfig(req.Provider).Headers)
 	start := time.Now()
 	resp, err := a.client().Do(httpReq)
 	if err != nil {

@@ -92,6 +92,24 @@ export interface ProviderConfig {
   max_tokens?: number
   temperature?: number
   max_images?: number
+  context_window?: number
+  supports_thinking?: boolean
+  prefer_reasoning?: boolean
+  headers?: Record<string, string>
+}
+
+export interface ProviderModel {
+  id: string
+  name?: string
+  context_window: number
+  context_window_known: boolean
+  max_output_tokens: number
+  max_output_known: boolean
+  supports_vision: boolean
+  vision_known: boolean
+  supports_thinking: boolean
+  thinking_known: boolean
+  source: 'metadata' | 'unknown' | string
 }
 
 export interface Provider {
@@ -108,6 +126,9 @@ export interface Provider {
   last_test_ok: boolean
   last_test_ms: number
   last_test_message: string
+  breaker_until?: string | null
+  breaker_reason: string
+  failure_count: number
   created_at: string
   updated_at: string
   api_key_masked: string
@@ -523,6 +544,17 @@ export interface RecycleItem {
 export interface AuditAssistantMessage {
   role: 'user' | 'assistant'
   content: string
+  images?: string[]
+  steps?: AuditAssistantStep[]
+  pending?: boolean
+}
+
+export interface AuditAssistantStep {
+  id: string
+  label: string
+  detail?: string
+  status: 'running' | 'done' | 'error'
+  at: number
 }
 
 export interface AuditAssistantConfig {
@@ -539,6 +571,7 @@ export interface AuditAssistantConfig {
   default_result: string
   on_model_fail: string
   dedupe_window_sec: number
+  triggers?: Record<string, string>
 }
 
 export interface AuditAssistantResult {
@@ -548,6 +581,8 @@ export interface AuditAssistantResult {
   provider_id?: number
   provider_name?: string
   config?: AuditAssistantConfig
+  steps?: AuditAssistantStep[]
+  images?: number
 }
 
 export interface RuleTemplate {
