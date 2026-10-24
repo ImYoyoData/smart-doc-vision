@@ -8,6 +8,8 @@
 
 [![智审图档 · 40 秒发布会宣传片](docs/video/launch-preview.gif)](docs/video/smartdoc-vision-launch.mp4)
 
+![点击播放完整宣传片](docs/video/smartdoc-vision-launch.mp4)
+
 [▶ 观看完整宣传片（40 秒 · 1080p · 含音效）](docs/video/smartdoc-vision-launch.mp4)
 
 ![登录页](docs/screenshots/login.png)
