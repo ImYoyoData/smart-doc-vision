@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { NButton, NIcon, NInput, NModal, NSelect, NSpin, NTooltip } from 'naive-ui'
+import { NButton, NIcon, NInput, NModal, NSelect, NSpin, NTooltip, useThemeVars } from 'naive-ui'
 import { EditorView, basicSetup } from 'codemirror'
 import { javascript, javascriptLanguage } from '@codemirror/lang-javascript'
 import { autocompletion, type CompletionContext, type CompletionResult } from '@codemirror/autocomplete'
@@ -8,10 +8,12 @@ import { oneDark } from '@codemirror/theme-one-dark'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import {
+  AlertCircleOutline,
   CloseOutline,
   CodeSlashOutline,
   DocumentTextOutline,
   SparklesOutline,
+  WarningOutline,
 } from '@vicons/ionicons5'
 import { providerApi, scriptApi } from '@/api'
 import type { Provider } from '@/api/types'
@@ -30,9 +32,28 @@ const emit = defineEmits<{
 }>()
 
 const workspace = useWorkspaceStore()
+const themeVars = useThemeVars()
 const editorHost = ref<HTMLElement | null>(null)
 let editorView: EditorView | null = null
 let syncing = false
+
+function isDarkColor(value: string) {
+  const hex = value.trim().match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i)
+  if (hex) {
+    let digits = hex[1]
+    if (digits.length === 3) digits = digits.split('').map((part) => part + part).join('')
+    const r = parseInt(digits.slice(0, 2), 16)
+    const g = parseInt(digits.slice(2, 4), 16)
+    const b = parseInt(digits.slice(4, 6), 16)
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b < 128
+  }
+  const parts = value.match(/[\d.]+/g)
+  if (!parts || parts.length < 3) return false
+  const [r, g, b] = parts.map(Number)
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b < 128
+}
+
+const isDark = computed(() => isDarkColor(themeVars.value.bodyColor))
 
 interface AiMessage {
   role: 'user' | 'assistant'
@@ -51,11 +72,41 @@ const aiStatus = ref('')
 const aiProviderId = ref<number | null>(null)
 const aiProviders = ref<Provider[]>([])
 const apiShow = ref(false)
+const initialScript = ref(props.script)
+const initialRemark = ref(props.remark)
+const closeConfirmShow = ref(false)
+let aiAbort: AbortController | null = null
 const aiSuggestions = [
   '审核通过后把结果写回业务数据库',
   '审核不通过时调用 HTTP 接口通知业务方',
   '把最终审核结果推送到 Redis Stream',
 ]
+
+const dirty = computed(() => props.script !== initialScript.value || props.remark !== initialRemark.value)
+const closeConfirmTitle = computed(() => {
+  if (aiBusy.value && dirty.value) return 'AI 正在执行，脚本尚未保存'
+  if (aiBusy.value) return 'AI 正在执行中'
+  if (dirty.value) return '脚本尚未保存'
+  return '关闭编辑框'
+})
+const closeConfirmMessage = computed(() => {
+  if (aiBusy.value && dirty.value) {
+    return '关闭编辑框会停止当前 AI 请求。你可以保存当前修改后关闭，或放弃本次修改。'
+  }
+  if (aiBusy.value) {
+    return '当前 AI 脚本助手仍在生成内容，停止后将关闭编辑框。'
+  }
+  if (dirty.value) {
+    return '当前脚本或备注有修改，请选择保存后关闭或放弃修改。'
+  }
+  return '当前没有未保存的修改，可以安全关闭。'
+})
+const closePrimaryText = computed(() => {
+  if (aiBusy.value && dirty.value) return '停止 AI 并保存关闭'
+  if (aiBusy.value) return '停止 AI 并关闭'
+  if (dirty.value) return '保存并关闭'
+  return '关闭'
+})
 
 interface ApiDocItem {
   name: string
@@ -192,7 +243,7 @@ function createEditor() {
       javascript(),
       javascriptLanguage.data.of({ autocomplete: completionSource }),
       autocompletion(),
-      oneDark,
+      isDark.value ? oneDark : [],
       EditorView.updateListener.of((update) => {
         if (update.docChanged && !syncing) {
           emit('update:script', update.state.doc.toString())
@@ -215,14 +266,29 @@ function setEditorValue(value: string) {
 watch(() => props.script, (value) => setEditorValue(value))
 watch(() => props.show, (value) => {
   if (value) {
+    initialScript.value = props.script
+    initialRemark.value = props.remark
     nextTick(() => {
       createEditor()
       setEditorValue(props.script)
       editorView?.focus()
     })
   } else {
+    closeConfirmShow.value = false
     apiShow.value = false
+    stopAiRequest()
   }
+}, { immediate: true })
+
+watch(isDark, () => {
+  if (!props.show || !editorView) return
+  const value = editorView.state.doc.toString()
+  editorView.destroy()
+  editorView = null
+  nextTick(() => {
+    createEditor()
+    setEditorValue(value)
+  })
 })
 
 onMounted(() => {
@@ -230,13 +296,55 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  aiAbort?.abort()
   editorView?.destroy()
   editorView = null
 })
 
-function close() {
+function stopAiRequest() {
+  if (aiAbort) {
+    aiAbort.abort()
+    aiAbort = null
+  }
+  aiBusy.value = false
+  aiStatus.value = ''
+}
+
+function closeNow() {
+  closeConfirmShow.value = false
   apiShow.value = false
   emit('update:show', false)
+}
+
+function requestClose() {
+  if (!dirty.value && !aiBusy.value) {
+    closeNow()
+    return
+  }
+  closeConfirmShow.value = true
+}
+
+function requestSaveClose() {
+  if (!aiBusy.value) {
+    closeNow()
+    return
+  }
+  closeConfirmShow.value = true
+}
+
+function discardAndClose() {
+  emit('update:script', initialScript.value)
+  emit('update:remark', initialRemark.value)
+  setEditorValue(initialScript.value)
+  stopAiRequest()
+  closeNow()
+}
+
+function saveAndClose() {
+  const value = editorView?.state.doc.toString()
+  if (typeof value === 'string') emit('update:script', value)
+  stopAiRequest()
+  closeNow()
 }
 
 function toggleAi() {
@@ -282,6 +390,8 @@ async function sendAi() {
   aiMessages.value.push({ role: 'user', content: text })
   aiBusy.value = true
   aiStatus.value = 'AI 正在生成脚本…'
+  const controller = new AbortController()
+  aiAbort = controller
   let payload: Record<string, any> | null = null
   try {
     await scriptApi.assistantStream({
@@ -291,6 +401,7 @@ async function sendAi() {
       current_script: props.script,
       messages: aiMessages.value.map((message) => ({ role: message.role, content: message.content })),
     }, {
+      signal: controller.signal,
       onEvent: (event, data) => {
         const value = data as Record<string, any>
         if (event === 'step' && value?.label) {
@@ -302,6 +413,7 @@ async function sendAi() {
         }
       },
     })
+    if (controller.signal.aborted) return
     const result = payload as Record<string, any> | null
     if (!result) throw new Error('模型没有返回结果')
     aiMessages.value.push({
@@ -312,10 +424,15 @@ async function sendAi() {
       scriptError: String(result.script_error || ''),
     })
   } catch (error) {
-    aiError.value = error instanceof Error ? error.message : '脚本助手请求失败'
+    if (!controller.signal.aborted && aiAbort === controller) {
+      aiError.value = error instanceof Error ? error.message : '脚本助手请求失败'
+    }
   } finally {
-    aiBusy.value = false
-    aiStatus.value = ''
+    if (aiAbort === controller) {
+      aiAbort = null
+      aiBusy.value = false
+      aiStatus.value = ''
+    }
   }
 }
 
@@ -333,8 +450,8 @@ function handleAiKeydown(event: KeyboardEvent) {
 </script>
 
 <template>
-  <n-modal :show="show" :mask-closable="false" @update:show="(value: boolean) => { if (!value) close() }">
-    <div class="script-editor-modal">
+  <n-modal :show="show" :mask-closable="false" @update:show="(value: boolean) => { if (!value) requestClose() }">
+    <div class="script-editor-modal" :class="{ 'script-theme-light': !isDark }">
       <div class="script-editor-head">
         <div class="script-editor-title">
           <span class="script-editor-mark">
@@ -349,12 +466,12 @@ function handleAiKeydown(event: KeyboardEvent) {
           </div>
         </div>
         <div class="script-editor-remark">
-          <span>备注</span>
           <n-input
             :value="remark"
             size="small"
             maxlength="128"
-            placeholder="例如 写回账单系统"
+            placeholder="添加备注（可选）"
+            :input-props="{ 'aria-label': '脚本备注' }"
             @update:value="(value: string) => emit('update:remark', value)"
           />
         </div>
@@ -372,11 +489,11 @@ function handleAiKeydown(event: KeyboardEvent) {
             <template #icon><n-icon :component="SparklesOutline" /></template>
             AI 脚本助手
           </n-button>
-          <n-button size="small" type="primary" @click="close">保存脚本</n-button>
+          <n-button size="small" type="primary" @click="requestSaveClose">保存脚本</n-button>
           <span class="script-editor-divider" />
           <n-tooltip trigger="hover">
             <template #trigger>
-              <n-button circle quaternary @click="close">
+              <n-button circle quaternary @click="requestClose">
                 <template #icon><n-icon :component="CloseOutline" /></template>
               </n-button>
             </template>
@@ -483,7 +600,7 @@ function handleAiKeydown(event: KeyboardEvent) {
   </n-modal>
 
   <n-modal v-model:show="apiShow" :mask-closable="true">
-    <div class="script-api-modal">
+    <div class="script-api-modal" :class="{ 'script-theme-dark': isDark }">
       <div class="script-api-head">
         <div>
           <div class="script-api-kicker">SCRIPT API REFERENCE</div>
@@ -511,6 +628,25 @@ function handleAiKeydown(event: KeyboardEvent) {
       <div class="script-api-foot">
         <span>具体限制值以项目设置的「JS 脚本动作限制」为准。</span>
         <n-button size="small" type="primary" @click="apiShow = false">知道了</n-button>
+      </div>
+    </div>
+  </n-modal>
+
+  <n-modal v-model:show="closeConfirmShow" :mask-closable="false">
+    <div class="script-confirm-modal" :class="{ 'script-theme-dark': isDark }">
+      <div class="script-confirm-body">
+        <span class="script-confirm-icon" :class="{ danger: aiBusy }">
+          <n-icon :component="aiBusy ? AlertCircleOutline : WarningOutline" />
+        </span>
+        <div>
+          <h3>{{ closeConfirmTitle }}</h3>
+          <p>{{ closeConfirmMessage }}</p>
+        </div>
+      </div>
+      <div class="script-confirm-actions">
+        <n-button @click="closeConfirmShow = false">取消</n-button>
+        <n-button v-if="dirty" type="error" secondary @click="discardAndClose">放弃修改并关闭</n-button>
+        <n-button type="primary" @click="saveAndClose">{{ closePrimaryText }}</n-button>
       </div>
     </div>
   </n-modal>
@@ -601,16 +737,20 @@ function handleAiKeydown(event: KeyboardEvent) {
 
 .script-editor-remark {
   display: flex;
-  max-width: 400px;
-  flex: 1;
+  width: min(300px, 26vw);
+  flex: 0 1 300px;
   align-items: center;
-  gap: 8px;
 }
 
-.script-editor-remark > span {
-  flex-shrink: 0;
-  color: #8fa4c4;
-  font-size: 9.5px;
+.script-editor-remark :deep(.n-input) {
+  --n-color: rgba(255, 255, 255, 0.04) !important;
+  --n-color-focus: rgba(255, 255, 255, 0.08) !important;
+  --n-text-color: #e2e8f0 !important;
+  --n-placeholder-color: #8fa4c4 !important;
+  --n-border: 1px solid #24324a !important;
+  --n-border-hover: 1px solid #3d557a !important;
+  --n-border-focus: 1px solid #52709c !important;
+  --n-box-shadow-focus: none !important;
 }
 
 .script-editor-actions {
@@ -1145,6 +1285,357 @@ function handleAiKeydown(event: KeyboardEvent) {
   font-size: 9.5px;
 }
 
+.script-editor-modal.script-theme-light {
+  background: var(--canvas);
+  color: var(--text);
+}
+
+.script-theme-light .script-editor-head {
+  border-bottom-color: var(--border);
+  background: var(--card);
+}
+
+.script-theme-light .script-editor-mark {
+  border-color: #c7d9fb;
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+
+.script-theme-light .script-editor-kicker {
+  color: var(--brand);
+}
+
+.script-theme-light .script-editor-heading-row strong {
+  color: var(--ink);
+}
+
+.script-theme-light .script-editor-heading-row span {
+  color: var(--muted);
+}
+
+.script-theme-light .script-editor-remark :deep(.n-input) {
+  --n-color: #f8fafc !important;
+  --n-color-focus: #fff !important;
+  --n-text-color: var(--ink) !important;
+  --n-placeholder-color: var(--muted-light) !important;
+  --n-border: 1px solid var(--border) !important;
+  --n-border-hover: 1px solid #a9c1fa !important;
+  --n-border-focus: 1px solid var(--brand) !important;
+}
+
+.script-theme-light .script-editor-actions :deep(.n-button:not(.n-button--primary-type)) {
+  --n-text-color: var(--text) !important;
+  --n-text-color-hover: var(--ink) !important;
+  --n-text-color-pressed: var(--ink) !important;
+  --n-text-color-focus: var(--ink) !important;
+  --n-color: #f8fafc !important;
+  --n-color-hover: #eef3fb !important;
+  --n-color-pressed: #e8eef9 !important;
+  --n-color-focus: #eef3fb !important;
+}
+
+.script-theme-light .script-editor-divider {
+  background: var(--border);
+}
+
+.script-theme-light .script-editor-host {
+  background: #fff;
+}
+
+.script-theme-light .script-ai-panel {
+  border-left-color: var(--border);
+  background: var(--card);
+  box-shadow: -20px 0 46px rgba(15, 23, 42, 0.12);
+}
+
+.script-theme-light .script-ai-head {
+  border-bottom-color: var(--border);
+}
+
+.script-theme-light .script-ai-head strong {
+  color: var(--ink);
+}
+
+.script-theme-light .script-ai-head :deep(.n-button) {
+  --n-text-color: var(--muted) !important;
+  --n-text-color-hover: var(--ink) !important;
+  --n-text-color-focus: var(--ink) !important;
+  --n-text-color-pressed: var(--ink) !important;
+}
+
+.script-theme-light .script-ai-title-icon {
+  border-color: #c7d9fb;
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+
+.script-theme-light .script-ai-title small {
+  color: var(--muted-light);
+}
+
+.script-theme-light .script-ai-tab {
+  border-color: var(--border-strong);
+  background: var(--card);
+  box-shadow: -8px 10px 24px rgba(15, 23, 42, 0.12), inset 3px 0 0 var(--brand);
+  color: var(--brand);
+}
+
+.script-theme-light .script-ai-tab:hover {
+  border-color: #c7d9fb;
+  background: var(--brand-soft);
+  box-shadow: -10px 14px 28px rgba(15, 23, 42, 0.16), inset 3px 0 0 var(--brand-strong);
+  color: var(--brand-strong);
+}
+
+.script-theme-light .script-ai-tab:focus-visible {
+  outline-color: var(--brand);
+}
+
+.script-theme-light .script-ai-warning {
+  border-color: #fde68a;
+  background: var(--amber-soft);
+  color: #b45309;
+}
+
+.script-theme-light .script-ai-warning code {
+  color: #92400e;
+}
+
+.script-theme-light .script-ai-empty {
+  color: var(--muted);
+}
+
+.script-theme-light .script-ai-suggestions button {
+  border-color: var(--border);
+  background: #f8fafc;
+  color: var(--text);
+}
+
+.script-theme-light .script-ai-suggestions button:hover {
+  border-color: #c7d9fb;
+  background: var(--brand-soft);
+  color: var(--brand-strong);
+}
+
+.script-theme-light .script-ai-avatar {
+  background: var(--brand-soft);
+  color: var(--brand-strong);
+}
+
+.script-theme-light .script-ai-message.user .script-ai-avatar {
+  background: var(--green-soft);
+  color: #15803d;
+}
+
+.script-theme-light .script-ai-bubble {
+  border-color: var(--border);
+  background: #f8fafc;
+  color: var(--text);
+}
+
+.script-theme-light .script-ai-message.user .script-ai-bubble {
+  border-color: #c7d9fb;
+  background: var(--brand-soft);
+  color: #1e3a8a;
+}
+
+.script-theme-light .script-ai-markdown :deep(code) {
+  background: #eef4ff;
+  color: #1d4ed8;
+}
+
+.script-theme-light .script-ai-code {
+  border-color: var(--border);
+  background: #fff;
+}
+
+.script-theme-light .script-ai-code-head {
+  border-bottom-color: var(--border);
+  color: var(--muted);
+}
+
+.script-theme-light .script-ai-code pre {
+  color: var(--text);
+}
+
+.script-theme-light .script-ai-error {
+  color: var(--red);
+}
+
+.script-theme-light .script-ai-ok {
+  color: var(--green);
+}
+
+.script-theme-light .script-ai-status {
+  color: var(--muted);
+}
+
+.script-theme-light .script-ai-composer {
+  border-top-color: var(--border);
+}
+
+.script-theme-light .script-ai-composer :deep(.n-input),
+.script-theme-light .script-ai-composer :deep(.n-select) {
+  --n-color: #fff !important;
+  --n-color-focus: #fff !important;
+  --n-color-disabled: #f8fafc !important;
+  --n-text-color: var(--ink) !important;
+  --n-text-color-disabled: var(--muted-light) !important;
+  --n-placeholder-color: var(--muted-light) !important;
+  --n-border: 1px solid #e3e8f1 !important;
+  --n-border-hover: 1px solid #a9c1fa !important;
+  --n-border-focus: 1px solid var(--brand) !important;
+  --n-border-disabled: 1px solid #eef1f6 !important;
+  --n-box-shadow-focus: none !important;
+}
+
+.script-api-modal.script-theme-dark {
+  background: #0c1627;
+  box-shadow: 0 30px 80px -20px rgba(2, 8, 23, 0.65);
+}
+
+.script-api-modal.script-theme-dark .script-api-head {
+  border-bottom-color: #1f2d44;
+  background: #0c1627;
+}
+
+.script-api-modal.script-theme-dark .script-api-head h3 {
+  color: #f8fafc;
+}
+
+.script-api-modal.script-theme-dark .script-api-head p {
+  color: #94a3b8;
+}
+
+.script-api-modal.script-theme-dark .script-api-group,
+.script-api-modal.script-theme-dark .script-api-example {
+  border-color: #1f2d44;
+  background: #111c30;
+}
+
+.script-api-modal.script-theme-dark .script-api-group h4,
+.script-api-modal.script-theme-dark .script-api-example h4 {
+  color: #cbd5e1;
+}
+
+.script-api-modal.script-theme-dark .script-api-item {
+  border-top-color: #1f2d44;
+}
+
+.script-api-modal.script-theme-dark .script-api-item code {
+  background: #17243a;
+  color: #bfdbfe;
+}
+
+.script-api-modal.script-theme-dark .script-api-item p {
+  color: #94a3b8;
+}
+
+.script-api-modal.script-theme-dark .script-api-item span {
+  color: #64748b;
+}
+
+.script-api-modal.script-theme-dark .script-api-example pre {
+  background: #0b1425;
+  color: #cbd5e1;
+}
+
+.script-api-modal.script-theme-dark .script-api-foot {
+  border-top-color: #1f2d44;
+  background: #0c1627;
+}
+
+.script-api-modal.script-theme-dark .script-api-foot span {
+  color: #64748b;
+}
+
+.script-confirm-modal {
+  width: min(470px, calc(100vw - 32px));
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 24px 70px -18px rgba(15, 23, 42, 0.35);
+}
+
+.script-confirm-body {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.script-confirm-icon {
+  display: flex;
+  width: 38px;
+  height: 38px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #fde68a;
+  border-radius: 10px;
+  background: var(--amber-soft);
+  color: #d97706;
+}
+
+.script-confirm-icon.danger {
+  border-color: #fecaca;
+  background: var(--red-soft);
+  color: var(--red);
+}
+
+.script-confirm-icon :deep(svg) {
+  width: 19px;
+  height: 19px;
+}
+
+.script-confirm-modal h3 {
+  margin: 1px 0 0;
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.script-confirm-modal p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.7;
+}
+
+.script-confirm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.script-confirm-modal.script-theme-dark {
+  border-color: #24324a;
+  background: #0c1627;
+  box-shadow: 0 24px 70px -18px rgba(2, 8, 23, 0.65);
+}
+
+.script-confirm-modal.script-theme-dark h3 {
+  color: #f8fafc;
+}
+
+.script-confirm-modal.script-theme-dark p {
+  color: #94a3b8;
+}
+
+.script-confirm-modal.script-theme-dark .script-confirm-icon {
+  border-color: #3b2f1f;
+  background: #1d1811;
+  color: #fbbf24;
+}
+
+.script-confirm-modal.script-theme-dark .script-confirm-icon.danger {
+  border-color: #5f2626;
+  background: #2a1414;
+  color: #f87171;
+}
+
 @media (max-width: 900px) {
   .script-editor-head {
     flex-wrap: wrap;
@@ -1155,6 +1646,7 @@ function handleAiKeydown(event: KeyboardEvent) {
   }
 
   .script-editor-remark {
+    width: auto;
     max-width: none;
     order: 3;
     flex-basis: 100%;
