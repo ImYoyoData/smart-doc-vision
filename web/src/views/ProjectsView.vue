@@ -357,6 +357,7 @@ onMounted(load)
         <div class="project-foot">
           <span class="project-created">创建于 {{ project.created_at?.slice(0, 10) }}</span>
           <div class="project-actions">
+            <n-button v-if="canUpdateProject" size="tiny" secondary @click="openEdit(project)">项目设置</n-button>
             <template v-if="project.id === workspace.currentProjectId">
               <span class="current-badge"><CheckmarkCircleOutline /> 当前项目</span>
             </template>
@@ -373,6 +374,7 @@ onMounted(load)
             </n-button>
             <n-button v-if="canUpdateProject" size="tiny" quaternary title="项目密钥" @click="openSecrets(project)">
               <template #icon><LockClosedOutline /></template>
+              密钥
             </n-button>
             <n-button v-if="canUpdateProject && project.status === 'ACTIVE'" size="tiny" quaternary @click="setStatus(project, 'PAUSED')">
               <template #icon><PauseOutline /></template>
