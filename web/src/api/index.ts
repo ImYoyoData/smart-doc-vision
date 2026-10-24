@@ -1,4 +1,4 @@
-import { del, get, patch, post, postSSE, put, requestBlob, type SSEHandlers } from './http'
+import { del, get, patch, post, postSSE, put, request, requestBlob, type SSEHandlers } from './http'
 import type {
   AnalyticsData,
   APICredential,
@@ -94,8 +94,12 @@ export const providerApi = {
   create: (payload: Record<string, unknown>) => post<Provider>('/providers', payload),
   update: (id: number, payload: Record<string, unknown>) => put<Provider>(`/providers/${id}`, payload),
   remove: (id: number) => del<{ deleted: boolean }>(`/providers/${id}`),
-  test: (id: number) =>
-    post<{ ok: boolean; latency_ms: number; message: string; model: string }>(`/providers/${id}/test`),
+  test: (id: number, signal?: AbortSignal) =>
+    request<{ ok: boolean; latency_ms: number; message: string; model: string }>({
+      method: 'POST',
+      url: `/providers/${id}/test`,
+      signal,
+    }),
   models: (payload: {
     project_id: number
     provider_id?: number

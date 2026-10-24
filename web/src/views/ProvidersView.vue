@@ -41,6 +41,7 @@ const testingId = ref<number | null>(null)
 const testingAll = ref(false)
 const testAllDone = ref(0)
 const testAllTotal = ref(0)
+const PROVIDER_TEST_TIMEOUT_MS = 30_000
 const modalShow = ref(false)
 const editing = ref<Provider | null>(null)
 const errorText = ref('')
@@ -158,6 +159,10 @@ const filteredProviders = computed(() => sortedProviders.value.filter((provider)
   if (statusFilter.value === 'disabled') return provider.status !== 'ACTIVE'
   return true
 }))
+
+const batchTestTargets = computed(() =>
+  filteredProviders.value.filter((provider) => provider.status === 'ACTIVE'),
+)
 
 function resetProviderFilters() {
   statusFilter.value = 'all'
@@ -456,10 +461,25 @@ async function fetchModels() {
   }
 }
 
+async function runProviderTest(providerId: number) {
+  const controller = new AbortController()
+  const timer = window.setTimeout(() => controller.abort(), PROVIDER_TEST_TIMEOUT_MS)
+  try {
+    return await providerApi.test(providerId, controller.signal)
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error(`连接测试超时（${Math.round(PROVIDER_TEST_TIMEOUT_MS / 1000)} 秒），请检查网络或模型服务`)
+    }
+    throw error
+  } finally {
+    window.clearTimeout(timer)
+  }
+}
+
 async function test(provider: Provider) {
   testingId.value = provider.id
   try {
-    const result = await providerApi.test(provider.id)
+    const result = await runProviderTest(provider.id)
     message.success(`连接成功 · ${result.latency_ms} ms${result.model ? ` · ${result.model}` : ''}`)
   } catch (error) {
     message.error(error instanceof Error ? error.message : '连接测试失败', { duration: 6000 })
@@ -471,13 +491,14 @@ async function test(provider: Provider) {
 
 async function testAllProviders() {
   if (testingAll.value || testingId.value !== null) return
-  const targets = filteredProviders.value.slice()
+  const targets = batchTestTargets.value.slice()
   if (!targets.length) return
   testingAll.value = true
   testAllDone.value = 0
   testAllTotal.value = targets.length
   let success = 0
   let failed = 0
+  let timedOut = 0
   let cursor = 0
 
   async function worker() {
@@ -486,10 +507,11 @@ async function testAllProviders() {
       cursor += 1
       if (index >= targets.length) return
       try {
-        await providerApi.test(targets[index].id)
+        await runProviderTest(targets[index].id)
         success += 1
-      } catch {
+      } catch (error) {
         failed += 1
+        if (error instanceof Error && error.message.includes('超时')) timedOut += 1
       } finally {
         testAllDone.value += 1
       }
@@ -498,15 +520,16 @@ async function testAllProviders() {
 
   try {
     await Promise.all(
-      Array.from({ length: Math.min(3, targets.length) }, () => worker()),
+      Array.from({ length: Math.min(4, targets.length) }, () => worker()),
     )
     await load()
+    const timeoutNote = timedOut > 0 ? `（其中 ${timedOut} 个超时）` : ''
     if (failed === 0) {
-      message.success(`连接测试完成：${success} 个全部正常`)
+      message.success(`连接测试完成：${success} 个已启用模型全部正常`)
     } else if (success === 0) {
-      message.error(`连接测试完成：${failed} 个全部失败`, { duration: 6000 })
+      message.error(`连接测试完成：${failed} 个已启用模型全部失败${timeoutNote}`, { duration: 6000 })
     } else {
-      message.warning(`连接测试完成：${success} 个正常，${failed} 个失败`, { duration: 6000 })
+      message.warning(`连接测试完成：${success} 个正常，${failed} 个失败${timeoutNote}`, { duration: 6000 })
     }
   } finally {
     testingAll.value = false
@@ -636,12 +659,12 @@ onMounted(load)
             size="small"
             secondary
             :loading="testingAll"
-            :disabled="loading || !filteredProviders.length || testingId !== null"
-            :title="`测试当前筛选的 ${filteredProviders.length} 个连接`"
+            :disabled="loading || !batchTestTargets.length || testingId !== null"
+            :title="batchTestTargets.length ? `仅测试当前筛选中的 ${batchTestTargets.length} 个已启用连接` : '当前筛选没有已启用的连接'"
             @click="testAllProviders"
           >
             <template #icon><FlashOutline /></template>
-            {{ testingAll ? `测试中 ${testAllDone}/${testAllTotal}` : '一键测试连接' }}
+            {{ testingAll ? `测试中 ${testAllDone}/${testAllTotal}` : `测试已启用连接（${batchTestTargets.length}）` }}
           </n-button>
           <n-button
             v-if="statusFilter !== 'all' || kindFilter !== 'all'"
