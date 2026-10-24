@@ -9,10 +9,15 @@ import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import {
   AlertCircleOutline,
+  ChevronForwardOutline,
   CloseOutline,
   CodeSlashOutline,
+  CreateOutline,
   DocumentTextOutline,
+  SaveOutline,
+  SendOutline,
   SparklesOutline,
+  TerminalOutline,
   WarningOutline,
 } from '@vicons/ionicons5'
 import { providerApi, scriptApi } from '@/api'
@@ -83,6 +88,7 @@ const aiSuggestions = [
 ]
 
 const dirty = computed(() => props.script !== initialScript.value || props.remark !== initialRemark.value)
+const scriptDirty = computed(() => props.script !== initialScript.value)
 const closeConfirmTitle = computed(() => {
   if (aiBusy.value && dirty.value) return 'AI 正在执行，脚本尚未保存'
   if (aiBusy.value) return 'AI 正在执行中'
@@ -458,10 +464,13 @@ function handleAiKeydown(event: KeyboardEvent) {
             <n-icon :component="CodeSlashOutline" />
           </span>
           <div class="script-editor-heading">
-            <div class="script-editor-kicker">JS RESULT ACTION</div>
             <div class="script-editor-heading-row">
+              <span class="script-editor-kicker">JS RESULT ACTION</span>
               <strong>编辑脚本</strong>
-              <span>入口 function main(ctx) · 结束自动释放连接</span>
+            </div>
+            <div class="script-editor-sub">
+              <span class="script-editor-sub-dot" />
+              入口 <code>function main(ctx)</code> · 结束自动释放连接
             </div>
           </div>
         </div>
@@ -470,26 +479,32 @@ function handleAiKeydown(event: KeyboardEvent) {
             :value="remark"
             size="small"
             maxlength="128"
-            placeholder="添加备注（可选）"
+            placeholder="添加备注（可选，例如：订单回调校验）"
             :input-props="{ 'aria-label': '脚本备注' }"
             @update:value="(value: string) => emit('update:remark', value)"
-          />
+          >
+            <template #prefix><n-icon :component="CreateOutline" /></template>
+          </n-input>
         </div>
         <div class="script-editor-actions">
-          <n-button size="small" quaternary @click="apiShow = true">
+          <n-button size="small" secondary @click="apiShow = true">
             <template #icon><n-icon :component="DocumentTextOutline" /></template>
             API 文档
           </n-button>
           <n-button
             size="small"
-            :type="aiOpen ? 'primary' : 'default'"
-            :secondary="!aiOpen"
+            secondary
+            :class="{ 'is-active': aiOpen }"
             @click="toggleAi"
           >
             <template #icon><n-icon :component="SparklesOutline" /></template>
             AI 脚本助手
+            <span v-if="aiOpen || aiBusy" class="ai-state-dot" :class="{ running: aiBusy }" />
           </n-button>
-          <n-button size="small" type="primary" @click="requestSaveClose">保存脚本</n-button>
+          <n-button size="small" type="primary" @click="requestSaveClose">
+            <template #icon><n-icon :component="SaveOutline" /></template>
+            保存脚本
+          </n-button>
           <span class="script-editor-divider" />
           <n-tooltip trigger="hover">
             <template #trigger>
@@ -499,6 +514,19 @@ function handleAiKeydown(event: KeyboardEvent) {
             </template>
             关闭
           </n-tooltip>
+        </div>
+      </div>
+
+      <div class="script-editor-toolbar">
+        <div class="editor-file-tab">
+          <span v-if="scriptDirty" class="editor-modified-dot" title="脚本有未保存修改" />
+          <span class="editor-lang">JS</span>
+          <span class="editor-file-name">main.js</span>
+          <span class="editor-file-meta">· UTF-8</span>
+        </div>
+        <div class="editor-toolbar-meta">
+          <span class="editor-sandbox"><span class="editor-sandbox-dot" />受限沙箱</span>
+          <span class="editor-entry-hint">function main(ctx)</span>
         </div>
       </div>
 
@@ -517,22 +545,28 @@ function handleAiKeydown(event: KeyboardEvent) {
                   <small>读取当前脚本 · 生成后手动应用</small>
                 </div>
               </div>
-              <n-button quaternary size="tiny" @click="aiOpen = false">收起</n-button>
+              <button type="button" class="script-ai-collapse" @click="aiOpen = false">
+                收起
+                <n-icon :component="ChevronForwardOutline" />
+              </button>
             </div>
             <div class="script-ai-warning">
-              AI 会读取当前脚本。请使用 <code>ctx.secret()</code>，不要在脚本里写明文密码。
+              <n-icon :component="WarningOutline" />
+              <span>AI 会读取当前脚本。请使用 <code>ctx.secret()</code>，不要在脚本里写明文密码。</span>
             </div>
             <div class="script-ai-messages">
               <div v-if="!aiMessages.length" class="script-ai-empty">
                 <p>描述你想要的脚本，AI 会结合当前审核配置生成实现。</p>
-                <div class="script-ai-suggestions">
+                <div class="script-ai-starters">
                   <button
                     v-for="suggestion in aiSuggestions"
                     :key="suggestion"
                     type="button"
+                    class="script-ai-starter"
                     @click="aiInput = suggestion"
                   >
-                    {{ suggestion }}
+                    <span>{{ suggestion }}</span>
+                    <n-icon :component="ChevronForwardOutline" />
                   </button>
                 </div>
               </div>
@@ -557,26 +591,29 @@ function handleAiKeydown(event: KeyboardEvent) {
               </div>
             </div>
             <div class="script-ai-composer">
-              <n-input
-                v-model:value="aiInput"
-                type="textarea"
-                :autosize="{ minRows: 2, maxRows: 4 }"
-                :disabled="aiBusy"
-                placeholder="描述脚本需求，Enter 发送，Shift+Enter 换行"
-                :input-props="{ onKeydown: handleAiKeydown }"
-              />
-              <div class="script-ai-composer-foot">
-                <n-select
-                  v-model:value="aiProviderId"
-                  size="tiny"
-                  :options="aiProviderOptions"
-                  :disabled="aiBusy || !aiProviderOptions.length"
-                  placeholder="选择通用大模型"
-                  style="max-width: 220px"
+              <div class="script-ai-composer-box">
+                <n-input
+                  v-model:value="aiInput"
+                  type="textarea"
+                  :autosize="{ minRows: 2, maxRows: 4 }"
+                  :disabled="aiBusy"
+                  placeholder="描述脚本需求，Enter 发送，Shift+Enter 换行"
+                  :input-props="{ onKeydown: handleAiKeydown }"
                 />
-                <n-button size="tiny" type="primary" :loading="aiBusy" :disabled="!aiInput.trim() || !aiProviderId" @click="sendAi">
-                  发送
-                </n-button>
+                <div class="script-ai-composer-foot">
+                  <n-select
+                    v-model:value="aiProviderId"
+                    size="tiny"
+                    :options="aiProviderOptions"
+                    :disabled="aiBusy || !aiProviderOptions.length"
+                    placeholder="选择通用大模型"
+                    style="max-width: 220px"
+                  />
+                  <n-button size="tiny" type="primary" :loading="aiBusy" :disabled="!aiInput.trim() || !aiProviderId" @click="sendAi">
+                    <template #icon><n-icon :component="SendOutline" /></template>
+                    发送
+                  </n-button>
+                </div>
               </div>
               <div v-if="aiError" class="script-ai-error">{{ aiError }}</div>
             </div>
@@ -595,6 +632,14 @@ function handleAiKeydown(event: KeyboardEvent) {
             <span>AI 脚本助手</span>
           </button>
         </Transition>
+      </div>
+
+      <div class="script-editor-foot">
+        <span class="script-editor-foot-note">
+          <n-icon :component="TerminalOutline" />
+          脚本执行日志可在审核配置的「脚本日志」中查看
+        </span>
+        <span class="script-editor-foot-meta">JS · 受限沙箱</span>
       </div>
     </div>
   </n-modal>
@@ -1726,6 +1771,571 @@ function handleAiKeydown(event: KeyboardEvent) {
   .script-ai-fade-enter-active,
   .script-ai-fade-leave-active {
     transition: none;
+  }
+}
+</style>
+
+<style scoped>
+/* 2026 script editor refresh: clearer hierarchy, editor tab strip and polished AI panel. */
+.script-editor-head {
+  min-height: 64px;
+  gap: 16px;
+  padding: 9px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--card);
+}
+
+.script-editor-title {
+  min-width: 250px;
+  gap: 11px;
+}
+
+.script-editor-mark {
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--brand-border);
+  border-radius: 10px;
+  background: var(--brand-soft);
+  color: var(--brand);
+  box-shadow: var(--shadow-sm);
+}
+
+.script-editor-heading {
+  gap: 3px;
+}
+
+.script-editor-heading-row {
+  align-items: center;
+  gap: 8px;
+}
+
+.script-editor-kicker {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  border: 1px solid var(--brand-border);
+  border-radius: 4px;
+  background: var(--brand-soft);
+  color: var(--brand-strong);
+  font-size: 8px;
+  letter-spacing: 0.1em;
+}
+
+.script-editor-heading-row strong {
+  color: var(--ink);
+  font-size: 15px;
+}
+
+.script-editor-sub {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  overflow: hidden;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 9.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.script-editor-sub code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--surface-soft);
+  color: var(--text);
+  font-family: var(--mono);
+  font-weight: 600;
+}
+
+.script-editor-sub-dot {
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 0 3px rgba(52, 211, 153, 0.12);
+}
+
+.script-editor-remark {
+  width: min(320px, 26vw);
+  flex: 0 1 320px;
+}
+
+.script-editor-modal .script-editor-remark :deep(.n-input) {
+  --n-color: var(--surface-soft) !important;
+  --n-color-focus: var(--card) !important;
+  --n-text-color: var(--text) !important;
+  --n-placeholder-color: var(--muted-light) !important;
+  --n-border: 1px solid var(--border) !important;
+  --n-border-hover: 1px solid var(--brand-border) !important;
+  --n-border-focus: 1px solid var(--brand) !important;
+  --n-box-shadow-focus: none !important;
+}
+
+.script-editor-modal .script-editor-remark :deep(.n-input__prefix) {
+  color: var(--muted-light);
+}
+
+.script-editor-actions {
+  gap: 6px;
+}
+
+.script-editor-modal .script-editor-actions :deep(.n-button:not(.n-button--primary-type)) {
+  --n-text-color: var(--text) !important;
+  --n-text-color-hover: var(--ink) !important;
+  --n-text-color-pressed: var(--ink) !important;
+  --n-text-color-focus: var(--ink) !important;
+  --n-color: var(--card) !important;
+  --n-color-hover: var(--brand-soft) !important;
+  --n-color-pressed: var(--brand-soft) !important;
+  --n-color-focus: var(--brand-soft) !important;
+  --n-border: 1px solid var(--border) !important;
+  --n-border-hover: 1px solid var(--brand-border) !important;
+  --n-border-pressed: 1px solid var(--brand-border) !important;
+  --n-border-focus: 1px solid var(--brand-border) !important;
+}
+
+.script-editor-modal .script-editor-actions :deep(.n-button.is-active) {
+  --n-text-color: var(--brand-strong) !important;
+  --n-text-color-hover: var(--brand-strong) !important;
+  --n-text-color-pressed: var(--brand-strong) !important;
+  --n-text-color-focus: var(--brand-strong) !important;
+  --n-color: var(--brand-soft) !important;
+  --n-color-hover: var(--brand-soft) !important;
+  --n-color-pressed: var(--brand-soft) !important;
+  --n-color-focus: var(--brand-soft) !important;
+  --n-border: 1px solid var(--brand-border) !important;
+  --n-border-hover: 1px solid var(--brand) !important;
+  --n-border-pressed: 1px solid var(--brand) !important;
+  --n-border-focus: 1px solid var(--brand) !important;
+}
+
+.script-editor-modal .script-editor-divider {
+  background: var(--border);
+}
+
+.ai-state-dot {
+  width: 5px;
+  height: 5px;
+  margin-left: 2px;
+  border-radius: 50%;
+  background: var(--brand);
+}
+
+.ai-state-dot.running {
+  background: var(--green);
+  animation: ai-dot-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes ai-dot-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+.script-editor-toolbar {
+  display: flex;
+  height: 34px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-soft);
+}
+
+.editor-file-tab {
+  display: flex;
+  height: 34px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 13px;
+  border-top: 2px solid var(--brand);
+  border-right: 1px solid var(--border);
+  border-left: 1px solid var(--border);
+  background: var(--card);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 9.5px;
+}
+
+.editor-modified-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--amber);
+}
+
+.editor-lang {
+  color: #b45309;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.script-editor-modal:not(.script-theme-light) .editor-lang {
+  color: var(--amber);
+}
+
+.editor-file-name {
+  color: var(--ink);
+}
+
+.editor-file-meta {
+  color: var(--muted-light);
+}
+
+.editor-toolbar-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.editor-sandbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border: 1px solid var(--green-border);
+  border-radius: 999px;
+  background: var(--green-soft);
+  color: var(--green);
+  font-size: 9px;
+}
+
+.editor-sandbox-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--green);
+}
+
+.editor-entry-hint {
+  color: var(--muted-light);
+  font-family: var(--mono);
+  font-size: 9px;
+}
+
+.script-editor-foot {
+  display: flex;
+  min-height: 28px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 14px;
+  border-top: 1px solid var(--border);
+  background: var(--card);
+  color: var(--muted);
+  font-size: 9.5px;
+}
+
+.script-editor-foot-note {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.script-editor-foot-note :deep(svg) {
+  width: 12px;
+  height: 12px;
+  color: var(--brand);
+}
+
+.script-editor-foot-meta {
+  color: var(--muted-light);
+  font-family: var(--mono);
+}
+
+.script-editor-modal .script-ai-panel {
+  width: min(420px, 92vw);
+  border-left: 1px solid var(--border);
+  background: var(--card);
+  box-shadow: -18px 0 40px rgba(15, 23, 42, 0.14);
+}
+
+.script-editor-modal .script-ai-head {
+  padding: 11px 13px;
+  border-bottom: 1px solid var(--border);
+  background: var(--card);
+}
+
+.script-editor-modal .script-ai-title-icon {
+  border: 0;
+  background: linear-gradient(135deg, var(--brand), var(--purple));
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(43, 108, 246, 0.22);
+}
+
+.script-editor-modal .script-ai-head strong {
+  color: var(--ink);
+}
+
+.script-editor-modal .script-ai-title small {
+  color: var(--muted-light);
+}
+
+.script-ai-collapse {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 7px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 9.5px;
+}
+
+.script-ai-collapse:hover {
+  background: var(--surface-hover);
+  color: var(--ink);
+}
+
+.script-ai-collapse :deep(svg) {
+  width: 12px;
+  height: 12px;
+}
+
+.script-editor-modal .script-ai-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 9px 11px 0;
+  padding: 8px 9px;
+  border: 1px solid var(--amber-border);
+  border-radius: 8px;
+  background: var(--amber-soft);
+  color: #b45309;
+  font-size: 9.5px;
+}
+
+.script-editor-modal:not(.script-theme-light) .script-ai-warning {
+  color: var(--amber);
+}
+
+.script-ai-warning :deep(svg) {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.script-editor-modal .script-ai-warning code {
+  background: var(--amber-soft-2);
+  color: #92400e;
+}
+
+.script-editor-modal:not(.script-theme-light) .script-ai-warning code {
+  color: var(--amber);
+}
+
+.script-editor-modal .script-ai-messages {
+  padding: 11px;
+}
+
+.script-ai-empty p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.7;
+}
+
+.script-ai-starters {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 9px;
+}
+
+.script-ai-starter {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--text);
+  cursor: pointer;
+  font-size: 9.5px;
+  text-align: left;
+  transition: border-color 0.16s ease, background 0.16s ease, color 0.16s ease;
+}
+
+.script-ai-starter:hover {
+  border-color: var(--brand-border);
+  background: var(--brand-soft);
+  color: var(--brand-strong);
+}
+
+.script-ai-starter :deep(svg) {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  color: var(--muted-light);
+}
+
+.script-ai-starter:hover :deep(svg) {
+  color: var(--brand);
+}
+
+.script-editor-modal .script-ai-avatar {
+  background: var(--brand-soft);
+  color: var(--brand-strong);
+}
+
+.script-editor-modal .script-ai-message.user .script-ai-avatar {
+  background: var(--green-soft);
+  color: var(--green);
+}
+
+.script-editor-modal .script-ai-bubble {
+  border-color: var(--border);
+  background: var(--surface-soft);
+  color: var(--text);
+}
+
+.script-editor-modal .script-ai-message.user .script-ai-bubble {
+  border-color: var(--brand-border);
+  background: var(--brand-soft);
+  color: var(--brand-strong);
+}
+
+.script-editor-modal .script-ai-markdown :deep(code) {
+  background: var(--surface-strong);
+  color: var(--text);
+}
+
+.script-editor-modal .script-ai-code {
+  border-color: var(--border);
+  background: var(--card);
+}
+
+.script-editor-modal .script-ai-code-head {
+  border-bottom-color: var(--border);
+  color: var(--muted);
+}
+
+.script-editor-modal .script-ai-code pre {
+  color: var(--text);
+}
+
+.script-editor-modal .script-ai-error {
+  color: var(--red);
+}
+
+.script-editor-modal .script-ai-ok {
+  color: var(--green);
+}
+
+.script-editor-modal .script-ai-status {
+  color: var(--muted);
+}
+
+.script-editor-modal .script-ai-composer {
+  padding: 11px;
+  border-top: 1px solid var(--border);
+  background: var(--card);
+}
+
+.script-ai-composer-box {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+  transition: border-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.script-ai-composer-box:focus-within {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px rgba(43, 108, 246, 0.1);
+}
+
+.script-editor-modal .script-ai-composer-box :deep(.n-input) {
+  --n-color: var(--card) !important;
+  --n-color-focus: var(--card) !important;
+  --n-text-color: var(--text) !important;
+  --n-placeholder-color: var(--muted-light) !important;
+  --n-border: 1px solid transparent !important;
+  --n-border-hover: 1px solid transparent !important;
+  --n-border-focus: 1px solid transparent !important;
+  --n-box-shadow-focus: none !important;
+}
+
+.script-ai-composer-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border-top: 1px solid var(--border);
+  background: var(--surface-soft);
+}
+
+.script-editor-modal .script-ai-composer-foot :deep(.n-select) {
+  --n-color: var(--card) !important;
+  --n-color-active: var(--card) !important;
+  --n-color-focus: var(--card) !important;
+  --n-text-color: var(--muted) !important;
+  --n-border: 1px solid transparent !important;
+  --n-border-hover: 1px solid var(--border) !important;
+  --n-border-active: 1px solid var(--border) !important;
+  --n-box-shadow-active: none !important;
+  --n-box-shadow-focus: none !important;
+}
+
+.script-editor-modal .script-ai-tab {
+  border-color: var(--border-strong);
+  background: var(--card);
+  box-shadow: -8px 10px 24px rgba(15, 23, 42, 0.12), inset 3px 0 0 var(--brand);
+  color: var(--brand);
+}
+
+.script-editor-modal .script-ai-tab:hover {
+  border-color: var(--brand-border);
+  background: var(--brand-soft);
+  box-shadow: -10px 14px 28px rgba(15, 23, 42, 0.16), inset 3px 0 0 var(--brand-strong);
+  color: var(--brand-strong);
+}
+
+@media (max-width: 900px) {
+  .script-editor-toolbar {
+    padding: 0 10px;
+  }
+
+  .editor-entry-hint {
+    display: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .script-editor-sub {
+    display: none;
+  }
+
+  .script-editor-toolbar {
+    height: 32px;
+  }
+
+  .editor-file-tab {
+    height: 32px;
+  }
+
+  .script-editor-foot-meta {
+    display: none;
+  }
+
+  .script-editor-modal .script-ai-panel {
+    width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-state-dot.running {
+    animation: none;
   }
 }
 </style>
