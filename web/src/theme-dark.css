@@ -893,6 +893,40 @@ html[data-theme='dark'] .role-preview-head strong {
   color: var(--text) !important;
 }
 
+html[data-theme='dark'] .mfa-chip {
+  background: var(--green-soft) !important;
+  color: var(--green) !important;
+}
+
+html[data-theme='dark'] .mfa-admin-panel {
+  border-color: var(--border) !important;
+  background: var(--surface-soft) !important;
+}
+
+html[data-theme='dark'] .mfa-admin-panel.enabled {
+  border-color: rgba(74, 222, 128, 0.22) !important;
+  background: var(--green-soft) !important;
+}
+
+html[data-theme='dark'] .mfa-admin-icon {
+  background: var(--surface-strong) !important;
+  color: var(--muted) !important;
+}
+
+html[data-theme='dark'] .mfa-admin-panel.enabled .mfa-admin-icon {
+  background: rgba(74, 222, 128, 0.14) !important;
+  color: var(--green) !important;
+}
+
+html[data-theme='dark'] .mfa-admin-copy strong {
+  color: var(--text) !important;
+}
+
+html[data-theme='dark'] .mfa-admin-state {
+  background: var(--surface-strong) !important;
+  color: var(--muted) !important;
+}
+
 html[data-theme='dark'] :is(
   .guide-note code, .guide-notice code, .credential-row code, .endpoint-box code,
   .identity-copy code, .secret-modal > code, .code-head code
