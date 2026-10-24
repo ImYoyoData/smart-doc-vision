@@ -20,9 +20,23 @@ type ChatImage struct {
 }
 
 type ChatMessage struct {
-	Role    string      `json:"role"`
-	Content string      `json:"content"`
-	Images  []ChatImage `json:"-"`
+	Role       string      `json:"role"`
+	Content    string      `json:"content"`
+	Images     []ChatImage `json:"-"`
+	ToolCalls  []ToolCall  `json:"-"`
+	ToolCallID string      `json:"-"`
+}
+
+type ToolSpec struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	Parameters  map[string]any `json:"parameters"`
+}
+
+type ToolCall struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
 }
 
 type ChatRequest struct {
@@ -30,14 +44,17 @@ type ChatRequest struct {
 	APIKey      string
 	System      string
 	Messages    []ChatMessage
+	Tools       []ToolSpec
 	MaxTokens   int
 	Temperature float64
 	Reasoning   string
 }
 
 type ChatResult struct {
-	Content string `json:"content"`
-	Model   string `json:"model"`
+	Content    string     `json:"content"`
+	Model      string     `json:"model"`
+	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
+	StopReason string     `json:"stop_reason,omitempty"`
 }
 
 // Chat powers the audit-configuration assistant. It intentionally supports
@@ -53,7 +70,9 @@ func Chat(ctx context.Context, req ChatRequest) (*ChatResult, error) {
 		req.Temperature = 0.3
 	}
 	req.Reasoning = normalizeReasoning(req.Reasoning)
-	if req.Reasoning != "" && !ParseConfig(req.Provider).SupportsThinking {
+	if req.Reasoning != "" && (len(req.Tools) > 0 || !ParseConfig(req.Provider).SupportsThinking) {
+		// Tool loops need the assistant/tool messages preserved verbatim; native
+		// thinking blocks cannot be replayed safely, so use a prompt-level hint.
 		req.System = appendReasoningInstruction(req.System, req.Reasoning)
 		req.Reasoning = ""
 	}
@@ -97,8 +116,17 @@ func chatOpenAI(ctx context.Context, req ChatRequest) (*ChatResult, error) {
 		Model   string `json:"model"`
 		Choices []struct {
 			Message struct {
-				Content string `json:"content"`
+				Content   string `json:"content"`
+				ToolCalls []struct {
+					ID       string `json:"id"`
+					Type     string `json:"type"`
+					Function struct {
+						Name      string `json:"name"`
+						Arguments string `json:"arguments"`
+					} `json:"function"`
+				} `json:"tool_calls"`
 			} `json:"message"`
+			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
 		Error *struct {
 			Message string `json:"message"`
@@ -110,10 +138,24 @@ func chatOpenAI(ctx context.Context, req ChatRequest) (*ChatResult, error) {
 	if parsed.Error != nil && parsed.Error.Message != "" {
 		return nil, fmt.Errorf("模型错误: %s", parsed.Error.Message)
 	}
-	if len(parsed.Choices) == 0 || strings.TrimSpace(parsed.Choices[0].Message.Content) == "" {
+	if len(parsed.Choices) == 0 {
 		return nil, fmt.Errorf("模型未返回内容")
 	}
-	return &ChatResult{Content: strings.TrimSpace(parsed.Choices[0].Message.Content), Model: parsed.Model}, nil
+	choice := parsed.Choices[0]
+	calls := make([]ToolCall, 0, len(choice.Message.ToolCalls))
+	for _, call := range choice.Message.ToolCalls {
+		if strings.TrimSpace(call.Function.Name) == "" {
+			continue
+		}
+		calls = append(calls, ToolCall{ID: call.ID, Name: call.Function.Name, Arguments: call.Function.Arguments})
+	}
+	if strings.TrimSpace(choice.Message.Content) == "" && len(calls) == 0 {
+		return nil, fmt.Errorf("模型未返回内容")
+	}
+	return &ChatResult{
+		Content: strings.TrimSpace(choice.Message.Content), Model: parsed.Model,
+		ToolCalls: calls, StopReason: choice.FinishReason,
+	}, nil
 }
 
 func callOpenAI(ctx context.Context, req ChatRequest, useReasoning bool) ([]byte, int, error) {
@@ -136,6 +178,19 @@ func callOpenAI(ctx context.Context, req ChatRequest, useReasoning bool) ([]byte
 		body["reasoning_effort"] = req.Reasoning
 	} else {
 		body["temperature"] = req.Temperature
+	}
+	if len(req.Tools) > 0 {
+		tools := make([]map[string]any, 0, len(req.Tools))
+		for _, tool := range req.Tools {
+			tools = append(tools, map[string]any{
+				"type": "function",
+				"function": map[string]any{
+					"name": tool.Name, "description": tool.Description, "parameters": tool.Parameters,
+				},
+			})
+		}
+		body["tools"] = tools
+		body["tool_choice"] = "auto"
 	}
 	payload, err := json.Marshal(body)
 	if err != nil {
@@ -186,37 +241,23 @@ func chatAnthropic(ctx context.Context, req ChatRequest) (*ChatResult, error) {
 	if strings.TrimSpace(req.APIKey) == "" {
 		return nil, fmt.Errorf("Anthropic API Key 未配置")
 	}
-	messages := make([]map[string]any, 0, len(req.Messages))
-	for _, message := range req.Messages {
-		role := message.Role
-		if role != "assistant" {
-			role = "user"
-		}
-		blocks := make([]any, 0, len(message.Images)+1)
-		if strings.TrimSpace(message.Content) != "" {
-			blocks = append(blocks, map[string]any{"type": "text", "text": message.Content})
-		}
-		for _, image := range message.Images {
-			mediaType, data, ok := ParseImageDataURL(image.DataURL)
-			if !ok {
-				return nil, fmt.Errorf("图片格式不支持或超过 8MB，请粘贴 PNG/JPEG/WebP/GIF 图片")
-			}
-			blocks = append(blocks, map[string]any{
-				"type": "image",
-				"source": map[string]any{
-					"type": "base64", "media_type": mediaType, "data": data,
-				},
-			})
-		}
-		if len(blocks) == 0 {
-			continue
-		}
-		messages = append(messages, map[string]any{"role": role, "content": blocks})
+	messages, err := anthropicMessages(req.Messages)
+	if err != nil {
+		return nil, err
 	}
 	body := map[string]any{
 		"model":      req.Provider.Model,
 		"max_tokens": req.MaxTokens,
 		"messages":   messages,
+	}
+	if len(req.Tools) > 0 {
+		tools := make([]map[string]any, 0, len(req.Tools))
+		for _, tool := range req.Tools {
+			tools = append(tools, map[string]any{
+				"name": tool.Name, "description": tool.Description, "input_schema": tool.Parameters,
+			})
+		}
+		body["tools"] = tools
 	}
 	if strings.TrimSpace(req.System) != "" {
 		body["system"] = req.System
@@ -255,10 +296,14 @@ func chatAnthropic(ctx context.Context, req ChatRequest) (*ChatResult, error) {
 	var parsed struct {
 		Model   string `json:"model"`
 		Content []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
+			Type  string          `json:"type"`
+			Text  string          `json:"text"`
+			ID    string          `json:"id"`
+			Name  string          `json:"name"`
+			Input json.RawMessage `json:"input"`
 		} `json:"content"`
-		Error *struct {
+		StopReason string `json:"stop_reason"`
+		Error      *struct {
 			Message string `json:"message"`
 		} `json:"error"`
 	}
@@ -269,15 +314,96 @@ func chatAnthropic(ctx context.Context, req ChatRequest) (*ChatResult, error) {
 		return nil, fmt.Errorf("模型错误: %s", parsed.Error.Message)
 	}
 	var builder strings.Builder
+	calls := make([]ToolCall, 0)
 	for _, block := range parsed.Content {
-		if block.Type == "text" {
+		switch block.Type {
+		case "text":
 			builder.WriteString(block.Text)
+		case "tool_use":
+			arguments := strings.TrimSpace(string(block.Input))
+			if arguments == "" || arguments == "null" {
+				arguments = "{}"
+			}
+			calls = append(calls, ToolCall{ID: block.ID, Name: block.Name, Arguments: arguments})
 		}
 	}
-	if strings.TrimSpace(builder.String()) == "" {
+	if strings.TrimSpace(builder.String()) == "" && len(calls) == 0 {
 		return nil, fmt.Errorf("模型未返回内容")
 	}
-	return &ChatResult{Content: strings.TrimSpace(builder.String()), Model: parsed.Model}, nil
+	return &ChatResult{
+		Content: strings.TrimSpace(builder.String()), Model: parsed.Model,
+		ToolCalls: calls, StopReason: parsed.StopReason,
+	}, nil
+}
+
+func anthropicMessages(input []ChatMessage) ([]map[string]any, error) {
+	type turn struct {
+		role   string
+		blocks []any
+	}
+	turns := make([]turn, 0, len(input))
+	appendTurn := func(role string, blocks []any) {
+		if len(blocks) == 0 {
+			return
+		}
+		if len(turns) > 0 && turns[len(turns)-1].role == role {
+			turns[len(turns)-1].blocks = append(turns[len(turns)-1].blocks, blocks...)
+			return
+		}
+		turns = append(turns, turn{role: role, blocks: blocks})
+	}
+	for _, message := range input {
+		switch {
+		case message.Role == "tool":
+			appendTurn("user", []any{map[string]any{
+				"type": "tool_result", "tool_use_id": message.ToolCallID, "content": message.Content,
+			}})
+		case message.Role == "assistant" && len(message.ToolCalls) > 0:
+			blocks := make([]any, 0, len(message.ToolCalls)+1)
+			if strings.TrimSpace(message.Content) != "" {
+				blocks = append(blocks, map[string]any{"type": "text", "text": message.Content})
+			}
+			for _, call := range message.ToolCalls {
+				var input any = map[string]any{}
+				if raw := strings.TrimSpace(call.Arguments); raw != "" {
+					if err := json.Unmarshal([]byte(raw), &input); err != nil {
+						input = map[string]any{"_raw": raw}
+					}
+				}
+				blocks = append(blocks, map[string]any{
+					"type": "tool_use", "id": call.ID, "name": call.Name, "input": input,
+				})
+			}
+			appendTurn("assistant", blocks)
+		default:
+			role := message.Role
+			if role != "assistant" {
+				role = "user"
+			}
+			blocks := make([]any, 0, len(message.Images)+1)
+			if strings.TrimSpace(message.Content) != "" {
+				blocks = append(blocks, map[string]any{"type": "text", "text": message.Content})
+			}
+			for _, image := range message.Images {
+				mediaType, data, ok := ParseImageDataURL(image.DataURL)
+				if !ok {
+					return nil, fmt.Errorf("图片格式不支持或超过 8MB，请粘贴 PNG/JPEG/WebP/GIF 图片")
+				}
+				blocks = append(blocks, map[string]any{
+					"type": "image",
+					"source": map[string]any{
+						"type": "base64", "media_type": mediaType, "data": data,
+					},
+				})
+			}
+			appendTurn(role, blocks)
+		}
+	}
+	out := make([]map[string]any, 0, len(turns))
+	for _, item := range turns {
+		out = append(out, map[string]any{"role": item.role, "content": item.blocks})
+	}
+	return out, nil
 }
 
 func normalizeReasoning(value string) string {
@@ -325,7 +451,21 @@ func anthropicThinkingBudget(level string) int {
 }
 
 func openAIChatMessage(message ChatMessage) map[string]any {
-	if len(message.Images) == 0 {
+	switch {
+	case message.Role == "tool":
+		return map[string]any{
+			"role": "tool", "tool_call_id": message.ToolCallID, "content": message.Content,
+		}
+	case len(message.ToolCalls) > 0:
+		calls := make([]map[string]any, 0, len(message.ToolCalls))
+		for _, call := range message.ToolCalls {
+			calls = append(calls, map[string]any{
+				"id": call.ID, "type": "function",
+				"function": map[string]any{"name": call.Name, "arguments": call.Arguments},
+			})
+		}
+		return map[string]any{"role": "assistant", "content": message.Content, "tool_calls": calls}
+	case len(message.Images) == 0:
 		return map[string]any{"role": message.Role, "content": message.Content}
 	}
 	parts := make([]map[string]any, 0, len(message.Images)+1)

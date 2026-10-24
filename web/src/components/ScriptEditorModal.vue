@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { NButton, NIcon, NInput, NModal, NSelect, NSpin, NTooltip, useThemeVars } from 'naive-ui'
 import { EditorView, basicSetup } from 'codemirror'
+import { Compartment } from '@codemirror/state'
 import { javascript, javascriptLanguage } from '@codemirror/lang-javascript'
 import { autocompletion, type CompletionContext, type CompletionResult } from '@codemirror/autocomplete'
 import { oneDark } from '@codemirror/theme-one-dark'
@@ -9,6 +10,7 @@ import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import {
   AlertCircleOutline,
+  BuildOutline,
   ChevronForwardOutline,
   CloseOutline,
   CodeSlashOutline,
@@ -41,6 +43,7 @@ const themeVars = useThemeVars()
 const editorHost = ref<HTMLElement | null>(null)
 let editorView: EditorView | null = null
 let syncing = false
+const editableCompartment = new Compartment()
 
 function isDarkColor(value: string) {
   const hex = value.trim().match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i)
@@ -60,16 +63,26 @@ function isDarkColor(value: string) {
 
 const isDark = computed(() => isDarkColor(themeVars.value.bodyColor))
 
+interface AiTool {
+  id: string
+  name: string
+  label: string
+  status: string
+  detail?: string
+}
+
 interface AiMessage {
   role: 'user' | 'assistant'
   content: string
   script?: string
   scriptValid?: boolean
   scriptError?: string
+  applied?: boolean
 }
 
 const aiOpen = ref(false)
 const aiMessages = ref<AiMessage[]>([])
+const aiTools = ref<AiTool[]>([])
 const aiInput = ref('')
 const aiBusy = ref(false)
 const aiError = ref('')
@@ -84,6 +97,7 @@ const initialRemark = ref(props.remark)
 const closeConfirmShow = ref(false)
 let aiAbort: AbortController | null = null
 const aiSuggestions = [
+  '检查当前脚本并修复潜在问题',
   '审核通过后把结果写回业务数据库',
   '审核不通过时调用 HTTP 接口通知业务方',
   '把最终审核结果推送到 Redis Stream',
@@ -128,6 +142,15 @@ interface ApiDocGroup {
 }
 
 const apiDocGroups: ApiDocGroup[] = [
+  {
+    title: '脚本入口',
+    items: [
+      { name: '顶层代码', detail: '直接编写即可，平台已注入全局 ctx，不需要定义 main 函数' },
+      { name: '返回值', detail: '把对象/数组表达式放在最后一行并加行首分号，例如 ;({ ok: true })；不要使用顶层 return' },
+      { name: 'function main(ctx)', detail: '旧脚本兼容；定义后平台会调用它并记录返回值' },
+      { name: 'console / ctx.log', detail: '输出写入脚本执行日志，便于排查' },
+    ],
+  },
   {
     title: '任务与审核',
     items: [
@@ -178,21 +201,19 @@ const apiDocGroups: ApiDocGroup[] = [
   },
 ]
 
-const apiExample = `function main(ctx) {
-  const db = ctx.mysql.connect({
-    host: '127.0.0.1',
-    port: 3306,
-    user: ctx.secret('DB_USER'),
-    password: ctx.secret('DB_PASSWORD'),
-    database: 'biz'
-  })
-  const rows = db.query(
-    'select id from orders where task_no = ?',
-    [ctx.task.task_no]
-  )
-  ctx.log('matched rows', rows.length)
-  return { matched: rows.length, result: ctx.result }
-}`
+const apiExample = `const db = ctx.mysql.connect({
+  host: '127.0.0.1',
+  port: 3306,
+  user: ctx.secret('DB_USER'),
+  password: ctx.secret('DB_PASSWORD'),
+  database: 'biz'
+})
+const rows = db.query(
+  'select id from orders where task_no = ?',
+  [ctx.task.task_no]
+)
+ctx.log('matched rows', rows.length)
+;({ matched: rows.length, result: ctx.result })`
 
 const aiProviderOptions = computed(() =>
   aiProviders.value.map((provider) => ({
@@ -258,6 +279,7 @@ function createEditor() {
       javascript(),
       javascriptLanguage.data.of({ autocomplete: completionSource }),
       autocompletion(),
+      editableCompartment.of(EditorView.editable.of(!aiBusy.value)),
       isDark.value ? oneDark : [],
       EditorView.updateListener.of((update) => {
         if (update.docChanged && !syncing) {
@@ -276,6 +298,10 @@ function setEditorValue(value: string) {
   syncing = true
   editorView.dispatch({ changes: { from: 0, to: current.length, insert: value } })
   syncing = false
+}
+
+function setEditorEditable(editable: boolean) {
+  editorView?.dispatch({ effects: editableCompartment.reconfigure(EditorView.editable.of(editable)) })
 }
 
 watch(() => props.script, (value) => setEditorValue(value))
@@ -323,6 +349,7 @@ function stopAiRequest() {
   }
   aiBusy.value = false
   aiStatus.value = ''
+  setEditorEditable(true)
 }
 
 function closeNow() {
@@ -427,18 +454,21 @@ async function sendAi() {
   aiInput.value = ''
   aiError.value = ''
   aiLastPrompt.value = text
+  aiTools.value = []
   aiMessages.value.push({ role: 'user', content: text })
   aiBusy.value = true
-  aiStatus.value = 'AI 正在生成脚本…'
+  aiStatus.value = 'AI 正在读取脚本…'
+  setEditorEditable(false)
   const controller = new AbortController()
   aiAbort = controller
   let payload: Record<string, any> | null = null
   let streamError = ''
   let timedOut = false
+  let applied = false
   const timeout = window.setTimeout(() => {
     timedOut = true
     controller.abort()
-  }, 180_000)
+  }, 300_000)
   try {
     await scriptApi.assistantStream({
       project_id: workspace.currentProjectId,
@@ -453,6 +483,18 @@ async function sendAi() {
         const value = data as Record<string, any>
         if (event === 'step' && value?.label) {
           aiStatus.value = String(value.label)
+        } else if (event === 'tool' && value?.id) {
+          upsertAiTool({
+            id: String(value.id),
+            name: String(value.name || 'tool'),
+            label: String(value.label || value.name || '工具调用'),
+            status: String(value.status || 'running'),
+            detail: value.detail ? String(value.detail) : '',
+          })
+          if (value.status === 'running') aiStatus.value = `正在${value.label || '调用工具'}…`
+        } else if (event === 'script' && typeof value?.script === 'string') {
+          if (applyScriptFromAi(value.script)) applied = true
+          if (value.summary) aiStatus.value = String(value.summary)
         } else if (event === 'reply') {
           payload = value
         } else if (event === 'error') {
@@ -461,23 +503,27 @@ async function sendAi() {
       },
     })
     if (timedOut) {
-      aiError.value = '模型响应超时（180 秒），请重试或换用更快的模型'
+      aiError.value = '模型响应超时（300 秒），请重试或换用更快的模型'
       return
     }
     if (controller.signal.aborted) return
     if (streamError) throw new Error(streamError)
     const result = payload as Record<string, any> | null
     if (!result) throw new Error('模型没有返回结果，连接可能已中断，请重试')
+    const resultScript = String(result.script || '')
+    if (resultScript && applyScriptFromAi(resultScript)) applied = true
+    if (resultScript) applied = applied || Boolean(result.changed)
     aiMessages.value.push({
       role: 'assistant',
-      content: String(result.reply || '已生成脚本'),
-      script: String(result.script || ''),
+      content: String(result.reply || '已更新脚本'),
+      script: result.changed ? resultScript : '',
       scriptValid: Boolean(result.script_valid),
       scriptError: String(result.script_error || ''),
+      applied,
     })
   } catch (error) {
     if (timedOut) {
-      aiError.value = '模型响应超时（180 秒），请重试或换用更快的模型'
+      aiError.value = '模型响应超时（300 秒），请重试或换用更快的模型'
     } else if (!controller.signal.aborted && aiAbort === controller) {
       aiError.value = normalizeAiError(error)
     }
@@ -487,14 +533,31 @@ async function sendAi() {
       aiAbort = null
       aiBusy.value = false
       aiStatus.value = ''
+      setEditorEditable(true)
     }
   }
 }
 
-function applyAiScript(message: AiMessage) {
-  if (!message.script) return
-  emit('update:script', message.script)
-  setEditorValue(message.script)
+function applyScriptFromAi(script: string) {
+  const current = editorView?.state.doc.toString() ?? props.script
+  if (current === script) return false
+  emit('update:script', script)
+  setEditorValue(script)
+  return true
+}
+
+function upsertAiTool(tool: AiTool) {
+  const index = aiTools.value.findIndex((item) => item.id === tool.id)
+  if (index >= 0) {
+    aiTools.value[index] = tool
+  } else {
+    aiTools.value.push(tool)
+  }
+}
+
+function scriptLineTotal(script?: string) {
+  const text = (script || '').trim()
+  return text ? text.split(/\r?\n/).length : 0
 }
 
 function handleAiKeydown(event: KeyboardEvent) {
@@ -519,7 +582,7 @@ function handleAiKeydown(event: KeyboardEvent) {
             </div>
             <div class="script-editor-sub">
               <span class="script-editor-sub-dot" />
-              入口 <code>function main(ctx)</code> · 结束自动释放连接
+              全局 <code>ctx</code> 直接可用 · 结束自动释放连接
             </div>
           </div>
         </div>
@@ -574,8 +637,9 @@ function handleAiKeydown(event: KeyboardEvent) {
           <span class="editor-file-meta">· UTF-8</span>
         </div>
         <div class="editor-toolbar-meta">
+          <span v-if="aiBusy" class="editor-ai-lock"><span class="editor-ai-lock-dot" />AI 编辑中 · 只读</span>
           <span class="editor-sandbox"><span class="editor-sandbox-dot" />受限沙箱</span>
-          <span class="editor-entry-hint">function main(ctx)</span>
+          <span class="editor-entry-hint">全局 ctx 已注入</span>
         </div>
       </div>
 
@@ -591,7 +655,7 @@ function handleAiKeydown(event: KeyboardEvent) {
                 </span>
                 <div>
                   <strong>AI 脚本助手</strong>
-                  <small>读取当前脚本 · 生成后手动应用</small>
+                  <small>业务脚本 Skill · 可读写 · 可联网</small>
                 </div>
               </div>
               <button type="button" class="script-ai-collapse" @click="aiOpen = false">
@@ -601,11 +665,11 @@ function handleAiKeydown(event: KeyboardEvent) {
             </div>
             <div class="script-ai-warning">
               <n-icon :component="WarningOutline" />
-              <span>AI 会读取当前脚本。请使用 <code>ctx.secret()</code>，不要在脚本里写明文密码。</span>
+              <span>AI 会直接修改当前脚本，可 <kbd>Ctrl</kbd>+<kbd>Z</kbd> 撤销。请使用 <code>ctx.secret()</code>，不要在脚本里写明文密码。</span>
             </div>
             <div class="script-ai-messages">
               <div v-if="!aiMessages.length" class="script-ai-empty">
-                <p>描述你想要的脚本，AI 会结合当前审核配置生成实现。</p>
+                <p>AI 已加载当前审核配置和脚本 API，可直接读写编辑器、联网查资料；不确定时会先向你确认。</p>
                 <div class="script-ai-starters">
                   <button
                     v-for="suggestion in aiSuggestions"
@@ -625,18 +689,29 @@ function handleAiKeydown(event: KeyboardEvent) {
                   <div class="script-ai-markdown" v-html="renderMarkdown(message.content)" />
                   <div v-if="message.script" class="script-ai-code">
                     <div class="script-ai-code-head">
-                      <span>生成脚本</span>
-                      <n-button size="tiny" type="primary" secondary @click="applyAiScript(message)">应用到编辑器</n-button>
+                      <span>{{ message.applied ? '已写入编辑器' : '当前脚本' }} · {{ scriptLineTotal(message.script) }} 行</span>
+                      <span v-if="message.scriptValid" class="script-ai-ok">语法通过</span>
+                      <span v-else-if="message.scriptError" class="script-ai-error">语法错误</span>
                     </div>
-                    <pre>{{ message.script.slice(0, 1200) }}{{ message.script.length > 1200 ? '\n…' : '' }}</pre>
-                    <span v-if="message.scriptError" class="script-ai-error">语法错误：{{ message.scriptError }}</span>
-                    <span v-else-if="message.scriptValid" class="script-ai-ok">语法检查通过</span>
+                    <p v-if="message.applied" class="script-ai-code-note">AI 已自动应用修改，按 Ctrl+Z 可撤销。</p>
+                    <p v-if="message.scriptError" class="script-ai-code-error">{{ message.scriptError }}</p>
                   </div>
+                </div>
+              </div>
+              <div v-if="aiTools.length" class="script-ai-tool-log">
+                <div class="script-ai-tool-caption">
+                  <n-icon :component="BuildOutline" />
+                  工具调用
+                </div>
+                <div v-for="tool in aiTools" :key="tool.id" class="script-ai-tool-item" :class="tool.status">
+                  <span class="script-ai-tool-dot" />
+                  <span class="script-ai-tool-label">{{ tool.label }}</span>
+                  <span v-if="tool.detail" class="script-ai-tool-detail">{{ tool.detail }}</span>
                 </div>
               </div>
               <div v-if="aiBusy" class="script-ai-status">
                 <n-spin :size="12" />
-                <span>{{ aiStatus || 'AI 正在生成脚本…' }}</span>
+                <span>{{ aiStatus || 'AI 正在调用工具…' }}</span>
               </div>
             </div>
             <div class="script-ai-composer">
@@ -1071,6 +1146,15 @@ function handleAiKeydown(event: KeyboardEvent) {
   font-family: var(--mono);
 }
 
+.script-ai-warning kbd {
+  padding: 0 3px;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  font-family: var(--mono);
+  font-size: 8.5px;
+  opacity: 0.85;
+}
+
 .script-ai-messages {
   display: flex;
   min-height: 0;
@@ -1189,22 +1273,95 @@ function handleAiKeydown(event: KeyboardEvent) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 5px 7px;
-  border-bottom: 1px solid #1f2d44;
+  gap: 8px;
+  padding: 6px 8px;
   color: #94a3b8;
   font-size: 9px;
 }
 
-.script-ai-code pre {
-  max-height: 180px;
+.script-ai-code-head .script-ai-ok,
+.script-ai-code-head .script-ai-error {
+  padding: 0;
+  font-size: 9px;
+}
+
+.script-ai-code-note {
   margin: 0;
-  overflow: auto;
-  padding: 7px;
-  color: #cbd5e1;
+  padding: 0 8px 7px;
+  color: #7c8ba1;
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.script-ai-code-error {
+  margin: 0;
+  padding: 0 8px 7px;
+  color: #f87171;
   font-family: var(--mono);
-  font-size: 9.5px;
+  font-size: 9px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.script-ai-tool-log {
+  margin-top: 3px;
+  padding: 7px 8px;
+  border: 1px dashed #2b3f5f;
+  border-radius: 8px;
+  background: rgba(43, 108, 246, 0.05);
+}
+
+.script-ai-tool-caption {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 4px;
+  color: #94a3b8;
+  font-size: 9px;
+}
+
+.script-ai-tool-caption :deep(svg) {
+  width: 11px;
+  height: 11px;
+}
+
+.script-ai-tool-item {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  color: #cbd5e1;
+  font-size: 9px;
   line-height: 1.55;
-  white-space: pre-wrap;
+}
+
+.script-ai-tool-dot {
+  width: 5px;
+  height: 5px;
+  flex-shrink: 0;
+  margin-top: 4px;
+  border-radius: 50%;
+  background: #4ade80;
+}
+
+.script-ai-tool-item.running .script-ai-tool-dot {
+  background: #fbbf24;
+  animation: ai-dot-pulse 1s ease-in-out infinite;
+}
+
+.script-ai-tool-item.error .script-ai-tool-dot {
+  background: #f87171;
+}
+
+.script-ai-tool-label {
+  flex-shrink: 0;
+  font-weight: 600;
+}
+
+.script-ai-tool-detail {
+  overflow: hidden;
+  color: #7c8ba1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .script-ai-error {
@@ -1618,8 +1775,12 @@ function handleAiKeydown(event: KeyboardEvent) {
   color: var(--muted);
 }
 
-.script-theme-light .script-ai-code pre {
-  color: var(--text);
+.script-theme-light .script-ai-code-note {
+  color: var(--muted);
+}
+
+.script-theme-light .script-ai-code-error {
+  color: var(--red);
 }
 
 .script-theme-light .script-ai-error {
@@ -1632,6 +1793,25 @@ function handleAiKeydown(event: KeyboardEvent) {
 
 .script-theme-light .script-ai-status {
   color: var(--muted);
+}
+
+.script-theme-light .script-ai-tool-log {
+  border-color: var(--border);
+  background: var(--brand-softer);
+}
+
+.script-theme-light .script-ai-tool-caption,
+.script-theme-light .script-ai-tool-detail {
+  color: var(--muted);
+}
+
+.script-theme-light .script-ai-tool-item {
+  color: var(--text);
+}
+
+.script-theme-light .editor-ai-lock {
+  background: var(--brand-soft);
+  color: var(--brand-strong);
 }
 
 .script-theme-light .script-ai-composer {
@@ -2128,6 +2308,25 @@ function handleAiKeydown(event: KeyboardEvent) {
   background: var(--green);
 }
 
+.editor-ai-lock {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-size: 9px;
+}
+
+.editor-ai-lock-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--brand);
+  animation: ai-dot-pulse 1.2s ease-in-out infinite;
+}
+
 .editor-entry-hint {
   color: var(--muted-light);
   font-family: var(--mono);
@@ -2338,8 +2537,12 @@ function handleAiKeydown(event: KeyboardEvent) {
   color: var(--muted);
 }
 
-.script-editor-modal .script-ai-code pre {
-  color: var(--text);
+.script-editor-modal .script-ai-code-note {
+  color: var(--muted);
+}
+
+.script-editor-modal .script-ai-code-error {
+  color: var(--red);
 }
 
 .script-editor-modal .script-ai-error {
@@ -2352,6 +2555,20 @@ function handleAiKeydown(event: KeyboardEvent) {
 
 .script-editor-modal .script-ai-status {
   color: var(--muted);
+}
+
+.script-editor-modal .script-ai-tool-log {
+  border-color: var(--border);
+  background: var(--brand-softer);
+}
+
+.script-editor-modal .script-ai-tool-caption,
+.script-editor-modal .script-ai-tool-detail {
+  color: var(--muted);
+}
+
+.script-editor-modal .script-ai-tool-item {
+  color: var(--text);
 }
 
 .script-editor-modal .script-ai-composer {
