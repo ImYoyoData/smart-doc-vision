@@ -702,6 +702,20 @@ smart-doc-vision/
 | 监控看板 | ✅ 运营工作台 + ECharts 项目/审核数据报表；Prometheus `/metrics` 已接入，告警渠道未接入 |
 | 多项目资源隔离 | ✅ 数据、凭证、审核授权、配额、限流、项目级任务队列、并发 Worker 名额与公平调度已完成；MySQL/Redis 为平台共享连接池（单实例架构） |
 
+## 宣传视频
+
+仓库内置独立的 Remotion 工程 `video/`，用于生成 40 秒 1080p 产品宣传片：
+
+```bash
+cd video
+npm install
+SDV_TOKEN=<后台 access_token> npm run capture   # 采集当前界面的高清截图
+npm run render                                  # 输出 out/smartdoc-vision-promo.mp4
+npm run studio                                  # 可视化调整分镜
+```
+
+截图脚本使用无头 Chrome 打开本地前端（默认 `http://localhost:5173`），通过 `SDV_TOKEN` 注入登录态；可用 `BASE_URL`、`BROWSER_PATH` 覆盖默认值。
+
 ## License
 
 MIT License，见 [LICENSE](LICENSE)。第三方 SDK / 模型服务遵循各自许可和服务条款。
