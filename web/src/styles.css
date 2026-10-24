@@ -19,12 +19,100 @@
   --amber-soft: #fffbeb;
   --purple: #7c3aed;
   --purple-soft: #f5f3ff;
+  --surface-soft: #f8fafc;
+  --surface-2: #fbfcfe;
+  --surface-hover: #f5f8fe;
+  --surface-strong: #f1f5f9;
+  --surface-tint: #fbfaff;
+  --red-soft-2: #fff7f7;
+  --amber-soft-2: #fff7e8;
+  --brand-border: #c7d9fb;
+  --green-border: #cdebd9;
+  --red-border: #fecaca;
+  --amber-border: #fde68a;
+  --purple-border: #e8e2fb;
   --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.04), 0 1px 3px rgba(15, 23, 42, 0.03);
   --shadow-md: 0 10px 30px -12px rgba(15, 23, 42, 0.16), 0 2px 6px rgba(15, 23, 42, 0.04);
   --radius-lg: 18px;
   --radius-md: 14px;
   --radius-sm: 10px;
   --mono: 'JetBrains Mono', 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+}
+
+html[data-theme='dark'] {
+  color-scheme: dark;
+  --brand: #5b8ef7;
+  --brand-strong: #9fc1ff;
+  --brand-soft: #1b2b47;
+  --brand-softer: #141d2c;
+  --ink: #e8eef8;
+  --text: #c3cfdf;
+  --muted: #94a3b8;
+  --muted-light: #7f90a6;
+  --canvas: #0d131c;
+  --card: #151d28;
+  --border: #263243;
+  --border-strong: #35445b;
+  --green: #34d399;
+  --green-soft: #12281f;
+  --red: #f87171;
+  --red-soft: #2a1519;
+  --amber: #fbbf24;
+  --amber-soft: #2a2214;
+  --purple: #a78bfa;
+  --purple-soft: #211a33;
+  --surface-soft: #111821;
+  --surface-2: #121a24;
+  --surface-hover: #1a2432;
+  --surface-strong: #1b2634;
+  --surface-tint: #161f2e;
+  --red-soft-2: #241417;
+  --amber-soft-2: #241e12;
+  --brand-border: #31507a;
+  --green-border: #1f4a35;
+  --red-border: #5f2a2a;
+  --amber-border: #5a4420;
+  --purple-border: #493a6e;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.32), 0 1px 3px rgba(0, 0, 0, 0.24);
+  --shadow-md: 0 18px 40px -18px rgba(0, 0, 0, 0.6), 0 2px 6px rgba(0, 0, 0, 0.3);
+}
+
+html[data-theme='dark'] body {
+  color: var(--text);
+  background: var(--canvas);
+}
+
+html[data-theme='dark'] ::selection {
+  background: rgba(91, 142, 247, 0.35);
+}
+
+html[data-theme='dark'] ::-webkit-scrollbar-thumb {
+  background: #334155;
+}
+
+html[data-theme='dark'] ::-webkit-scrollbar-thumb:hover {
+  background: #475569;
+}
+
+html.theme-transition,
+html.theme-transition body,
+html.theme-transition #app,
+html.theme-transition *,
+html.theme-transition *::before,
+html.theme-transition *::after {
+  transition: background-color 0.3s ease, border-color 0.3s ease, color 0.3s ease,
+    fill 0.3s ease, stroke 0.3s ease, box-shadow 0.3s ease !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html.theme-transition,
+  html.theme-transition body,
+  html.theme-transition #app,
+  html.theme-transition *,
+  html.theme-transition *::before,
+  html.theme-transition *::after {
+    transition: none !important;
+  }
 }
 
 * {

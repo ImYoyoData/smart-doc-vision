@@ -18,6 +18,7 @@ import {
   LayersOutline,
   LogOutOutline,
   MenuOutline,
+  MoonOutline,
   NotificationsOutline,
   PeopleOutline,
   PersonCircleOutline,
@@ -26,11 +27,13 @@ import {
   SettingsOutline,
   ShieldCheckmarkOutline,
   SpeedometerOutline,
+  SunnyOutline,
   TrashOutline,
 } from '@vicons/ionicons5'
 import BrandMark from '@/components/BrandMark.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useWorkspaceStore } from '@/stores/workspace'
+import { useThemeStore } from '@/stores/theme'
 import { metaApi } from '@/api'
 import { useReviewStore } from '@/stores/review'
 
@@ -40,6 +43,7 @@ const message = useMessage()
 const auth = useAuthStore()
 const workspace = useWorkspaceStore()
 const review = useReviewStore()
+const theme = useThemeStore()
 const sidebarOpen = ref(false)
 const version = ref('1.0.0')
 const metaLoading = ref(false)
@@ -262,6 +266,17 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
           </button>
           <button v-if="auth.canMenu('help')" class="icon-btn topbar-help" type="button" title="对接文档" @click="navigate('help')">
             <HelpCircleOutline />
+          </button>
+          <button
+            class="theme-toggle"
+            type="button"
+            :title="theme.isDark ? '切换到浅色主题' : '切换到深色主题'"
+            :aria-label="theme.isDark ? '切换到浅色主题' : '切换到深色主题'"
+            @click="theme.toggle()"
+          >
+            <SunnyOutline v-if="theme.isDark" />
+            <MoonOutline v-else />
+            <span>{{ theme.isDark ? '浅色' : '深色' }}</span>
           </button>
           <div class="top-divider"></div>
           <n-dropdown trigger="click" :options="userOptions" placement="bottom-end" @select="handleUser">
@@ -567,6 +582,44 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
 .topbar-help :deep(svg) {
   width: 16px;
   height: 16px;
+}
+
+.theme-toggle {
+  display: inline-flex;
+  height: 32px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--card);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
+  transition: border-color 0.16s ease, background 0.16s ease, color 0.16s ease;
+}
+
+.theme-toggle:hover {
+  border-color: var(--brand);
+  background: var(--brand-soft);
+  color: var(--brand-strong);
+}
+
+.theme-toggle :deep(svg) {
+  width: 14px;
+  height: 14px;
+}
+
+@media (max-width: 720px) {
+  .theme-toggle {
+    width: 32px;
+    justify-content: center;
+    padding: 0;
+  }
+
+  .theme-toggle span {
+    display: none;
+  }
 }
 
 .sidebar-footer {

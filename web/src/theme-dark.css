@@ -1,0 +1,448 @@
+/* Dark theme overrides for the custom app surfaces. */
+html[data-theme='dark'] .topbar {
+  background: rgba(21, 29, 40, 0.9) !important;
+  border-bottom-color: var(--border) !important;
+}
+
+html[data-theme='dark'] :is(
+  .sidebar, .icon-btn, .panel, .filter-bar, .filter-panel, .audit-summary, .audit-card,
+  .audit-modal, .clone-modal, .export-modal, .assistant-modal, .assistant-pick-item,
+  .assistant-content, .assistant-composer, .assistant-starter-list button,
+  .provider-card, .provider-modal, .mode-card, .summary-chip, .kind-card, .protocol-option,
+  .connection-card, .connection-test, .connection-modal, .credential-summary,
+  .credential-card, .secret-modal, .project-card, .project-modal, .doc-section,
+  .prompt-modal, .log-modal, .user-modal, .review-rule, .rule-group, .submit-modal,
+  .trigger-modal, .script-logs-modal, .secrets-modal, .script-api-modal,
+  .script-confirm-modal, .field-ai-foot, .modal-footer, .vars-trigger, .action-card,
+  .secret-value, .secret-row, .credential-add, .role-card, .role-preview, .check-panel,
+  .config-panel, .prompt-option, .category-row, .captcha-modal, .trigger-toggle-card,
+  .guide-tabs button.active, .project-add, .login-form-side, .data-table td.action-col,
+  .assistant-pick-item, .field-ai-modal
+) {
+  background: var(--card) !important;
+  border-color: var(--border) !important;
+}
+
+html[data-theme='dark'] :is(
+  .project-switch, .project-stats, .meta-item, .trigger-chip.muted, .create-hint,
+  .rule-template, .prompt-card, .rule-chip, .mode-picker, .export-target, .provider-endpoint,
+  .health-key code, .jev-note, .endpoint-box, .guide-note, .input-contract, .method-ai-row,
+  .identity-copy code, .code-shell, .code-head, .code-block, .data-table th,
+  .data-table th.action-col, .meta-grid, .route-results, .text-doc-head, .image-card,
+  .rule-match, .queue-meta span, .review-text-head, .review-images a, .media-chip,
+  .project-scope span, .trace, .doc-inline-action, .doc-note, .trigger-card,
+  .endpoint, .prompt-hint, .doc-section code, .field-ai-empty, .field-ai-examples button,
+  .field-ai-result, .provider-tip, .shortcut-row button, .credential-add > span,
+  .project-add > span, .assistant-progress, .assistant-trace, .assistant-code
+) {
+  background: var(--surface-soft) !important;
+  border-color: var(--border) !important;
+}
+
+html[data-theme='dark'] :is(
+  .inline-code, .status-pill, .status-pill.gray, .env-mini, .soft-tag, .callback-badge,
+  .rule-state, .rule-flag, .tag-cloud span, .role-chip, .role-menus span, .mfa-status,
+  .form-meta code, .rule-output
+) {
+  background: var(--surface-strong) !important;
+  border-color: var(--border) !important;
+}
+
+html[data-theme='dark'] :is(.modal-head, .assistant-head, .field-ai-head) {
+  background: linear-gradient(130deg, var(--surface-soft), var(--card)) !important;
+  border-bottom-color: var(--border) !important;
+}
+
+html[data-theme='dark'] .login-page {
+  background: var(--canvas) !important;
+}
+
+html[data-theme='dark'] .assistant-chat {
+  background: linear-gradient(180deg, var(--canvas), var(--surface-2)) !important;
+}
+
+html[data-theme='dark'] .sidebar-footer {
+  border-top-color: var(--border) !important;
+}
+
+html[data-theme='dark'] .brand-en,
+html[data-theme='dark'] .nav-section-title,
+html[data-theme='dark'] .footer-line,
+html[data-theme='dark'] .footer-meta,
+html[data-theme='dark'] .project-label {
+  color: var(--muted-light) !important;
+}
+
+html[data-theme='dark'] .nav-item {
+  color: var(--text) !important;
+}
+
+html[data-theme='dark'] .nav-item:hover {
+  background: var(--surface-hover) !important;
+  color: var(--ink) !important;
+}
+
+html[data-theme='dark'] .nav-item.active {
+  background: var(--brand-soft) !important;
+  color: var(--brand-strong) !important;
+}
+
+html[data-theme='dark'] .user-chip:hover {
+  background: var(--surface-hover) !important;
+}
+
+html[data-theme='dark'] .avatar {
+  background: linear-gradient(140deg, #29456f, #1c3456) !important;
+  color: #cfe2ff !important;
+}
+
+html[data-theme='dark'] .topbar-review {
+  background: var(--amber-soft) !important;
+  border-color: var(--amber-border) !important;
+  color: var(--amber) !important;
+}
+
+html[data-theme='dark'] .topbar-review:hover,
+html[data-theme='dark'] .topbar-review.active {
+  background: var(--amber-soft-2) !important;
+}
+
+html[data-theme='dark'] .nav-badge {
+  background: var(--amber-soft-2) !important;
+  color: var(--amber) !important;
+}
+
+html[data-theme='dark'] .env-mini {
+  color: var(--muted) !important;
+}
+
+html[data-theme='dark'] .env-mini.prod {
+  background: var(--red-soft) !important;
+  color: var(--red) !important;
+}
+
+html[data-theme='dark'] .env-mini.staging {
+  background: var(--amber-soft) !important;
+  color: var(--amber) !important;
+}
+
+html[data-theme='dark'] .env-mini.test {
+  background: var(--brand-soft) !important;
+  color: var(--brand-strong) !important;
+}
+
+html[data-theme='dark'] .data-table td {
+  border-bottom-color: var(--border) !important;
+}
+
+html[data-theme='dark'] .data-table tbody tr:hover,
+html[data-theme='dark'] .data-table tbody tr:hover td.action-col {
+  background: var(--surface-hover) !important;
+}
+
+html[data-theme='dark'] .toolbar,
+html[data-theme='dark'] .pagination-row {
+  border-color: var(--border) !important;
+}
+
+html[data-theme='dark'] .divider,
+html[data-theme='dark'] .section-label::after {
+  background: var(--border) !important;
+}
+
+html[data-theme='dark'] .filter-chip {
+  background: var(--brand-softer) !important;
+  border-color: var(--brand-border) !important;
+}
+
+html[data-theme='dark'] .status-pill {
+  color: var(--text) !important;
+}
+
+html[data-theme='dark'] .status-pill.green {
+  background: var(--green-soft) !important;
+  color: var(--green) !important;
+}
+
+html[data-theme='dark'] .status-pill.red {
+  background: var(--red-soft) !important;
+  color: var(--red) !important;
+}
+
+html[data-theme='dark'] .status-pill.amber {
+  background: var(--amber-soft) !important;
+  color: var(--amber) !important;
+}
+
+html[data-theme='dark'] .status-pill.blue {
+  background: var(--brand-soft) !important;
+  color: var(--brand-strong) !important;
+}
+
+html[data-theme='dark'] .summary-chip:hover {
+  background: var(--surface-hover) !important;
+}
+
+html[data-theme='dark'] .summary-chip.is-selected {
+  background: var(--brand-soft) !important;
+  border-color: var(--brand) !important;
+  color: var(--brand-strong) !important;
+}
+
+html[data-theme='dark'] .assistant-pick-item:hover {
+  background: var(--surface-hover) !important;
+}
+
+html[data-theme='dark'] .assistant-pick-item.active,
+html[data-theme='dark'] .prompt-option:has(.n-checkbox--checked) {
+  background: var(--brand-soft) !important;
+  border-color: var(--brand) !important;
+}
+
+html[data-theme='dark'] .assistant-starter-list button:hover {
+  background: var(--brand-soft) !important;
+  border-color: var(--brand-border) !important;
+}
+
+html[data-theme='dark'] .credential-add:hover,
+html[data-theme='dark'] .project-add:hover {
+  background: var(--surface-hover) !important;
+}
+
+html[data-theme='dark'] :is(.connection-test.failed, .modal-error, .provider-error) {
+  background: var(--red-soft-2) !important;
+  border-color: var(--red-border) !important;
+  color: var(--red) !important;
+}
+
+html[data-theme='dark'] .category-result.review {
+  background: var(--amber-soft-2) !important;
+  border-color: var(--amber-border) !important;
+  color: var(--amber) !important;
+}
+
+html[data-theme='dark'] .assistant-ready {
+  background: var(--green-soft) !important;
+  border-color: var(--green-border) !important;
+}
+
+html[data-theme='dark'] .assistant-ready strong,
+html[data-theme='dark'] .assistant-ready span {
+  color: var(--green) !important;
+}
+
+html[data-theme='dark'] .assistant-bubble,
+html[data-theme='dark'] .assistant-message.user .assistant-bubble {
+  background: var(--brand-soft) !important;
+  border-color: var(--brand-border) !important;
+  color: #dbeafe !important;
+}
+
+html[data-theme='dark'] .provider-card.jev {
+  background: linear-gradient(135deg, #19162a, var(--card)) !important;
+  border-color: var(--purple-border) !important;
+}
+
+html[data-theme='dark'] .provider-card.anthropic {
+  background: linear-gradient(135deg, #10241f, var(--card)) !important;
+  border-color: var(--green-border) !important;
+}
+
+html[data-theme='dark'] .provider-card.jev .provider-icon {
+  background: linear-gradient(145deg, #2a2142, #201a34) !important;
+  color: var(--purple) !important;
+}
+
+html[data-theme='dark'] .provider-card.anthropic .provider-icon {
+  background: linear-gradient(145deg, #16352b, #11271f) !important;
+  color: var(--green) !important;
+}
+
+html[data-theme='dark'] .mode-card.jev {
+  background: linear-gradient(120deg, #1b1730, var(--card)) !important;
+  border-color: var(--purple-border) !important;
+}
+
+html[data-theme='dark'] :is(
+  .code-block, .inline-code, .provider-endpoint, .health-key code, .endpoint code,
+  .doc-section code, .form-meta code, .rule-output, .script-preview, .field-ai-code,
+  .field-ai-prompt, .assistant-code pre, .assistant-answer.markdown-body pre code
+) {
+  color: var(--text) !important;
+}
+
+html[data-theme='dark'] .field-ai-heading h3 {
+  color: var(--ink) !important;
+}
+
+html[data-theme='dark'] .field-ai-heading p,
+html[data-theme='dark'] .field-ai-explanation,
+html[data-theme='dark'] .field-ai-foot > span,
+html[data-theme='dark'] .field-ai-label small {
+  color: var(--muted) !important;
+}
+
+html[data-theme='dark'] .field-ai-result-head {
+  border-bottom-color: var(--border) !important;
+  color: var(--text) !important;
+}
+
+html[data-theme='dark'] .field-ai-empty {
+  color: var(--muted-light) !important;
+}
+
+html[data-theme='dark'] .field-ai-examples button {
+  color: var(--muted) !important;
+}
+
+html[data-theme='dark'] .field-ai-examples button:hover:not(:disabled) {
+  background: var(--brand-soft) !important;
+  border-color: var(--brand-border) !important;
+  color: var(--brand-strong) !important;
+}
+
+html[data-theme='dark'] :is(
+  .range-tabs button.active, .reason-tabs button.active, .summary-item, .review-modal,
+  .script-log-item, .assistant-attachment-remove, .slider-handle
+) {
+  background: var(--card) !important;
+  border-color: var(--border) !important;
+}
+
+html[data-theme='dark'] :is(
+  .switch-field, .cred-key-line code, .scope-chip, .secret-modal > code,
+  .image-preview-grid figure, .captcha-stage, .assistant-code-head
+) {
+  background: var(--surface-soft) !important;
+  border-color: var(--border) !important;
+}
+
+html[data-theme='dark'] .role-actions button:hover {
+  background: var(--surface-strong) !important;
+}
+
+html[data-theme='dark'] :is(.code-shell, .code-shell code, .code-head, .code-head code) {
+  color: var(--text) !important;
+}
+
+html[data-theme='dark'] .captcha-stage {
+  background-color: var(--surface-strong) !important;
+}
+
+html[data-theme='dark'] .provider-capabilities span {
+  background: var(--surface-strong) !important;
+  color: var(--muted) !important;
+}
+
+html[data-theme='dark'] .provider-capabilities span.on {
+  background: var(--brand-soft) !important;
+  color: var(--brand-strong) !important;
+}
+
+html[data-theme='dark'] .provider-health {
+  border-top-color: var(--border) !important;
+}
+
+html[data-theme='dark'] .health-result.ok strong {
+  color: var(--green) !important;
+}
+
+html[data-theme='dark'] .health-result.idle svg {
+  color: var(--amber) !important;
+}
+
+html[data-theme='dark'] .health-key code {
+  color: var(--muted) !important;
+}
+
+html[data-theme='dark'] .captcha-modal-head {
+  background: linear-gradient(130deg, var(--surface-soft), var(--card)) !important;
+  border-bottom-color: var(--border) !important;
+}
+
+html[data-theme='dark'] .captcha-modal-foot {
+  border-top-color: var(--border) !important;
+}
+
+html[data-theme='dark'] .captcha-error {
+  background: var(--red-soft-2) !important;
+  border-color: var(--red-border) !important;
+  color: var(--red) !important;
+}
+
+html[data-theme='dark'] .form-footer {
+  color: var(--muted-light) !important;
+}
+
+html[data-theme='dark'] .icon-btn:hover {
+  background: var(--brand-softer) !important;
+  border-color: var(--brand-border) !important;
+}
+
+html[data-theme='dark'] .field-ai-icon {
+  border-color: var(--brand-border) !important;
+  background: var(--brand-soft) !important;
+  color: var(--brand-strong) !important;
+}
+
+html[data-theme='dark'] .field-ai-error {
+  background: var(--red-soft-2) !important;
+  border-color: var(--red-border) !important;
+  color: var(--red) !important;
+}
+
+html[data-theme='dark'] .assistant-header-icon {
+  border-color: var(--brand-border) !important;
+  background: var(--brand-soft) !important;
+  color: var(--brand-strong) !important;
+  box-shadow: none !important;
+}
+
+html[data-theme='dark'] .assistant-trace-list {
+  border-top-color: var(--border) !important;
+}
+
+html[data-theme='dark'] .assistant-heading h2 {
+  color: var(--ink) !important;
+}
+
+html[data-theme='dark'] .assistant-heading p {
+  color: var(--muted) !important;
+}
+
+html[data-theme='dark'] .assistant-note {
+  color: var(--muted-light) !important;
+}
+
+html[data-theme='dark'] .assistant-target-label {
+  background: var(--brand-soft) !important;
+  color: var(--brand-strong) !important;
+}
+
+html[data-theme='dark'] .assistant-changes {
+  color: var(--green) !important;
+}
+
+html[data-theme='dark'] .assistant-answer.markdown-body strong {
+  color: var(--brand-strong) !important;
+}
+
+html[data-theme='dark'] .assistant-answer.markdown-body code {
+  background: var(--surface-strong) !important;
+  color: var(--text) !important;
+}
+
+html[data-theme='dark'] .assistant-answer.markdown-body pre {
+  border-color: var(--border) !important;
+  background: var(--surface-soft) !important;
+}
+
+html[data-theme='dark'] .assistant-answer.markdown-body th,
+html[data-theme='dark'] .assistant-answer.markdown-body td {
+  border-color: var(--border) !important;
+}
+
+html[data-theme='dark'] .assistant-answer.markdown-body blockquote {
+  border-left-color: var(--border-strong) !important;
+  color: var(--muted) !important;
+}
