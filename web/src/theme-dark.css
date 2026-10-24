@@ -446,3 +446,465 @@ html[data-theme='dark'] .assistant-answer.markdown-body blockquote {
   border-left-color: var(--border-strong) !important;
   color: var(--muted) !important;
 }
+
+/* Page tabs and callouts found during the dark-theme audit */
+html[data-theme='dark'] .range-tabs,
+html[data-theme='dark'] .reason-tabs {
+  background: var(--surface-soft) !important;
+}
+
+html[data-theme='dark'] .range-tabs button.active,
+html[data-theme='dark'] .reason-tabs button.active {
+  background: var(--card) !important;
+  color: var(--brand-strong) !important;
+}
+
+html[data-theme='dark'] .audit-mode-badge {
+  background: var(--purple-soft) !important;
+  border-color: var(--purple-border) !important;
+  color: var(--purple) !important;
+}
+
+html[data-theme='dark'] .audit-mode-badge.classifier {
+  background: var(--green-soft) !important;
+  border-color: var(--green-border) !important;
+  color: var(--green) !important;
+}
+
+html[data-theme='dark'] .trigger-chip {
+  background: var(--brand-soft) !important;
+  color: var(--brand-strong) !important;
+}
+
+html[data-theme='dark'] .trigger-chip.muted {
+  background: var(--surface-strong) !important;
+  color: var(--muted) !important;
+}
+
+html[data-theme='dark'] .audit-prompt {
+  color: var(--muted) !important;
+}
+
+html[data-theme='dark'] .audit-side.active {
+  background: linear-gradient(145deg, var(--brand-soft), var(--brand-softer)) !important;
+  color: var(--brand-strong) !important;
+}
+
+html[data-theme='dark'] .connection-note {
+  background: var(--brand-softer) !important;
+  border-color: var(--brand-border) !important;
+  color: var(--brand-strong) !important;
+}
+
+html[data-theme='dark'] .connection-icon {
+  background: var(--brand-soft) !important;
+  color: var(--brand-strong) !important;
+}
+
+html[data-theme='dark'] .connection-meta {
+  background: var(--surface-soft) !important;
+}
+
+html[data-theme='dark'] .connection-status.active,
+html[data-theme='dark'] .connection-health.ok {
+  background: var(--green-soft) !important;
+  color: var(--green) !important;
+}
+
+html[data-theme='dark'] .connection-status.disabled {
+  background: var(--surface-strong) !important;
+  color: var(--muted) !important;
+}
+
+html[data-theme='dark'] .connection-health.error {
+  background: var(--red-soft) !important;
+  color: var(--red) !important;
+}
+
+html[data-theme='dark'] .credential-notice,
+html[data-theme='dark'] .security-banner,
+html[data-theme='dark'] .audit-identity {
+  background: linear-gradient(120deg, var(--brand-softer), var(--card)) !important;
+  border-color: var(--brand-border) !important;
+}
+
+html[data-theme='dark'] .credential-notice strong,
+html[data-theme='dark'] .security-banner strong,
+html[data-theme='dark'] .audit-identity strong {
+  color: var(--brand-strong) !important;
+}
+
+html[data-theme='dark'] .credential-notice p,
+html[data-theme='dark'] .security-banner p,
+html[data-theme='dark'] .audit-identity p {
+  color: var(--muted) !important;
+}
+
+html[data-theme='dark'] .cred-key-line code {
+  color: var(--text) !important;
+}
+
+html[data-theme='dark'] .scope-chip {
+  background: var(--surface-soft) !important;
+  border-color: var(--border) !important;
+  color: var(--text) !important;
+}
+
+html[data-theme='dark'] .scope-chip:hover {
+  background: var(--surface-hover) !important;
+  border-color: var(--brand-border) !important;
+}
+
+html[data-theme='dark'] .scope-chip.missing {
+  background: var(--red-soft) !important;
+  border-color: var(--red-border) !important;
+  color: var(--red) !important;
+}
+
+html[data-theme='dark'] .self-chip {
+  color: var(--green) !important;
+}
+
+html[data-theme='dark'] .retention-banner {
+  background: var(--brand-softer) !important;
+  border-color: var(--brand-border) !important;
+  color: var(--muted) !important;
+}
+
+html[data-theme='dark'] .recycle-notice,
+html[data-theme='dark'] .review-banner,
+html[data-theme='dark'] .review-alert,
+html[data-theme='dark'] .doc-warning {
+  background: linear-gradient(120deg, var(--amber-soft), var(--amber-soft-2)) !important;
+  border-color: var(--amber-border) !important;
+}
+
+html[data-theme='dark'] .recycle-notice strong,
+html[data-theme='dark'] .review-banner strong,
+html[data-theme='dark'] .review-alert strong {
+  color: var(--amber) !important;
+}
+
+html[data-theme='dark'] .recycle-notice p,
+html[data-theme='dark'] .review-banner p,
+html[data-theme='dark'] .review-alert p,
+html[data-theme='dark'] .doc-warning,
+html[data-theme='dark'] .notice-policy {
+  color: var(--amber) !important;
+}
+
+html[data-theme='dark'] .recycle-notice .notice-icon,
+html[data-theme='dark'] .review-banner-icon,
+html[data-theme='dark'] .review-alert-icon,
+html[data-theme='dark'] .context-icon {
+  background: var(--amber-soft-2) !important;
+  color: var(--amber) !important;
+}
+
+html[data-theme='dark'] .review-audit-chips span {
+  background: var(--amber-soft-2) !important;
+  color: var(--amber) !important;
+}
+
+html[data-theme='dark'] .live-chip {
+  background: var(--brand-softer) !important;
+  border-color: var(--brand-border) !important;
+  color: var(--brand-strong) !important;
+}
+
+html[data-theme='dark'] .task-chip {
+  background: var(--surface-soft) !important;
+  color: var(--muted) !important;
+}
+
+html[data-theme='dark'] .dep-item {
+  background: var(--green-soft) !important;
+  border-color: var(--green-border) !important;
+}
+
+html[data-theme='dark'] .dep-item.down {
+  background: var(--red-soft) !important;
+  border-color: var(--red-border) !important;
+}
+
+html[data-theme='dark'] .queue-row {
+  border-bottom-color: var(--border) !important;
+}
+
+html[data-theme='dark'] .review-context {
+  background: linear-gradient(140deg, var(--amber-soft), var(--amber-soft-2)) !important;
+  border-color: var(--amber-border) !important;
+}
+
+html[data-theme='dark'] .context-head strong {
+  color: var(--amber) !important;
+}
+
+html[data-theme='dark'] .context-head span,
+html[data-theme='dark'] .context-facts span {
+  color: var(--amber) !important;
+}
+
+html[data-theme='dark'] .review-reason {
+  background: var(--amber-soft-2) !important;
+  color: var(--amber) !important;
+}
+
+html[data-theme='dark'] .context-facts > div {
+  background: var(--surface-soft) !important;
+  border-color: var(--border) !important;
+}
+
+html[data-theme='dark'] .decision-hints {
+  background: var(--surface-soft) !important;
+  border-color: var(--border) !important;
+}
+
+html[data-theme='dark'] .rule-flag {
+  color: var(--muted) !important;
+}
+
+html[data-theme='dark'] .review-rule.hit .rule-flag {
+  background: var(--amber-soft-2) !important;
+  color: var(--amber) !important;
+}
+
+html[data-theme='dark'] .rule-detail-list code {
+  color: var(--text) !important;
+}
+
+html[data-theme='dark'] .rule-detail-list em {
+  color: var(--muted) !important;
+}
+
+html[data-theme='dark'] .category-card {
+  background: var(--purple-soft) !important;
+  border-color: var(--purple-border) !important;
+}
+
+html[data-theme='dark'] .category-label {
+  color: var(--purple) !important;
+}
+
+html[data-theme='dark'] .workbench-head {
+  background: linear-gradient(120deg, var(--amber-soft), var(--amber-soft-2)) !important;
+  border-bottom-color: var(--amber-border) !important;
+}
+
+html[data-theme='dark'] .workbench-kicker,
+html[data-theme='dark'] .workbench-sub b {
+  color: var(--amber) !important;
+}
+
+html[data-theme='dark'] .prompt-modal-head {
+  background: linear-gradient(130deg, var(--purple-soft), var(--card)) !important;
+  border-bottom-color: var(--purple-border) !important;
+}
+
+html[data-theme='dark'] .hero {
+  background:
+    radial-gradient(700px 180px at 90% 10%, rgba(43, 108, 246, 0.14), transparent 70%),
+    linear-gradient(120deg, var(--brand-softer), var(--card)) !important;
+  border-color: var(--brand-border) !important;
+}
+
+html[data-theme='dark'] .hero-stats > div {
+  border-left-color: var(--border) !important;
+}
+
+html[data-theme='dark'] .result-hero {
+  background: linear-gradient(130deg, var(--brand-softer), var(--card)) !important;
+  border-color: var(--brand-border) !important;
+}
+
+html[data-theme='dark'] .result-hero.reject {
+  background: linear-gradient(130deg, var(--red-soft), var(--card)) !important;
+  border-color: var(--red-border) !important;
+}
+
+html[data-theme='dark'] .result-hero.review {
+  background: linear-gradient(130deg, var(--amber-soft), var(--card)) !important;
+  border-color: var(--amber-border) !important;
+}
+
+html[data-theme='dark'] .project-logo,
+html[data-theme='dark'] .provider-icon {
+  background: linear-gradient(145deg, var(--brand-soft), var(--brand-softer)) !important;
+  color: var(--brand-strong) !important;
+}
+
+html[data-theme='dark'] .mode-picker.classify {
+  background: linear-gradient(120deg, var(--purple-soft), var(--card)) !important;
+  border-color: var(--purple-border) !important;
+}
+
+html[data-theme='dark'] .ai-skill-card {
+  background: linear-gradient(120deg, var(--purple-soft), var(--card)) !important;
+  border-color: var(--purple-border) !important;
+}
+
+html[data-theme='dark'] .ai-skill-card strong {
+  color: var(--purple) !important;
+}
+
+html[data-theme='dark'] .ai-skill-card p {
+  color: var(--muted) !important;
+}
+
+html[data-theme='dark'] :is(.metric-value.skeleton, .loading-row) {
+  background: linear-gradient(90deg, var(--surface-soft), var(--surface-strong), var(--surface-soft)) !important;
+}
+
+/* Provider editor surfaces */
+html[data-theme='dark'] .protocol-row {
+  background: var(--surface-soft) !important;
+  border-color: var(--border) !important;
+}
+
+html[data-theme='dark'] .provider-protocol {
+  background: var(--brand-soft) !important;
+  color: var(--brand-strong) !important;
+}
+
+html[data-theme='dark'] .protocol-option.active,
+html[data-theme='dark'] .kind-card.active {
+  background: var(--brand-soft) !important;
+  border-color: var(--brand) !important;
+  color: var(--brand-strong) !important;
+}
+
+html[data-theme='dark'] .model-caps > span {
+  background: var(--surface-strong) !important;
+  color: var(--muted) !important;
+}
+
+html[data-theme='dark'] .model-caps > span.on {
+  background: var(--green-soft) !important;
+  color: var(--green) !important;
+}
+
+html[data-theme='dark'] .model-caps strong {
+  color: var(--ink) !important;
+}
+
+html[data-theme='dark'] .model-caps-source {
+  background: var(--purple-soft) !important;
+  color: var(--purple) !important;
+}
+
+html[data-theme='dark'] .form-hint code,
+html[data-theme='dark'] .modal-head code {
+  background: var(--surface-strong) !important;
+  color: var(--text) !important;
+}
+
+/* Integration guide surfaces */
+html[data-theme='dark'] .guide-tabs {
+  background: var(--surface-soft) !important;
+}
+
+html[data-theme='dark'] .guide-tabs button.active {
+  background: var(--card) !important;
+  color: var(--brand-strong) !important;
+}
+
+html[data-theme='dark'] .guide-tabs button.warning,
+html[data-theme='dark'] .guide-tabs button.warning.active {
+  color: var(--amber) !important;
+}
+
+html[data-theme='dark'] .guide-notice {
+  background: var(--brand-softer) !important;
+  border-color: var(--brand-border) !important;
+  color: var(--text) !important;
+}
+
+html[data-theme='dark'] .guide-notice strong {
+  color: var(--brand-strong) !important;
+}
+
+html[data-theme='dark'] .guide-notice p {
+  color: var(--muted) !important;
+}
+
+html[data-theme='dark'] .guide-notice .n-button__content {
+  color: var(--brand-strong) !important;
+}
+
+html[data-theme='dark'] .guide-notice.warning {
+  background: var(--amber-soft) !important;
+  border-color: var(--amber-border) !important;
+  color: var(--amber) !important;
+}
+
+html[data-theme='dark'] .guide-notice.warning strong {
+  color: var(--amber) !important;
+}
+
+html[data-theme='dark'] .no-credential {
+  color: var(--amber) !important;
+}
+
+html[data-theme='dark'] .no-credential p {
+  color: var(--amber) !important;
+}
+
+/* Task detail surfaces */
+html[data-theme='dark'] .route-item {
+  background: var(--red-soft) !important;
+}
+
+html[data-theme='dark'] .route-item.ok {
+  background: var(--green-soft) !important;
+}
+
+html[data-theme='dark'] .route-type {
+  background: var(--surface-strong) !important;
+  color: var(--muted) !important;
+}
+
+html[data-theme='dark'] .route-state {
+  color: var(--red) !important;
+}
+
+html[data-theme='dark'] .route-item.ok .route-state {
+  color: var(--green) !important;
+}
+
+html[data-theme='dark'] .route-duration {
+  color: var(--muted) !important;
+}
+
+html[data-theme='dark'] .hero-category {
+  background: var(--purple-soft) !important;
+  color: var(--purple) !important;
+}
+
+html[data-theme='dark'] .hero-category code,
+html[data-theme='dark'] .hero-category em {
+  color: var(--purple) !important;
+}
+
+html[data-theme='dark'] .soft-tag {
+  color: var(--text) !important;
+}
+
+html[data-theme='dark'] .role-preview-head strong {
+  color: var(--text) !important;
+}
+
+html[data-theme='dark'] :is(
+  .guide-note code, .guide-notice code, .credential-row code, .endpoint-box code,
+  .identity-copy code, .secret-modal > code, .code-head code
+) {
+  color: var(--text) !important;
+}
+
+html[data-theme='dark'] .export-summary {
+  background: var(--brand-softer) !important;
+  color: var(--brand-strong) !important;
+}
+
+html[data-theme='dark'] .export-summary span {
+  color: var(--muted) !important;
+}
