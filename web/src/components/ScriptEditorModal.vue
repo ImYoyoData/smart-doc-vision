@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { onBeforeRouteLeave } from 'vue-router'
 import { NButton, NIcon, NInput, NInputNumber, NModal, NPopover, NSelect, NSpin, NTabPane, NTabs, NTooltip, useThemeVars } from 'naive-ui'
 import { EditorView, basicSetup } from 'codemirror'
 import { Compartment } from '@codemirror/state'
@@ -246,6 +247,76 @@ const closePrimaryText = computed(() => {
   return '关闭'
 })
 
+// Every exit from the editor (close, external links, route changes, tab close)
+// must pass this guard while there are unsaved edits or a running AI request.
+const leaveConfirmShow = ref(false)
+const leaveTarget = ref('')
+let leaveAction: (() => void) | null = null
+let leaveRouteResolve: ((value: boolean) => void) | null = null
+const leaveTitle = computed(() =>
+  aiBusy.value ? 'AI 正在执行，确认离开？' : '脚本尚未保存，确认离开？',
+)
+const leaveMessage = computed(() => {
+  if (aiBusy.value && dirty.value) {
+    return '离开会停止当前 AI 请求，并丢失脚本与备注的未保存修改。'
+  }
+  if (aiBusy.value) {
+    return '当前 AI 脚本助手仍在生成内容，离开会停止请求，尚未保存的结果不会保留。'
+  }
+  return '当前脚本或备注有未保存的修改，离开后会丢失这些修改。'
+})
+const leaveConfirmText = computed(() => {
+  if (aiBusy.value && dirty.value) return '停止 AI 并放弃修改'
+  if (aiBusy.value) return '停止 AI 并离开'
+  return '放弃修改并离开'
+})
+
+function openLeaveConfirm(options: { action?: () => void; resolve?: (value: boolean) => void }) {
+  leaveAction = options.action || null
+  leaveRouteResolve = options.resolve || null
+  leaveConfirmShow.value = true
+}
+
+function cancelLeave() {
+  leaveConfirmShow.value = false
+  leaveAction = null
+  const resolve = leaveRouteResolve
+  leaveRouteResolve = null
+  resolve?.(false)
+}
+
+function confirmLeave() {
+  leaveConfirmShow.value = false
+  const action = leaveAction
+  const resolve = leaveRouteResolve
+  leaveAction = null
+  leaveRouteResolve = null
+  stopAiRequest()
+  resolve?.(true)
+  action?.()
+}
+
+function guardLeave(action: () => void, target: string) {
+  if (!dirty.value && !aiBusy.value) {
+    action()
+    return
+  }
+  leaveTarget.value = target
+  openLeaveConfirm({ action })
+}
+
+onBeforeRouteLeave(() => {
+  if (!props.show || (!dirty.value && !aiBusy.value)) return true
+  leaveTarget.value = '离开当前审核配置'
+  return new Promise<boolean>((resolve) => openLeaveConfirm({ resolve }))
+})
+
+function handleBeforeUnload(event: BeforeUnloadEvent) {
+  if (!props.show || (!dirty.value && !aiBusy.value)) return
+  event.preventDefault()
+  event.returnValue = ''
+}
+
 interface ApiDocItem {
   name: string
   detail: string
@@ -489,6 +560,9 @@ watch(() => props.show, (value) => {
   } else {
     closeConfirmShow.value = false
     apiShow.value = false
+    leaveConfirmShow.value = false
+    leaveAction = null
+    leaveRouteResolve = null
     stopAiRequest()
   }
 }, { immediate: true })
@@ -506,9 +580,11 @@ watch(isDark, () => {
 
 onMounted(() => {
   createEditor()
+  window.addEventListener('beforeunload', handleBeforeUnload)
 })
 
 onBeforeUnmount(() => {
+  window.removeEventListener('beforeunload', handleBeforeUnload)
   aiAbort?.abort()
   editorView?.destroy()
   editorView = null
@@ -624,9 +700,11 @@ function openSimulationConfig() {
 }
 
 function openProjectSecrets() {
-  const projectId = workspace.currentProjectId
-  const url = projectId ? `/projects?project=${projectId}&secrets=1` : '/projects'
-  window.open(url, '_blank', 'noopener')
+  guardLeave(() => {
+    const projectId = workspace.currentProjectId
+    const url = projectId ? `/projects?project=${projectId}&secrets=1` : '/projects'
+    window.open(url, '_blank', 'noopener')
+  }, '去配置项目密钥')
 }
 
 function splitSimulationLines(value: string) {
@@ -1392,6 +1470,25 @@ function handleAiKeydown(event: KeyboardEvent) {
         <n-button @click="closeConfirmShow = false">取消</n-button>
         <n-button v-if="dirty" type="error" secondary @click="discardAndClose">放弃修改并关闭</n-button>
         <n-button type="primary" @click="saveAndClose">{{ closePrimaryText }}</n-button>
+      </div>
+    </div>
+  </n-modal>
+
+  <n-modal v-model:show="leaveConfirmShow" :mask-closable="false" :close-on-esc="false">
+    <div class="script-confirm-modal" :class="{ 'script-theme-dark': isDark }">
+      <div class="script-confirm-body">
+        <span class="script-confirm-icon" :class="{ danger: aiBusy }">
+          <n-icon :component="aiBusy ? AlertCircleOutline : WarningOutline" />
+        </span>
+        <div>
+          <h3>{{ leaveTitle }}</h3>
+          <p>{{ leaveMessage }}</p>
+          <p v-if="leaveTarget" class="script-confirm-target">即将前往：{{ leaveTarget }}</p>
+        </div>
+      </div>
+      <div class="script-confirm-actions">
+        <n-button @click="cancelLeave">留在当前页</n-button>
+        <n-button type="error" @click="confirmLeave">{{ leaveConfirmText }}</n-button>
       </div>
     </div>
   </n-modal>
@@ -2757,6 +2854,22 @@ function handleAiKeydown(event: KeyboardEvent) {
   color: var(--muted);
   font-size: 11px;
   line-height: 1.7;
+}
+
+.script-confirm-target {
+  display: inline-block;
+  margin-top: 8px !important;
+  padding: 4px 9px;
+  border-radius: 6px;
+  background: #f1f5f9;
+  color: #475569 !important;
+  font-family: var(--mono);
+  font-size: 9.5px !important;
+}
+
+.script-confirm-modal.script-theme-dark .script-confirm-target {
+  background: #17243a;
+  color: #94a3b8 !important;
 }
 
 .script-confirm-actions {
