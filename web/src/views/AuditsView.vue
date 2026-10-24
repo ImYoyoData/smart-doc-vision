@@ -4484,7 +4484,7 @@ onMounted(async () => {
   font-size: 10px;
 }
 
-.assistant-step-icon svg {
+.assistant-step-icon :deep(svg) {
   width: 12px;
   height: 12px;
 }
@@ -4551,7 +4551,7 @@ onMounted(async () => {
   color: var(--brand-strong);
 }
 
-.assistant-starter-list button svg {
+.assistant-starter-list button :deep(svg) {
   width: 13px;
   height: 13px;
 }
