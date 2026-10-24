@@ -136,6 +136,10 @@ func (s *Server) createAudit(c *gin.Context) {
 	if !s.requireProjectAccess(c, project.ID) {
 		return
 	}
+	if err := s.validateRouteConnections(project.ID, req.Routes); err != nil {
+		badRequest(c, err.Error())
+		return
+	}
 	var provider model.AIProvider
 	if err := s.db.Where("id = ? AND project_id = ?", req.ProviderID, req.ProjectID).First(&provider).Error; err != nil {
 		badRequest(c, "所选模型供应商不属于当前项目")
@@ -185,7 +189,7 @@ func (s *Server) createAudit(c *gin.Context) {
 		serverError(c, err)
 		return
 	}
-	_ = createDefaultTriggers(s.db, project, audit)
+	_ = createDefaultTriggers(s.db, audit)
 	s.writeAudit(c, &audit.ProjectID, "AUDIT_CREATE", "AUDIT", fmt.Sprint(audit.ID), "SUCCESS",
 		map[string]any{"name": audit.Name, "code": audit.Code, "provider_id": provider.ID})
 	created(c, s.auditView(audit, provider.Name, provider.Kind))
@@ -271,6 +275,10 @@ func (s *Server) updateAudit(c *gin.Context) {
 	}
 	if len(req.Routes) > 0 && string(req.Routes) != "null" {
 		if err := validateRoutesJSON(req.Routes); err != nil {
+			badRequest(c, err.Error())
+			return
+		}
+		if err := s.validateRouteConnections(audit.ProjectID, req.Routes); err != nil {
 			badRequest(c, err.Error())
 			return
 		}
@@ -506,7 +514,7 @@ func (s *Server) populateAuditStats(audits []model.Audit) {
 	}
 }
 
-func createDefaultTriggers(db *gorm.DB, project model.Project, audit model.Audit) error {
+func createDefaultTriggers(db *gorm.DB, audit model.Audit) error {
 	defaults := []model.TriggerSource{
 		{
 			ProjectID: audit.ProjectID, AuditID: audit.ID, Type: model.TriggerOpenAPI,
@@ -516,25 +524,12 @@ func createDefaultTriggers(db *gorm.DB, project model.Project, audit model.Audit
 		{
 			ProjectID: audit.ProjectID, AuditID: audit.ID, Type: model.TriggerRedis,
 			Name: "Redis Stream", Priority: 20, Status: "DISABLED",
-			ConfigJSON: model.JSONBytes(map[string]any{
-				"stream":     "sdv:" + project.Code + ":audit:" + audit.Code,
-				"group":      fmt.Sprintf("sdv-cg-%d", audit.ID),
-				"batch_size": 16,
-			}),
+			StartPosition: "$", BatchSize: 16, MaxInflight: 1,
 		},
 		{
 			ProjectID: audit.ProjectID, AuditID: audit.ID, Type: model.TriggerWebSocket,
 			Name: "WebSocket", Priority: 30, Status: "DISABLED",
 			ConfigJSON: model.JSONBytes(map[string]any{}),
-		},
-		{
-			ProjectID: audit.ProjectID, AuditID: audit.ID, Type: model.TriggerPolling,
-			Name: "HTTP 定时轮询", Priority: 40, Status: "DISABLED",
-			ConfigJSON: model.JSONBytes(map[string]any{
-				"url": "", "method": "GET", "interval_sec": 60,
-				"items_path": "items", "cursor_path": "next_cursor",
-				"cursor_param": "cursor", "allow_private": false,
-			}),
 		},
 	}
 	for _, trigger := range defaults {
@@ -766,19 +761,21 @@ func validResult(v string) bool {
 }
 
 type routeActionInput struct {
-	Type      string            `json:"type"`
-	Method    string            `json:"method"`
-	URL       string            `json:"url"`
-	Headers   map[string]string `json:"headers"`
-	Params    map[string]string `json:"params"`
-	Body      string            `json:"body"`
-	TimeoutMS int               `json:"timeout_ms"`
-	Command   string            `json:"command"`
-	Target    string            `json:"target"`
-	Payload   string            `json:"payload"`
-	Remark    string            `json:"remark"`
-	Script    string            `json:"script"`
-	MemoryMB  int               `json:"memory_mb"`
+	Type         string            `json:"type"`
+	Method       string            `json:"method"`
+	URL          string            `json:"url"`
+	Headers      map[string]string `json:"headers"`
+	Params       map[string]string `json:"params"`
+	Body         string            `json:"body"`
+	TimeoutMS    int               `json:"timeout_ms"`
+	Command      string            `json:"command"`
+	Target       string            `json:"target"`
+	Payload      string            `json:"payload"`
+	ConnectionID uint64            `json:"connection_id"`
+	DB           int               `json:"db"`
+	Remark       string            `json:"remark"`
+	Script       string            `json:"script"`
+	MemoryMB     int               `json:"memory_mb"`
 }
 
 type resultRouteInput struct {
@@ -831,6 +828,12 @@ func validateRoutesJSON(raw []byte) error {
 					return fmt.Errorf("%s的 url 必须以 ws:// 或 wss:// 开头", label)
 				}
 			case "redis":
+				if action.ConnectionID == 0 {
+					return fmt.Errorf("%s必须选择项目 Redis 连接", label)
+				}
+				if action.DB < 0 || action.DB > 255 {
+					return fmt.Errorf("%s的 db 需在 0~255 之间", label)
+				}
 				if strings.TrimSpace(action.Target) == "" {
 					return fmt.Errorf("%s缺少 target", label)
 				}
@@ -845,6 +848,34 @@ func validateRoutesJSON(raw []byte) error {
 				}
 			default:
 				return fmt.Errorf("%s的类型 %q 不合法，仅支持 http/websocket/redis/js", label, action.Type)
+			}
+		}
+	}
+	return nil
+}
+
+func (s *Server) validateRouteConnections(projectID uint64, raw []byte) error {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var routes map[string]resultRouteInput
+	if err := json.Unmarshal(raw, &routes); err != nil {
+		return nil
+	}
+	for result, route := range routes {
+		for index, action := range route.Actions {
+			if !strings.EqualFold(strings.TrimSpace(action.Type), "redis") {
+				continue
+			}
+			var connection model.RedisConnection
+			if err := s.db.Where("id = ? AND project_id = ?", action.ConnectionID, projectID).First(&connection).Error; err != nil {
+				return fmt.Errorf("%s 的第 %d 个 Redis 动作引用的连接不存在或不属于当前项目", result, index+1)
+			}
+			if connection.Status != model.RedisConnectionActive {
+				return fmt.Errorf("%s 的第 %d 个 Redis 动作引用的连接「%s」已停用", result, index+1, connection.Name)
+			}
+			if !connection.LastTestOK || connection.Health != model.RedisHealthOK {
+				return fmt.Errorf("%s 的第 %d 个 Redis 动作引用的连接「%s」未通过连接测试", result, index+1, connection.Name)
 			}
 		}
 	}

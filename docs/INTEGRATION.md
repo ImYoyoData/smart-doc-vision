@@ -12,7 +12,7 @@
 |---|---|
 | 项目 Project | 配置、凭证、任务、统计的隔离边界。项目编码 `project_code` 全局唯一。 |
 | 审核配置 Audit | 一套审核流程，以项目内唯一的审核编码 `audit_code` 标识。 |
-| 触发方式 Trigger | 审核配置的输入开关：开放 API、Redis Stream、WebSocket、HTTP 轮询。 |
+| 触发方式 Trigger | 审核配置的输入开关：开放 API、Redis Stream、WebSocket。 |
 | 任务 Task | 一次审核实例，`task_no` 全局唯一。 |
 | 结果 Result | `PASS` 通过 / `REJECT` 不通过 / `REVIEW` 待议 / `UNKNOWN` 未判定。 |
 | 待议复核 | 模型无法确定或规则命中 REVIEW 时进入人工复核，复核后触发最终路由。 |
@@ -107,7 +107,7 @@ DELETE /api/admin/v1/projects/{pid}/credentials/{cid}
 
 ---
 
-## 4. 开放 API（4 种触发之一）
+## 4. 开放 API（3 种触发之一）
 
 ### 4.1 鉴权
 
@@ -271,10 +271,12 @@ GET /open/v1/projects/{project_code}/tasks/{task_no}
 
 审核配置启用 Redis 触发后，平台在 5 秒内启动消费者：
 
-- 使用平台 Redis（当前 **DB 3**）；
-- Stream 与消费组由审核配置中的触发源设置决定；
-- 消费组默认 `sdv-cg-{audit_id}`；
+- 使用当前项目「数据连接」中选定的业务 Redis 连接和 DB 编号（0~255），不使用平台缓存 Redis；
+- Stream、消费组、消费起点、批量大小、最大并发由审核配置中的触发源设置决定；
+- 消费组默认 `sdv-cg-{audit_id}`；消费起点可选 `$`（只消费新消息）或 `0`（从头消费）；
+- 一个 `(连接, DB, Stream)` 只允许一个审核消费，不做同队列多审核广播；
 - 支持多个平台 Worker 实例共享同一消费组；
+- 连接停用或网络故障时触发源自动暂停；网络恢复后按连接的「自动恢复触发源」决定是否恢复；
 - 非法消息会 ACK 并写入 `{stream}:dlq`。
 
 ### 5.2 默认键
@@ -285,12 +287,14 @@ group:  sdv-cg-{audit_id}
 dlq:    {stream}:dlq
 ```
 
+DB 由审核触发源单独选择，不在连接配置里固定。
+
 ### 5.3 消息格式
 
-Stream 消息必须有一个 `data` 字段（兼容 `payload`），其值为 TaskInput JSON 字符串：
+Stream 消息必须有一个 `data` 字段（兼容 `payload`），其值为 TaskInput JSON 字符串。`-n` 后面是审核触发源中选择的 DB 编号：
 
 ```bash
-redis-cli -n 3 XADD sdv:smartdoc-demo:audit:archive_review '*' data '{
+redis-cli -n {db} XADD sdv:smartdoc-demo:audit:archive_review '*' data '{
   "biz_key": "archive:2026:0001",
   "media": [{"type":"text","content":"待审核的档案文本"}],
   "ext": {"scene":"archive_review"}
@@ -301,11 +305,12 @@ redis-cli -n 3 XADD sdv:smartdoc-demo:audit:archive_review '*' data '{
 
 ### 5.4 启用步骤
 
-1. 审核配置 → 接入指南 → Redis；
-2. 填写 Stream / 消费组 / 批量大小；
-3. 打开开关；
-4. 使用 XADD 写入消息；
-5. 在任务中心筛选来源 `REDIS` 查看结果。
+1. 项目空间 → 数据连接 → 新增 Redis 连接，填写地址/账号密码并测试连接；
+2. 审核配置 → 接入指南 → Redis；
+3. 选择当前项目已启用且测试成功的连接，填写 DB、Stream、消费组、消费起点、批量大小和最大并发；
+4. 打开开关；平台会校验连接、DB、Stream 和消费组，并拒绝已被其他审核占用的队列；
+5. 使用 XADD 向对应 DB/Stream 写入消息；
+6. 在任务中心筛选来源 `REDIS` 查看结果。
 
 ---
 
@@ -390,62 +395,9 @@ Path 不包含 query string。
 
 ---
 
-## 7. HTTP 定时轮询触发
+## 7. 审核结果回调
 
-适合业务方只提供查询接口的场景。
-
-### 7.1 配置项
-
-| 配置 | 说明 |
-|---|---|
-| url | 业务查询接口 |
-| interval_sec | 10~86400 秒 |
-| items_path | 任务数组 JSON 路径，默认 `items` |
-| cursor_path | 下一游标 JSON 路径，默认 `next_cursor` |
-| cursor_param | 首次及后续光标查询参数，默认 `cursor` |
-| auth_header | 可选，平台请求业务接口时附加的 Header 名 |
-| secret | 可选，认证 Header 的值，加密保存 |
-| allow_private | 是否允许访问内网地址；默认 false |
-
-### 7.2 请求
-
-平台发起：
-
-```http
-GET {url}?cursor={cursor}
-```
-
-首次 cursor 为空字符串。后续使用上一次响应中的 `next_cursor`。若请求方式为 POST，平台会发送：
-
-```json
-{ "cursor": "..." }
-```
-
-### 7.3 响应
-
-```json
-{
-  "items": [
-    {
-      "biz_key": "archive:2026:0001",
-      "media": [{ "type": "text", "content": "待审核文本" }],
-      "ext": { "scene": "archive_review" },
-      "callback_url": "https://your-service.example.com/callback"
-    }
-  ],
-  "next_cursor": "eyJpZCI6MTAwfQ=="
-}
-```
-
-- `items` 中的每一项必须是完整的 TaskInput。
-- 游标持久化在数据库中，服务重启后从断点继续。
-- 连续失败 5 次会把触发源自动暂停，并在接入指南中显示错误。
-
----
-
-## 8. 审核结果回调
-
-### 8.1 配置
+### 7.1 配置
 
 在接入指南 → 结果回调中配置：
 
@@ -460,7 +412,7 @@ GET {url}?cursor={cursor}
 
 > 自动审核产生 `REVIEW_PENDING` 时**不会**回调；人工复核完成后，按最终 PASS/REJECT 触发回调。这样业务方只收到最终结论。
 
-### 8.2 回调体
+### 7.2 回调体
 
 ```json
 {
@@ -500,7 +452,7 @@ GET {url}?cursor={cursor}
 
 分类审核会额外返回 `category`、`category_name`、`category_confidence`；合规审核这三个字段为空。业务方应按 `result` 处理终审结论，分类字段只用于业务分流和统计。
 
-### 8.3 请求 Header
+### 7.3 请求 Header
 
 ```http
 Content-Type: application/json
@@ -524,7 +476,7 @@ if not hmac.compare_digest(expected, request.headers["X-SmartDoc-Signature"]):
 - 失败按 1s / 2s / 4s 重试 3 次。
 - 最终失败会写入任务详情的 `result_detail.callback`，并记录审计。
 
-### 8.4 WebSocket 回调
+### 7.4 WebSocket 回调
 
 `callback_url` 使用 `ws://` 或 `wss://` 时，平台按 WebSocket 推送结果：
 
@@ -532,7 +484,7 @@ if not hmac.compare_digest(expected, request.headers["X-SmartDoc-Signature"]):
 2. 连接建立后发送一条 UTF-8 JSON 文本帧，内容与 8.2 的回调体一致；
 3. 帧发送成功即视为回调成功，失败同样重试 3 次；连接在发送后关闭，业务方如需长期订阅请使用 WebSocket 触发或在业务侧持久化。
 
-### 8.5 结果动作编排
+### 7.5 结果动作编排
 
 除统一业务回调外，审核配置还可以按 PASS / REJECT / REVIEW 分别编排结果动作，动作在结果落库前执行，执行记录写入 `result_detail.routes`：
 
@@ -540,7 +492,7 @@ if not hmac.compare_digest(expected, request.headers["X-SmartDoc-Signature"]):
 |---|---|---|---|
 | http | url | method、params、headers、body、timeout_ms | params/headers 为字符串字典；body 留空发送标准结果 JSON |
 | websocket | url（ws/wss） | headers、payload、timeout_ms | headers 用于握手鉴权；payload 留空发送标准结果 JSON |
-| redis | target | command（publish/set/xadd）、payload | 写入平台 Redis DB 3；payload 留空发送标准结果 JSON |
+| redis | connection_id、db、target | command（publish/set/xadd）、payload | 使用项目 Redis 连接写入指定 DB；payload 留空发送标准结果 JSON |
 | js | script | remark、timeout_ms、memory_mb | 入口 `function main(ctx)`；可用 `ctx.mysql` / `ctx.pg` / `ctx.http` / `ctx.crypto` / `ctx.secret`；不提供文件、socket、eval、定时器 |
 
 每个结论可配置 `on_error`：`continue` 继续执行、`stop` 停止后续动作、`to_review` 转人工复核。模板变量：`${task_no}`、`${task_id}`、`${biz_key}`、`${source_type}`、`${project_code}`、`${project_id}`、`${audit_code}`、`${audit_id}`、`${result}`、`${summary}`、`${reasons}`、`${labels}`、`${risk_level}`、`${score}`、`${category}`、`${category_name}`、`${category_confidence}`、`${review_note}`。
@@ -557,31 +509,21 @@ if not hmac.compare_digest(expected, request.headers["X-SmartDoc-Signature"]):
 
 ---
 
-## 9. MySQL 与“定时读取数据库”
+## 8. MySQL 与业务数据库
 
-标准四种触发方式中**没有直连业务 MySQL**：
+标准三种触发方式中**没有直连业务 MySQL**，也**没有 HTTP/MySQL 轮询**：
 
 - 平台用 MySQL 存储项目、审核配置、任务、审计与统计；
 - 平台不持有业务库长期账号，避免权限扩散；
 - 不同业务表结构和增量规则差异大，直接配置 SQL 难以保证安全。
 
-推荐做法：业务侧提供一个只读查询接口（接口内部查自己的 MySQL），使用 HTTP 定时轮询触发。示例：
+推荐做法：业务方自行查询自己的 MySQL、完成字段脱敏和增量控制，然后把每一行转换成 TaskInput，通过开放 API、Redis Stream 或 WebSocket 主动推送给平台。
 
-```sql
-SELECT id, biz_key, media_json, ext_json
-FROM archive_audit_inbox
-WHERE id > ?
-ORDER BY id ASC
-LIMIT 100;
-```
-
-业务接口把每一行转换为 TaskInput，并返回 `items` + `next_cursor` 即可。
-
-如果确实需要平台直连业务 MySQL，需要新增“只读数据源 + SQL 映射”扩展，并配置：加密 DSN、仅 SELECT 白名单、游标字段、字段映射、脱敏规则和连接池上限。当前版本未开放该项。
+如果确实需要平台直连业务 MySQL，需要新增独立的数据源扩展，并配置：加密 DSN、仅 SELECT 白名单、游标字段、字段映射、脱敏规则和连接池上限。当前版本未开放该项。
 
 ---
 
-## 10. 权限范围
+## 9. 权限范围
 
 - AppKey / AppSecret 属于**项目**，但每条凭证可在「接入凭证」页面单独勾选审核配置范围。
 - 开放 API 与 WebSocket 还要求目标审核配置的对应触发开关已启用，且审核配置存在。
@@ -589,11 +531,11 @@ LIMIT 100;
 - 未启用开放 API 的审核会返回 `TRIGGER_DISABLED`。
 - 分页、查询、回调配置等管理操作走后台登录会话和角色权限，AppKey 不能调用管理 API。
 - 项目管理员可在「接入凭证」页面轮换或删除凭证；轮换后旧签名请求立即失效。
-- 回调密钥和轮询认证值均加密存储，接口不回传明文。
+- 回调密钥和 Redis 连接密码均加密存储，接口不回传明文。
 
 ---
 
-## 11. 错误码
+## 10. 错误码
 
 | HTTP | code | 含义 |
 |---|---|---|
@@ -625,23 +567,22 @@ AI 提示词不是一份泛化总览，而是按触发方式拆分：
 | 开放 API | HMAC CanonicalString、Header、签名、任务查询、错误码和异步等待 |
 | Redis Stream | 业务侧只做 XADD 消息生产；不创建平台消费组；结果通过回调或 biz_key 查询 |
 | WebSocket | 带签名连接 URL、submit/ack/result 帧关联、心跳、断线和重连 |
-| HTTP 轮询 | 业务侧只读查询接口、items 结构、cursor 分页与幂等读取 |
 
 每个审核配置的「接入指南 → 总览」提供：
 
 - **按触发方式复制提示词**：先勾选一种或多种方式，再复制对应专用提示词；多选时会生成组合提示词，并保留每种方式的独立适配要求。
-- **下载统一 Skill.md**：包含四种触发方式，并在开头明确要求编码助手先询问业务方采用哪一种或哪几种方式；如果业务方选择多种，则分别实现适配器。
+- **下载统一 Skill.md**：包含三种触发方式，并在开头明确要求编码助手先询问业务方采用哪一种或哪几种方式；如果业务方选择多种，则分别实现适配器。
 - **复制文档地址**：复制当前后台的完整文档 URL。
-- 指南内同时也提供可直接执行的签名 cURL、Redis 命令、WebSocket 地址和轮询响应示例。
+- 指南内同时也提供可直接执行的签名 cURL、Redis 命令和 WebSocket 地址示例。
 
-「对接文档」页顶部也提供相同的按方式选择弹窗，并在开放 API、Redis、WebSocket、HTTP 轮询四个章节分别提供专用提示词按钮。
+「对接文档」页顶部也提供相同的按方式选择弹窗，并在开放 API、Redis、WebSocket 三个章节分别提供专用提示词按钮。
 
 AppSecret 不会写入提示词，请在 AI 生成的代码中通过环境变量 `SMARTDOC_APP_SECRET` 注入。
 
-## 12. 常见问题
+## 11. 常见问题
 
 **Q：我配置了新审核，怎么触发？**
-A：打开该审核的「接入指南」。默认开放 API 是启用的；其他方式需要在该页面手动开启。开启后可复制带签名的 cURL、Stream 命令、WebSocket 地址或轮询配置。
+A：打开该审核的「接入指南」。默认开放 API 是启用的；Redis 和 WebSocket 需要在该页面手动开启。Redis 还需要先在「数据连接」创建并测试项目 Redis 连接。
 
 **Q：审核编码在哪里复制？**
 A：审核卡片的「更多 → 复制审核编码」，或者接入指南顶部的「复制审核编码」。调用开放 API 时路径需要同时带项目编码和审核编码。
@@ -649,8 +590,8 @@ A：审核卡片的「更多 → 复制审核编码」，或者接入指南顶�
 **Q：为什么开放 API 返回 403 TRIGGER_DISABLED？**
 A：审核配置的开放 API 开关被关闭，或审核本身未启用。
 
-**Q：为什么 Redis/轮询没有消费？**
-A：检查接入指南中的开关状态、Stream/Group 或 URL 配置，以及最近错误；轮询连续失败 5 次会自动暂停。配置修改后最多 5 秒生效。
+**Q：为什么 Redis 没有消费？**
+A：依次检查：项目中 Redis 连接是否启用且测试成功；触发源是否启用；DB、Stream、消费组是否填写正确；连接健康状态是否为 OK。连接停用或网络故障会自动暂停触发源，网络恢复后按「自动恢复触发源」配置决定是否恢复；管理员手动停用连接后需要手动恢复触发源。配置修改后最多 5 秒生效。
 
 **Q：回调里为什么没有内容？**
 A：检查 `callback_include_content` 是否开启，以及回调是否在最终结论后触发。待议任务必须先经过人工复核。

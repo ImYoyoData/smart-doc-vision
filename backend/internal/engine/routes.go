@@ -16,6 +16,7 @@ import (
 
 	"smartdoc-vision/backend/internal/media"
 	"smartdoc-vision/backend/internal/model"
+	"smartdoc-vision/backend/internal/redisconn"
 )
 
 type routeConfig struct {
@@ -25,19 +26,21 @@ type routeConfig struct {
 }
 
 type routeAction struct {
-	Type      string            `json:"type"`
-	Method    string            `json:"method"`
-	URL       string            `json:"url"`
-	Headers   map[string]string `json:"headers"`
-	Params    map[string]string `json:"params"`
-	Body      string            `json:"body"`
-	TimeoutMS int               `json:"timeout_ms"`
-	Command   string            `json:"command"`
-	Target    string            `json:"target"`
-	Payload   string            `json:"payload"`
-	Remark    string            `json:"remark"`
-	Script    string            `json:"script"`
-	MemoryMB  int               `json:"memory_mb"`
+	Type         string            `json:"type"`
+	Method       string            `json:"method"`
+	URL          string            `json:"url"`
+	Headers      map[string]string `json:"headers"`
+	Params       map[string]string `json:"params"`
+	Body         string            `json:"body"`
+	TimeoutMS    int               `json:"timeout_ms"`
+	Command      string            `json:"command"`
+	Target       string            `json:"target"`
+	Payload      string            `json:"payload"`
+	ConnectionID uint64            `json:"connection_id"`
+	DB           int               `json:"db"`
+	Remark       string            `json:"remark"`
+	Script       string            `json:"script"`
+	MemoryMB     int               `json:"memory_mb"`
 }
 
 // actionError carries the failure category and script execution id back to the
@@ -318,8 +321,29 @@ func (e *Engine) executeWebSocketAction(render routeRender, action routeAction) 
 }
 
 func (e *Engine) executeRedisAction(render routeRender, action routeAction) error {
-	if e.redis == nil {
-		return fmt.Errorf("Redis 未配置")
+	if action.ConnectionID == 0 {
+		return fmt.Errorf("Redis 动作必须选择项目 Redis 连接")
+	}
+	var connection model.RedisConnection
+	if err := e.db.Where("id = ? AND project_id = ?", action.ConnectionID, render.Project.ID).First(&connection).Error; err != nil {
+		return fmt.Errorf("Redis 连接不存在或不属于当前项目")
+	}
+	if connection.Status != model.RedisConnectionActive {
+		return fmt.Errorf("Redis 连接「%s」已停用", connection.Name)
+	}
+	if !connection.LastTestOK || connection.Health != model.RedisHealthOK {
+		return fmt.Errorf("Redis 连接「%s」未通过连接测试", connection.Name)
+	}
+	password := ""
+	if connection.PasswordEnc != "" {
+		decrypted, err := e.cipher.Decrypt(connection.PasswordEnc)
+		if err != nil {
+			return fmt.Errorf("Redis 连接密码解密失败")
+		}
+		password = decrypted
+	}
+	if action.DB < 0 || action.DB > 255 {
+		return fmt.Errorf("Redis DB 编号需在 0~255 之间")
 	}
 	target := renderString(action.Target, render)
 	if target == "" {
@@ -330,15 +354,17 @@ func (e *Engine) executeRedisAction(render routeRender, action routeAction) erro
 		raw, _ := json.Marshal(routePayload(render))
 		payload = string(raw)
 	}
+	client := redisconn.New(connection, password, action.DB)
+	defer client.Close()
 	ctx, cancel := context.WithTimeout(e.ctx, 5*time.Second)
 	defer cancel()
 	switch strings.ToLower(strings.TrimSpace(action.Command)) {
 	case "xadd":
-		return e.redis.XAdd(ctx, &redis.XAddArgs{Stream: target, Values: map[string]any{"data": payload}}).Err()
+		return client.XAdd(ctx, &redis.XAddArgs{Stream: target, Values: map[string]any{"data": payload}}).Err()
 	case "set":
-		return e.redis.Set(ctx, target, payload, 0).Err()
+		return client.Set(ctx, target, payload, 0).Err()
 	default:
-		return e.redis.Publish(ctx, target, payload).Err()
+		return client.Publish(ctx, target, payload).Err()
 	}
 }
 

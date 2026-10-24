@@ -1,8 +1,12 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { NButton, NIcon, NInput, NInputNumber, NPopover, NSelect, NSwitch, NTabPane, NTabs, NTag } from 'naive-ui'
 import { AddOutline, ArrowDownOutline, ArrowUpOutline, HelpCircleOutline, TrashOutline } from '@vicons/ionicons5'
 import ScriptEditorModal from '@/components/ScriptEditorModal.vue'
+import { redisConnectionApi } from '@/api'
+import type { RedisConnection } from '@/api/types'
+import { useWorkspaceStore } from '@/stores/workspace'
 
 interface RouteAction {
   type: string
@@ -15,6 +19,8 @@ interface RouteAction {
   command?: string
   target?: string
   payload?: string
+  connection_id?: number
+  db?: number
   remark?: string
   script?: string
   memory_mb?: number
@@ -30,6 +36,52 @@ type RouteMap = Record<string, RouteConfig>
 
 const props = defineProps<{ modelValue: string; auditId?: number }>()
 const emit = defineEmits<{ (e: 'update:modelValue', value: string): void }>()
+const workspace = useWorkspaceStore()
+const router = useRouter()
+const connections = ref<RedisConnection[]>([])
+const loadingConnections = ref(false)
+
+const connectionOptions = computed(() => connections.value.map((connection) => {
+  const unavailable = connection.status !== 'ACTIVE' || !connection.last_test_ok || connection.health !== 'OK'
+  const suffix = connection.status !== 'ACTIVE'
+    ? ' · 已停用'
+    : !connection.last_test_ok || connection.health !== 'OK'
+      ? ' · 未通过测试'
+      : ''
+  return {
+    label: `${connection.name} · ${connection.addr}${suffix}`,
+    value: connection.id,
+    disabled: unavailable,
+  }
+}))
+
+async function loadConnections() {
+  if (!workspace.currentProjectId) {
+    connections.value = []
+    return
+  }
+  loadingConnections.value = true
+  try {
+    const data = await redisConnectionApi.list(workspace.currentProjectId)
+    connections.value = data.items
+  } catch {
+    connections.value = []
+  } finally {
+    loadingConnections.value = false
+  }
+}
+
+onMounted(() => {
+  void loadConnections()
+})
+
+watch(() => workspace.currentProjectId, () => {
+  void loadConnections()
+})
+
+function goConnections() {
+  router.push({ name: 'connections' })
+}
 
 const results = [
   { key: 'PASS', label: '通过 PASS' },
@@ -62,7 +114,7 @@ const templateVarGroups = [
       { name: 'task_no', desc: '任务号，平台生成的任务唯一编号', form: '字符串，SDV + 14 位时间 + 6 位大写 hex，如 SDV20261023233001A1B2C3' },
       { name: 'task_id', desc: '任务内部自增 ID', form: '整数，如 1024' },
       { name: 'biz_key', desc: '业务方提交时携带的业务主键', form: '字符串，可能为空' },
-      { name: 'source_type', desc: '任务来源', form: '枚举：OPENAPI / ADMIN / REDIS / POLLING / WEBSOCKET' },
+      { name: 'source_type', desc: '任务来源', form: '枚举：OPENAPI / ADMIN / REDIS / WEBSOCKET' },
       { name: 'project_code', desc: '项目编码', form: '字符串，如 arch-review' },
       { name: 'project_id', desc: '项目内部 ID', form: '整数' },
       { name: 'audit_code', desc: '审核配置编码', form: '字符串，如 doc-audit' },
@@ -127,6 +179,8 @@ function normalizeAction(input: any): RouteAction {
     action.command = input?.command || 'publish'
     action.target = input?.target || ''
     action.payload = input?.payload || ''
+    action.connection_id = Number(input?.connection_id) || 0
+    action.db = Number(input?.db) || 0
   } else if (action.type === 'js') {
     action.remark = input?.remark || ''
     action.script = input?.script || ''
@@ -180,7 +234,7 @@ watch(draft, commit, { deep: true })
 
 function newAction(type: string): RouteAction {
   if (type === 'websocket') return { type, url: '', headers: {}, payload: '', timeout_ms: 10000 }
-  if (type === 'redis') return { type, command: 'publish', target: '', payload: '' }
+  if (type === 'redis') return { type, command: 'publish', target: '', payload: '', connection_id: 0, db: 0 }
   if (type === 'js') return { type, remark: '', script: '', timeout_ms: 5000, memory_mb: 0 }
   return { type: 'http', method: 'POST', url: '', headers: {}, params: {}, body: '', timeout_ms: 10000 }
 }
@@ -401,8 +455,26 @@ function actionTitle(action: RouteAction, index: number): string {
           </div>
 
           <div v-else-if="action.type === 'redis'" class="action-grid">
+            <div class="field">
+              <label>Redis 连接 <span>只能选择当前项目已启用且测试成功的连接</span></label>
+              <n-select
+                v-model:value="action.connection_id"
+                :options="connectionOptions"
+                :loading="loadingConnections"
+                size="small"
+                clearable
+                placeholder="选择项目 Redis 连接"
+              />
+              <div v-if="!loadingConnections && !connectionOptions.some((item) => !item.disabled)" class="form-hint">
+                当前项目没有可用 Redis 连接，请先到
+                <n-button text type="primary" size="tiny" @click="goConnections">数据连接</n-button>
+                新增并测试。
+              </div>
+            </div>
             <div class="field-inline">
-              <n-select v-model:value="action.command" :options="redisCommands" size="small" style="width: 160px" />
+              <n-select v-model:value="action.command" :options="redisCommands" size="small" style="width: 150px" />
+              <span>DB</span>
+              <n-input-number v-model:value="action.db" size="small" :min="0" :max="255" style="width: 100px" />
               <n-input v-model:value="action.target" size="small" placeholder="频道 / 键 / Stream 名称，支持模板变量" />
             </div>
             <div class="field">

@@ -201,7 +201,6 @@ const sourceOptions = [
   { label: '开放 API', value: 'OPENAPI' },
   { label: 'Redis', value: 'REDIS' },
   { label: 'WebSocket', value: 'WEBSOCKET' },
-  { label: '定时轮询', value: 'POLLING' },
 ]
 
 function sourceLabel(source?: string) {

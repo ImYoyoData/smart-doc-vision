@@ -228,6 +228,25 @@ export interface Audit {
   deleted_at?: string | null
 }
 
+export interface RedisConnection {
+  id: number
+  project_id: number
+  name: string
+  addr: string
+  username: string
+  tls: boolean
+  status: 'ACTIVE' | 'DISABLED' | string
+  health: 'UNKNOWN' | 'OK' | 'UNHEALTHY' | string
+  auto_resume_triggers: boolean
+  last_test_at?: string | null
+  last_test_ok: boolean
+  last_test_ms: number
+  last_test_message: string
+  has_password: boolean
+  created_at: string
+  updated_at: string
+}
+
 export interface TriggerSource {
   id: number
   project_id: number
@@ -237,6 +256,15 @@ export interface TriggerSource {
   config: Record<string, any>
   priority: number
   status: string
+  redis_connection_id?: number | null
+  redis_db: number
+  stream: string
+  consumer_group: string
+  start_position: string
+  batch_size: number
+  max_inflight: number
+  pause_reason: string
+  auto_paused: boolean
   secret_set: boolean
   cursor: string
   last_consume_at?: string | null
@@ -253,6 +281,13 @@ export interface TriggerUpdate {
   secret?: string
   status?: string
   priority?: number
+  redis_connection_id?: number
+  redis_db?: number
+  stream?: string
+  consumer_group?: string
+  start_position?: string
+  batch_size?: number
+  max_inflight?: number
 }
 
 export interface CredentialScope {
@@ -328,9 +363,15 @@ export interface IntegrationGuide {
   }
   redis: {
     enabled: boolean
+    connection_id?: number | null
+    connection_name?: string
+    connection_addr?: string
+    db?: number
     stream: string
     group: string
+    start_position?: string
     batch_size: number
+    max_inflight?: number
     message_field: string
     example: Record<string, any>
     xadd_command: string
@@ -345,12 +386,6 @@ export interface IntegrationGuide {
     canonical: string
     submit_frame: Record<string, any>
     ack_frame: Record<string, any>
-  }
-  polling: {
-    enabled: boolean
-    config: Record<string, any>
-    response_contract: Record<string, any>
-    note: string
   }
   callback: {
     enabled: boolean
@@ -607,6 +642,15 @@ export interface AuditAssistantConfig {
   on_model_fail: string
   dedupe_window_sec: number
   triggers?: Record<string, string>
+  redis_trigger?: {
+    connection_id: number
+    db: number
+    stream: string
+    consumer_group?: string
+    start_position?: string
+    batch_size?: number
+    max_inflight?: number
+  }
 }
 
 export interface AuditAssistantResult {

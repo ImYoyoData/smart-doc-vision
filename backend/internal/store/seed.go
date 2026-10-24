@@ -2,7 +2,6 @@ package store
 
 import (
 	"errors"
-	"fmt"
 	"log"
 	"strings"
 
@@ -380,19 +379,7 @@ func (s *Seeder) ensureAuditTriggers() error {
 	if err := s.DB.Where("deleted_at IS NULL").Find(&audits).Error; err != nil {
 		return err
 	}
-	var projects []model.Project
-	if err := s.DB.Find(&projects).Error; err != nil {
-		return err
-	}
-	projectMap := map[uint64]model.Project{}
-	for _, p := range projects {
-		projectMap[p.ID] = p
-	}
 	for _, audit := range audits {
-		project, ok := projectMap[audit.ProjectID]
-		if !ok {
-			continue
-		}
 		defaults := []struct {
 			Type   string
 			Name   string
@@ -400,16 +387,7 @@ func (s *Seeder) ensureAuditTriggers() error {
 			Config any
 		}{
 			{model.TriggerOpenAPI, "开放 API", "ACTIVE", map[string]any{"sync_wait_ms": 3000}},
-			{model.TriggerRedis, "Redis Stream", "DISABLED", map[string]any{
-				"stream": "sdv:" + project.Code + ":audit:" + audit.Code,
-				"group":  "sdv-cg-" + fmt.Sprint(audit.ID), "batch_size": 16,
-			}},
 			{model.TriggerWebSocket, "WebSocket", "DISABLED", map[string]any{}},
-			{model.TriggerPolling, "HTTP 定时轮询", "DISABLED", map[string]any{
-				"url": "", "method": "GET", "interval_sec": 60,
-				"items_path": "items", "cursor_path": "next_cursor", "cursor_param": "cursor",
-				"allow_private": false,
-			}},
 		}
 		for _, item := range defaults {
 			var count int64
@@ -418,10 +396,19 @@ func (s *Seeder) ensureAuditTriggers() error {
 				continue
 			}
 			ts := model.TriggerSource{
-				ProjectID: project.ID, AuditID: audit.ID, Type: item.Type, Name: item.Name,
+				ProjectID: audit.ProjectID, AuditID: audit.ID, Type: item.Type, Name: item.Name,
 				Status: item.Status, ConfigJSON: model.JSONBytes(item.Config), Priority: 10,
 			}
 			_ = s.DB.Create(&ts).Error
+		}
+		var redisCount int64
+		_ = s.DB.Model(&model.TriggerSource{}).Where("audit_id = ? AND type = ?", audit.ID, model.TriggerRedis).Count(&redisCount).Error
+		if redisCount == 0 {
+			_ = s.DB.Create(&model.TriggerSource{
+				ProjectID: audit.ProjectID, AuditID: audit.ID, Type: model.TriggerRedis,
+				Name: "Redis Stream", Status: "DISABLED", Priority: 20,
+				StartPosition: "$", BatchSize: 16, MaxInflight: 1,
+			}).Error
 		}
 	}
 	return nil

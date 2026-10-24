@@ -139,7 +139,7 @@ func (e *Engine) signal() {
 
 func (e *Engine) projectLimit(projectID uint64) int {
 	var project model.Project
-	if err := e.db.Select("id", "max_concurrent_tasks").First(&project, projectID).Error; err != nil {
+	if err := e.db.Select("id", "max_concurrent").First(&project, projectID).Error; err != nil {
 		return 1
 	}
 	value := project.MaxConcurrent

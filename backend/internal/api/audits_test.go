@@ -26,7 +26,7 @@ func TestValidateRoutesJSON(t *testing.T) {
 		"PASS": {"exec_mode":"sequential","on_error":"continue","actions":[
 			{"type":"http","method":"POST","url":"https://example.com/cb","params":{"task":"${task_no}"},"headers":{"X-Token":"abc"}},
 			{"type":"websocket","url":"wss://example.com/ws","headers":{"Authorization":"Bearer x"}},
-			{"type":"redis","command":"publish","target":"audit:done"},
+			{"type":"redis","connection_id":1,"db":0,"command":"publish","target":"audit:done"},
 			{"type":"js","remark":"写回","script":"function main(ctx) { return { ok: true, result: ctx.result } }","timeout_ms":5000,"memory_mb":64}
 		]},
 		"REJECT": {"on_error":"stop","actions":[]},
@@ -41,6 +41,8 @@ func TestValidateRoutesJSON(t *testing.T) {
 		`{"PASS":{"actions":[{"type":"http"}]}}`,
 		`{"PASS":{"actions":[{"type":"websocket","url":"https://example.com"}]}}`,
 		`{"PASS":{"actions":[{"type":"redis","command":"del","target":"x"}]}}`,
+		`{"PASS":{"actions":[{"type":"redis","connection_id":1,"db":256,"command":"publish","target":"x"}]}}`,
+		`{"PASS":{"actions":[{"type":"redis","connection_id":1,"db":0,"command":"publish","target":""}]}}`,
 		`{"PASS":{"actions":[{"type":"js","script":""}]}}`,
 		`{"PASS":{"actions":[{"type":"js","script":"function main( {"}]}}`,
 		`{"PASS":{"on_error":"retry","actions":[]}}`,

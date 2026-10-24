@@ -11,7 +11,7 @@ type RoleDefinition struct {
 
 var allMenus = []string{
 	"dashboard", "analytics", "reviews", "tasks", "audits", "providers",
-	"credentials", "projects", "logs", "recycle", "users", "monitor", "help", "profile",
+	"credentials", "connections", "projects", "logs", "recycle", "users", "monitor", "help", "profile",
 }
 
 var allPermissions = []string{
@@ -34,7 +34,7 @@ var roleDefinitions = []RoleDefinition{
 			"project:update", "provider:write", "audit:write", "credential:write",
 			"task:submit", "task:review", "task:retry", "recycle:write", "log:read",
 		},
-		Menus: []string{"dashboard", "analytics", "reviews", "tasks", "audits", "providers", "credentials", "projects", "logs", "recycle", "help", "profile"},
+		Menus: []string{"dashboard", "analytics", "reviews", "tasks", "audits", "providers", "credentials", "connections", "projects", "logs", "recycle", "help", "profile"},
 	},
 	{
 		Code: "AUDITOR", Name: "审核配置员", Builtin: true,

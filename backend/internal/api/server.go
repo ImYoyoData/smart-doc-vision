@@ -120,6 +120,12 @@ func (s *Server) Router() *gin.Engine {
 			auth.POST("/projects/:id/restore", s.restoreProject)
 			auth.PATCH("/projects/:id/status", s.updateProjectStatus)
 			auth.GET("/projects/:id/credentials", s.listCredentials)
+			auth.GET("/projects/:id/redis-connections", s.listRedisConnections)
+			auth.POST("/projects/:id/redis-connections", s.createRedisConnection)
+			auth.PUT("/redis-connections/:id", s.updateRedisConnection)
+			auth.DELETE("/redis-connections/:id", s.deleteRedisConnection)
+			auth.POST("/redis-connections/:id/test", s.testRedisConnection)
+
 			auth.GET("/projects/:id/secrets", s.listProjectSecrets)
 			auth.PUT("/projects/:id/secrets/:name", s.putProjectSecret)
 			auth.DELETE("/projects/:id/secrets/:name", s.deleteProjectSecret)

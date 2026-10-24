@@ -11,6 +11,7 @@ import {
   CloudOutline,
   HelpCircleOutline,
   KeyOutline,
+  LinkOutline,
   DocumentTextOutline,
   FolderOpenOutline,
   GridOutline,
@@ -63,6 +64,7 @@ const sections = [
     label: '资源配置',
     items: [
       { name: 'providers', label: '模型接入', icon: CloudOutline },
+      { name: 'connections', label: '数据连接', icon: LinkOutline },
       { name: 'credentials', label: '接入凭证', icon: KeyOutline },
       { name: 'projects', label: '项目空间', icon: FolderOpenOutline },
     ],

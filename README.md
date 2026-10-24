@@ -18,14 +18,14 @@
 | 账号与权限 | 内置角色（超管/项目管理员/审核配置员/复核员/只读）、自定义角色与菜单/操作权限组合、项目数据范围、个人中心改密、2FA 重置 |
 | 模型接入 | 通用大模型（一个业务分类，OpenAI 兼容 / Anthropic Messages 只是 API 协议）、JEV System One（Choice / Noul）、模型列表与能力探测、自定义请求头、连接测试、失败自动切换与熔断恢复 |
 | 审核配置 | 合规审核 / 分类审核 / 纯分类器三种模式、媒体类型、模型绑定、审核要求 Prompt、规则模板与规则 JSON 编辑、分类映射与置信度兜底、分类类型 CSV/JSON 导入导出、默认结论、模型失败兜底、去重窗口、版本号 |
-| 任务引擎 | 项目级调度队列 + 并发 Worker 名额 + 公平轮询、异步 Worker 池、项目每日配额、幂等去重、状态机、结构化审核、规则判定、灰区转人工复核、结果动作路由（HTTP / WebSocket / Redis / MySQL）、业务回调、失败重试 |
+| 任务引擎 | 项目级调度队列 + 并发 Worker 名额 + 公平轮询、异步 Worker 池、项目每日配额、幂等去重、状态机、结构化审核、规则判定、灰区转人工复核、结果动作路由（HTTP / WebSocket / Redis / JS）、业务回调、失败重试 |
 | 规则引擎 | AND/OR 条件组、优先级、stop_on_hit、模型分数/风险等级/标签、扩展字段、媒体字段等 |
-| 触发接入 | 开放 API（HMAC + 防重放 + 审核授权范围 + 每分钟限流）、Redis Stream、WebSocket（含结果推送）、HTTP 定时轮询，每个审核配置独立开关 |
+| 触发接入 | 开放 API（HMAC + 防重放 + 审核授权范围 + 每分钟限流）、Redis Stream（项目级 Redis 连接 + DB 0~255 + 独占 Stream）、WebSocket（含结果推送），每个审核配置独立开关 |
 | 结果回调 | 可配置回调 URL / Secret / 需要回调的结论 / 是否回传原内容；支持 HTTP(S) Webhook 与 WebSocket 推送，HMAC-SHA256 签名、自动重试、幂等键 |
 | 人工复核 | 独立复核工作台、等待时长排序、媒体与规则命中预览、详细复核上下文（转人工原因、风险分/等级、分类置信度、规则命中、模型依据）、建议原因码、PASS/REJECT 后自动回调 |
 | 数据报表 | ECharts 趋势、通过率、结论分布、分类审核分布、项目/审核维度对比、未通过原因、错误与延迟分布 |
 | 审核导出 | 每个审核配置可按时间、状态、结论、触发来源、媒体类型、关键字筛选导出 UTF-8 CSV 任务记录 |
-| AI 配置助手 | 通过流式对话收集审核要求，自动生成并保存审核配置与接入方式（开放 API / Redis / WebSocket / 轮询）；创建走需求采集，编辑先选择目标并只修改指定字段；支持 Markdown 回复、粘贴图片预览/移除、底部切换对话模型；前提是项目内至少有一个启用的通用大模型 |
+| AI 配置助手 | 通过流式对话收集审核要求，自动生成并保存审核配置与接入方式（开放 API / Redis / WebSocket）；Redis 只从当前项目已启用且测试成功的连接中选择；创建走需求采集，编辑先选择目标并只修改指定字段；支持 Markdown 回复、粘贴图片预览/移除、底部切换对话模型 |
 | 平台体验 | 任务筛选视图保存、表格显示列设置、本地图片上传、项目与审核永久清理、按保留期自动清理、分类类型 CSV/JSON 导入导出 |
 | 管理后台 | 仪表盘、数据报表、项目、模型接入、接入凭证、审核配置与接入指南、任务、待议复核、审计日志、回收站、用户与权限、个人中心；桌面/平板/手机响应式布局 |
 | 文本编码 | 输入文本自动处理 UTF-8 BOM、GB18030/Big5 和常见 Latin-1 乱码，MySQL 连接与建表默认 utf8mb4 |
@@ -337,20 +337,29 @@ docker compose up -d --build
 
 ## 审核接入与触发
 
-每个审核配置在「审核配置 → 接入指南」中拥有四种独立开关，新审核创建成功后会自动打开接入指南：
+每个审核配置在「审核配置 → 接入指南」中拥有三种独立开关，新审核创建成功后会自动打开接入指南：
 
 | 触发方式 | 平台行为 | 业务方要做什么 |
 |---|---|---|
 | 开放 API | 校验项目凭证 + HMAC 签名 + 审核授权范围，支持同步/异步执行 | 按规范签名并 POST，可在返回中拿到 `task_no` |
-| Redis Stream | 消费平台 Redis DB 3 的指定 Stream，消费组做多实例负载均衡 | 向约定 Stream XADD 标准 TaskInput，失败消息进入 `:dlq` |
+| Redis Stream | 从项目「数据连接」中选择已启用且测试成功的 Redis 连接，指定 DB 0~255、Stream、消费组、消费起点与批量参数；一个 Stream 只允许一个审核消费 | 向约定 Stream XADD 标准 TaskInput，失败消息进入 `:dlq` |
 | WebSocket | 签名连接后接收 `submit` 帧，返回 ACK，并主动推送终态 `result` 帧 | 建立长连接并处理心跳/重连 |
-| HTTP 轮询 | 按间隔和 cursor 拉取业务查询接口，连续失败自动暂停 | 提供只读查询接口，返回 `items` + `next_cursor` |
 
-项目中新创建的审核会自动生成这四种触发源（仅开放 API 默认启用）。在审核详情点击任一触发源的「配置」，可以直接启用/暂停、修改 Stream、轮询地址、鉴权密钥等参数、查看最近运行/消费时间与错误，并执行连接测试。AppKey/AppSecret 在「接入凭证」页面创建，每条凭证必须勾选允许访问的审核配置。接入指南内提供可按当前项目/审核编码直接复制的 cURL、带签名的 WebSocket 地址、Redis XADD 命令、轮询响应示例和回调报文。
+项目中新创建的审核会自动生成三种触发源（仅开放 API 默认启用）。Redis 触发在首次启用时必须选择项目 Redis 连接并填写 Stream；连接停用后绑定的触发源会自动暂停，网络恢复后按连接的「自动恢复触发」配置决定是否恢复，管理员手动停用连接后需要手动恢复触发源。AppKey/AppSecret 在「接入凭证」页面创建，每条凭证必须勾选允许访问的审核配置。接入指南内提供可按当前项目/审核编码直接复制的 cURL、带签名的 WebSocket 地址、Redis XADD 命令和回调报文。
 
-AI 对接助手按触发方式拆分：每个方式都有独立的专用提示词，避免把 HMAC、队列生产端、长连接和查询接口的约束混在一份泛化提示词里；总览可多选方式生成组合提示词。下载的「统一 Skill.md」包含四种方式，并明确要求编码助手先询问业务方要接入哪一种或哪几种。
+> 平台自身缓存使用的 Redis 与项目「数据连接」中的业务 Redis 是两套独立配置。触发源不会使用平台缓存 Redis。
+
+AI 对接助手按触发方式拆分：每个方式都有独立的专用提示词，避免把 HMAC、队列生产端和长连接的约束混在一份泛化提示词里；总览可多选方式生成组合提示词。下载的「统一 Skill.md」包含三种方式，并明确要求编码助手先询问业务方要接入哪一种或哪几种。HTTP/MySQL 轮询已下线。
 
 完整规格见 [docs/INTEGRATION.md](docs/INTEGRATION.md)；后台右上角「?」、侧边栏「对接文档」，以及每个审核配置的「接入指南」都提供按当前项目/审核编码生成的实时示例。
+
+### 项目级 Redis 连接
+
+- 在「数据连接」页面按项目管理 Redis 连接，一个项目可以配置多个实例；每条连接独立配置地址、用户名、密码、TLS、启用状态和自动恢复开关。
+- 审核触发只能选择当前项目、状态启用、最近测试成功且健康状态为 OK 的连接，再填写 DB（0~255）、Stream、消费组、消费起点、批量大小和最大并发。
+- 一个 `(连接, DB, Stream)` 只能被一个审核消费；审核暂停时队列仍为它保留，删除触发源后才释放。
+- 连接停用会暂停所有绑定的触发源；网络故障时平台标记连接不健康并暂停触发源，恢复后按「自动恢复触发源」决定是否继续。管理员手动停用连接后，即使重新启用也需要手动恢复触发源。
+- 平台 Redis 仅用于自身缓存，不会出现在数据连接列表里；触发和结果动作只使用项目 Redis 连接。
 
 ### 结果回调
 
@@ -364,7 +373,7 @@ AI 对接助手按触发方式拆分：每个方式都有独立的专用提示�
 |---|---|---|
 | HTTP | method、url、params、headers、body、timeout_ms | `params` 与 `headers` 每行一个 `key: value`；body 留空时发送标准结果 JSON |
 | WebSocket | url、headers、payload、timeout_ms | 仅支持 `ws://` / `wss://`，headers 用于握手鉴权，payload 留空时发送标准结果 JSON |
-| Redis | command、target、payload | command 支持 `publish` / `set` / `xadd` |
+| Redis | connection_id、db、command、target、payload | 必须选择项目 Redis 连接；db 0~255；command 支持 `publish` / `set` / `xadd` |
 | JS 脚本 | remark、script、timeout_ms、memory_mb | 入口 `function main(ctx)`；可用 `ctx.mysql` / `ctx.pg` / `ctx.http` / `ctx.crypto` / `ctx.secret`，执行日志按审核配置查看 |
 
 动作支持模板变量：`${task_no}`、`${task_id}`、`${biz_key}`、`${source_type}`、`${project_code}`、`${audit_code}`、`${result}`、`${summary}`、`${reasons}`、`${labels}`、`${risk_level}`、`${score}`、`${category}`、`${category_name}`、`${category_confidence}`、`${review_note}`。`on_error` 可选 `continue` / `stop` / `to_review`，执行结果写入任务详情的 `routes` 字段。后台已提供结构化编辑器，也可切换「高级 JSON」直接编辑；编辑器右上角的「变量说明」可查看每个变量的含义与取值形式。
@@ -407,7 +416,7 @@ function main(ctx) {
 
 ### MySQL 说明
 
-标准四种触发方式中没有“直连业务 MySQL”。平台 MySQL 存储项目、审核、任务、审计与报表数据；业务 MySQL 建议通过一个只读查询 API 暴露，再使用 HTTP 定时轮询。原因和安全替代方案见 [对接文档的 MySQL 章节](docs/INTEGRATION.md#9-mysql-与定时读取数据库)。
+标准三种触发方式中没有“直连业务 MySQL”，也没有 HTTP/MySQL 轮询。平台 MySQL 存储项目、审核、任务、审计与报表数据；业务 MySQL 需要由业务方自行查询、脱敏和做增量控制，然后通过开放 API、Redis Stream 或 WebSocket 主动推送 TaskInput。原因和安全边界见 [对接文档的 MySQL 章节](docs/INTEGRATION.md#8-mysql-与业务数据库)。
 
 ## 后台账号与权限
 
@@ -610,7 +619,7 @@ smart-doc-vision/
 | GET | `/audits/:id/integration` | 生成接入指南、签名示例与触发配置 |
 | GET | `/audits/:id/export` | 按时间/状态/结论/来源/媒体/关键字筛选导出该审核配置的 CSV |
 | PUT | `/trigger-sources/:id` | 更新触发源配置/开关 |
-| POST | `/trigger-sources/:id/test` | 测试 Redis / 轮询触发 |
+| POST | `/trigger-sources/:id/test` | 测试 Redis 触发（连接 + DB + Stream + 消费组） |
 | GET/POST | `/tasks` | 任务列表 / 提交审核 |
 | GET | `/tasks/:id` | 任务详情与事件时间线 |
 | POST | `/tasks/:id/review` | 人工复核 |
@@ -655,7 +664,7 @@ smart-doc-vision/
 - 视频/音频审核与大文件异步媒体处理（产品边界，当前仅支持多文本 + 多图片）；
 - 字段级权限（角色级操作权限、菜单权限与项目数据范围已实现）；
 - 邮件 / 短信 / 站内通知与外部告警推送（Prometheus 指标已提供，可接 Alertmanager）；
-- 直连业务 MySQL 的定时轮询数据源（推荐使用 HTTP 轮询、Redis Stream 或 WebSocket）；
+- 平台直连业务 MySQL 的数据源（业务方应自行查询后通过开放 API、Redis Stream 或 WebSocket 推送）；
 - 原生 XLSX 导出（当前导出 UTF-8 CSV，可直接用 Excel 打开）；
 - 拖拽式规则条件组编辑器（当前提供模板与结构化 JSON 编辑器，保存前做服务端校验）。
 
@@ -672,7 +681,7 @@ smart-doc-vision/
 |---|---|
 | 项目隔离、项目配置 | ✅ 项目 / 模型 / 审核均按 `project_id` 隔离 |
 | 模型与 JEV 双接入 | ✅ 通用适配器 + JEV System One（支持多文本 + 多图片；无视频） |
-| 触发源 | ✅ 开放 API / Redis Stream / WebSocket / HTTP 轮询，审核配置级开关 |
+| 触发源 | ✅ 开放 API / Redis Stream / WebSocket，审核配置级开关；Redis 使用项目级连接 |
 | 审核定义 / 规则 / 兜底 | ✅ 规则模板 + 自定义规则 JSON 持久化 |
 | 幂等去重 | ✅ Redis 去重键 + DB 窗口内查询 |
 | 三条结果路线 | ✅ PASS / REJECT / REVIEW，灰区进入人工复核 |

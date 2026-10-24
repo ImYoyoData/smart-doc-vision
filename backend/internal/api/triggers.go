@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -18,11 +19,18 @@ import (
 )
 
 type triggerInput struct {
-	Name     string         `json:"name"`
-	Config   map[string]any `json:"config"`
-	Secret   string         `json:"secret"`
-	Status   string         `json:"status"`
-	Priority *int           `json:"priority"`
+	Name              string         `json:"name"`
+	Config            map[string]any `json:"config"`
+	Secret            string         `json:"secret"`
+	Status            string         `json:"status"`
+	Priority          *int           `json:"priority"`
+	RedisConnectionID *uint64        `json:"redis_connection_id"`
+	RedisDB           *int           `json:"redis_db"`
+	Stream            string         `json:"stream"`
+	ConsumerGroup     string         `json:"consumer_group"`
+	StartPosition     string         `json:"start_position"`
+	BatchSize         *int           `json:"batch_size"`
+	MaxInflight       *int           `json:"max_inflight"`
 }
 
 func (s *Server) updateTrigger(c *gin.Context) {
@@ -53,7 +61,7 @@ func (s *Server) updateTrigger(c *gin.Context) {
 		}
 		trigger.Status = req.Status
 	}
-	if req.Config != nil {
+	if req.Config != nil && trigger.Type != model.TriggerRedis {
 		configBytes, err := json.Marshal(req.Config)
 		if err != nil {
 			badRequest(c, "config 格式错误")
@@ -61,9 +69,56 @@ func (s *Server) updateTrigger(c *gin.Context) {
 		}
 		trigger.ConfigJSON = configBytes
 	}
-	if err := s.validateTrigger(trigger, req.Status != "" && req.Status == "ACTIVE"); err != nil {
+	if trigger.Type == model.TriggerRedis {
+		if req.RedisConnectionID != nil {
+			trigger.RedisConnectionID = req.RedisConnectionID
+		}
+		if req.RedisDB != nil {
+			trigger.RedisDB = *req.RedisDB
+		}
+		if value := strings.TrimSpace(req.Stream); value != "" {
+			trigger.Stream = value
+		}
+		if value := strings.TrimSpace(req.ConsumerGroup); value != "" {
+			trigger.ConsumerGroup = value
+		}
+		if value := strings.TrimSpace(req.StartPosition); value != "" {
+			trigger.StartPosition = value
+		}
+		if req.BatchSize != nil {
+			trigger.BatchSize = *req.BatchSize
+		}
+		if req.MaxInflight != nil {
+			trigger.MaxInflight = *req.MaxInflight
+		}
+		if trigger.ConsumerGroup == "" {
+			trigger.ConsumerGroup = fmt.Sprintf("sdv-cg-%d", trigger.AuditID)
+		}
+		if trigger.StartPosition == "" {
+			trigger.StartPosition = "$"
+		}
+		if trigger.BatchSize <= 0 {
+			trigger.BatchSize = 16
+		}
+		if trigger.MaxInflight <= 0 {
+			trigger.MaxInflight = 1
+		}
+	}
+	enabling := trigger.Status == "ACTIVE"
+	if err := s.validateTrigger(trigger, enabling); err != nil {
 		badRequest(c, err.Error())
 		return
+	}
+	if trigger.Type == model.TriggerRedis && enabling {
+		if err := s.testRedisTriggerConfig(c.Request.Context(), trigger); err != nil {
+			fail(c, http.StatusUnprocessableEntity, "REDIS_TRIGGER_TEST_FAILED", err.Error(), nil)
+			return
+		}
+		trigger.PauseReason = ""
+		trigger.AutoPaused = false
+	} else if trigger.Status == "PAUSED" {
+		trigger.PauseReason = model.TriggerPauseManual
+		trigger.AutoPaused = false
 	}
 	if req.Secret != "" {
 		enc, err := s.cipher.Encrypt(req.Secret)
@@ -107,35 +162,23 @@ func (s *Server) testTrigger(c *gin.Context) {
 		result["connect_path"] = fmt.Sprintf("/open/v1/ws/projects/%s/audits/%s", project.Code, audit.Code)
 		result["message"] = "WebSocket 接入地址已生成；启用触发源后可连接"
 	case model.TriggerRedis:
-		var cfg triggerpkg.RedisConfig
-		_ = model.DecodeJSON(trigger.ConfigJSON, &cfg)
-		if cfg.Stream == "" || cfg.Group == "" {
-			fail(c, http.StatusUnprocessableEntity, "INVALID_CONFIG", "Redis Stream 与消费组不能为空", result)
+		if err := s.testRedisTriggerConfig(c.Request.Context(), trigger); err != nil {
+			fail(c, http.StatusUnprocessableEntity, "REDIS_TRIGGER_TEST_FAILED", err.Error(), result)
 			return
 		}
-		if err := s.redis.XGroupCreateMkStream(c.Request.Context(), cfg.Stream, cfg.Group, "0").Err(); err != nil && !strings.Contains(err.Error(), "BUSYGROUP") {
-			fail(c, http.StatusUnprocessableEntity, "REDIS_UNAVAILABLE", err.Error(), result)
-			return
+		connection, _ := s.redisTriggerConnection(trigger.ProjectID, trigger.RedisConnectionID)
+		result["connection_id"] = trigger.RedisConnectionID
+		if connection != nil {
+			result["connection_name"] = connection.Name
+			result["connection_addr"] = connection.Addr
 		}
-		result["stream"] = cfg.Stream
-		result["group"] = cfg.Group
-		result["message"] = "Stream 与消费组已准备就绪"
-	case model.TriggerPolling:
-		var cfg triggerpkg.PollingConfig
-		_ = model.DecodeJSON(trigger.ConfigJSON, &cfg)
-		if cfg.URL == "" {
-			fail(c, http.StatusUnprocessableEntity, "INVALID_CONFIG", "轮询 URL 不能为空", result)
-			return
-		}
-		secret, _ := s.cipher.Decrypt(trigger.SecretEnc)
-		page, fetchErr := triggerpkg.FetchPollingPage(c.Request.Context(), cfg, secret, trigger.CursorValue)
-		if fetchErr != nil {
-			fail(c, http.StatusUnprocessableEntity, "CONNECTION_TEST_FAILED", fetchErr.Error(), result)
-			return
-		}
-		result["items"] = page.RawCount
-		result["next_cursor"] = page.NextCursor
-		result["message"] = fmt.Sprintf("轮询成功，读取到 %d 条任务数据", page.RawCount)
+		result["db"] = trigger.RedisDB
+		result["stream"] = trigger.Stream
+		result["group"] = trigger.ConsumerGroup
+		result["start_position"] = trigger.StartPosition
+		result["batch_size"] = trigger.BatchSize
+		result["max_inflight"] = trigger.MaxInflight
+		result["message"] = "Redis 连接、DB、Stream 与消费组已准备就绪"
 	}
 	s.writeAudit(c, &trigger.ProjectID, "TRIGGER_TEST", "TRIGGER", fmt.Sprint(trigger.ID), "SUCCESS",
 		map[string]any{"type": trigger.Type})
@@ -247,18 +290,28 @@ func (s *Server) integrationGuide(c *gin.Context) {
 		wsSignedURL = wsPath + "?" + wsQuery.Encode()
 	}
 
-	redisCfg := triggerpkg.RedisConfig{}
-	if t, okT := triggerMap[model.TriggerRedis]; okT {
-		_ = model.DecodeJSON(t.ConfigJSON, &redisCfg)
+	redisTrigger := triggerMap[model.TriggerRedis]
+	redisConnection, _ := s.redisTriggerConnection(project.ID, redisTrigger.RedisConnectionID)
+	redisView := gin.H{
+		"enabled":        redisTrigger.Status == "ACTIVE",
+		"connection_id":  redisTrigger.RedisConnectionID,
+		"db":             redisTrigger.RedisDB,
+		"stream":         redisTrigger.Stream,
+		"group":          redisTrigger.ConsumerGroup,
+		"start_position": redisTrigger.StartPosition,
+		"batch_size":     redisTrigger.BatchSize,
+		"max_inflight":   redisTrigger.MaxInflight,
+		"message_field":  "data",
+		"example":        body,
+		"xadd_command":   "",
+		"note":           "请在触发源中配置当前项目已启用且测试成功的 Redis 连接；平台只从该连接/DB/Stream 消费。",
 	}
-	if redisCfg.Stream == "" {
-		redisCfg.Stream = "sdv:" + project.Code + ":audit:" + audit.Code
+	if redisConnection != nil {
+		redisView["connection_name"] = redisConnection.Name
+		redisView["connection_addr"] = redisConnection.Addr
 	}
-	if redisCfg.Group == "" {
-		redisCfg.Group = fmt.Sprintf("sdv-cg-%d", audit.ID)
-	}
-	if redisCfg.BatchSize == 0 {
-		redisCfg.BatchSize = 16
+	if redisTrigger.Stream != "" {
+		redisView["xadd_command"] = fmt.Sprintf("XADD %s * data '<上面的 JSON 字符串>'", redisTrigger.Stream)
 	}
 	var callbackResults []string
 	_ = model.DecodeJSON(audit.CallbackResults, &callbackResults)
@@ -274,6 +327,10 @@ func (s *Server) integrationGuide(c *gin.Context) {
 		triggerViews = append(triggerViews, gin.H{
 			"id": t.ID, "type": t.Type, "name": t.Name, "status": t.Status,
 			"priority": t.Priority, "config": t.ConfigJSON, "secret_set": t.SecretSet,
+			"redis_connection_id": t.RedisConnectionID, "redis_db": t.RedisDB,
+			"stream": t.Stream, "consumer_group": t.ConsumerGroup,
+			"start_position": t.StartPosition, "batch_size": t.BatchSize,
+			"max_inflight": t.MaxInflight, "pause_reason": t.PauseReason,
 			"last_error": t.LastError, "last_consume_at": t.LastConsumeAt,
 			"last_run_at": t.LastRunAt, "cursor": t.CursorValue,
 		})
@@ -310,16 +367,7 @@ func (s *Server) integrationGuide(c *gin.Context) {
 			"signing_note":      "签名有效期 5 分钟，Nonce 10 分钟内不可重复；X-Signature 为 HMAC-SHA256(AppSecret, CanonicalString) 的小写十六进制。",
 			"query_task_path":   fmt.Sprintf("/open/v1/projects/%s/tasks/{task_no}", project.Code),
 		},
-		"redis": gin.H{
-			"enabled":       triggerMap[model.TriggerRedis].Status == "ACTIVE",
-			"stream":        redisCfg.Stream,
-			"group":         redisCfg.Group,
-			"batch_size":    redisCfg.BatchSize,
-			"message_field": "data",
-			"example":       body,
-			"xadd_command":  fmt.Sprintf("XADD %s * data '<上面的 JSON 字符串>'", redisCfg.Stream),
-			"note":          "平台使用当前 Redis DB 3 作为 Stream；PEL 超时消息由平台消费者继续处理。",
-		},
+		"redis": redisView,
 		"websocket": gin.H{
 			"enabled":           triggerMap[model.TriggerWebSocket].Status == "ACTIVE",
 			"path":              wsPath,
@@ -332,16 +380,6 @@ func (s *Server) integrationGuide(c *gin.Context) {
 				"data": body,
 			},
 			"ack_frame": map[string]any{"type": "ack", "data": map[string]any{"task_id": 123, "task_no": "SDV...", "status": "QUEUED"}},
-		},
-		"polling": gin.H{
-			"enabled": triggerMap[model.TriggerPolling].Status == "ACTIVE",
-			"config":  triggerMap[model.TriggerPolling].ConfigJSON,
-			"response_contract": gin.H{
-				"items":       "TaskInput 数组或嵌套在 items_path 指定的位置",
-				"next_cursor": "由 cursor_path 指定，缺省为 next_cursor",
-				"item":        map[string]any{"biz_key": "archive:2026:0001", "media": []map[string]any{{"type": "text", "content": "..."}}},
-			},
-			"note": "首次带空 cursor 请求；之后带上次响应中的 cursor。仅处理 items 中的任务对象。",
 		},
 		"callback": gin.H{
 			"enabled":         audit.CallbackEnabled,
@@ -420,32 +458,118 @@ func requestBaseURL(c *gin.Context) string {
 func (s *Server) validateTrigger(trigger *model.TriggerSource, enabling bool) error {
 	switch trigger.Type {
 	case model.TriggerRedis:
-		var c triggerpkg.RedisConfig
-		_ = model.DecodeJSON(trigger.ConfigJSON, &c)
-		if enabling && (strings.TrimSpace(c.Stream) == "" || strings.TrimSpace(c.Group) == "") {
-			return fmt.Errorf("启用 Redis 触发前必须填写 Stream 与消费组")
+		if trigger.RedisConnectionID == nil {
+			if enabling {
+				return fmt.Errorf("启用 Redis 触发前必须选择项目 Redis 连接")
+			}
+			return nil
 		}
-		if c.BatchSize < 0 || c.BatchSize > 32 {
-			return fmt.Errorf("Redis 批量大小需在 1~32 之间")
+		connection, err := s.redisTriggerConnection(trigger.ProjectID, trigger.RedisConnectionID)
+		if err != nil {
+			return err
 		}
-	case model.TriggerPolling:
-		var c triggerpkg.PollingConfig
-		_ = model.DecodeJSON(trigger.ConfigJSON, &c)
-		if enabling && strings.TrimSpace(c.URL) == "" {
-			return fmt.Errorf("启用轮询前必须填写 URL")
-		}
-		if c.URL != "" {
-			if err := validateBaseURL(c.URL); err != nil {
-				return fmt.Errorf("轮询 URL 格式错误")
+		if enabling {
+			if connection.Status != model.RedisConnectionActive {
+				return fmt.Errorf("Redis 连接「%s」已停用", connection.Name)
+			}
+			if !connection.LastTestOK || connection.Health != model.RedisHealthOK {
+				return fmt.Errorf("Redis 连接「%s」未通过连接测试，请先测试", connection.Name)
 			}
 		}
-		if c.IntervalSec < 10 || c.IntervalSec > 86400 {
-			return fmt.Errorf("轮询间隔需在 10~86400 秒之间")
+		if trigger.RedisDB < 0 || trigger.RedisDB > 255 {
+			return fmt.Errorf("Redis DB 编号需在 0~255 之间")
+		}
+		if strings.TrimSpace(trigger.Stream) == "" {
+			return fmt.Errorf("请填写要监听的 Redis Stream")
+		}
+		if strings.TrimSpace(trigger.ConsumerGroup) == "" {
+			return fmt.Errorf("Redis 消费组不能为空")
+		}
+		if trigger.StartPosition != "$" && trigger.StartPosition != "0" {
+			return fmt.Errorf("Redis 消费起点仅支持 $ 或 0")
+		}
+		if trigger.BatchSize < 1 || trigger.BatchSize > 32 {
+			return fmt.Errorf("Redis 批量大小需在 1~32 之间")
+		}
+		if trigger.MaxInflight < 1 || trigger.MaxInflight > 32 {
+			return fmt.Errorf("Redis 最大并发处理数需在 1~32 之间")
+		}
+		if err := s.checkRedisStreamSlot(trigger); err != nil {
+			return err
 		}
 	case model.TriggerOpenAPI, model.TriggerWebSocket:
 		// No extra fields.
 	default:
 		return fmt.Errorf("不支持的触发源类型")
+	}
+	return nil
+}
+
+func (s *Server) redisTriggerConnection(projectID uint64, connectionID *uint64) (*model.RedisConnection, error) {
+	if connectionID == nil {
+		return nil, nil
+	}
+	var connection model.RedisConnection
+	if err := s.db.Where("id = ? AND project_id = ?", *connectionID, projectID).First(&connection).Error; err != nil {
+		return nil, fmt.Errorf("Redis 连接不存在或不属于当前项目")
+	}
+	return &connection, nil
+}
+
+func (s *Server) checkRedisStreamSlot(trigger *model.TriggerSource) error {
+	if trigger.RedisConnectionID == nil || strings.TrimSpace(trigger.Stream) == "" {
+		return nil
+	}
+	var other model.TriggerSource
+	err := s.db.Where("id <> ? AND redis_connection_id = ? AND redis_db = ? AND stream = ?",
+		trigger.ID, *trigger.RedisConnectionID, trigger.RedisDB, trigger.Stream).First(&other).Error
+	if err == nil {
+		var audit model.Audit
+		_ = s.db.Select("code", "name").First(&audit, other.AuditID).Error
+		return fmt.Errorf("该 Redis 队列已被审核「%s」（%s）占用，一个 Stream 只允许一个审核消费",
+			audit.Name, audit.Code)
+	}
+	return nil
+}
+
+func (s *Server) testRedisTriggerConfig(ctx context.Context, trigger *model.TriggerSource) error {
+	connection, err := s.redisTriggerConnection(trigger.ProjectID, trigger.RedisConnectionID)
+	if err != nil {
+		return err
+	}
+	if connection == nil {
+		return fmt.Errorf("请先选择项目 Redis 连接")
+	}
+	if connection.Status != model.RedisConnectionActive {
+		return fmt.Errorf("Redis 连接「%s」已停用", connection.Name)
+	}
+	if !connection.LastTestOK || connection.Health != model.RedisHealthOK {
+		return fmt.Errorf("Redis 连接「%s」未通过连接测试，请先在数据连接页面测试", connection.Name)
+	}
+	if strings.TrimSpace(trigger.Stream) == "" || strings.TrimSpace(trigger.ConsumerGroup) == "" {
+		return fmt.Errorf("Redis Stream 与消费组不能为空")
+	}
+	password := ""
+	if connection.PasswordEnc != "" {
+		password, err = s.cipher.Decrypt(connection.PasswordEnc)
+		if err != nil {
+			return fmt.Errorf("Redis 连接密码解密失败")
+		}
+	}
+	client := triggerpkg.NewRedisClient(*connection, password, trigger.RedisDB)
+	defer client.Close()
+	testCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := client.Ping(testCtx).Err(); err != nil {
+		return fmt.Errorf("Redis 连接失败: %w", err)
+	}
+	startPosition := trigger.StartPosition
+	if startPosition != "0" {
+		startPosition = "$"
+	}
+	if err := client.XGroupCreateMkStream(testCtx, trigger.Stream, trigger.ConsumerGroup, startPosition).Err(); err != nil &&
+		!strings.Contains(err.Error(), "BUSYGROUP") {
+		return fmt.Errorf("Redis Stream/消费组准备失败: %w", err)
 	}
 	return nil
 }

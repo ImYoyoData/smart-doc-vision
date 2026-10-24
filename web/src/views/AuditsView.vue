@@ -324,7 +324,6 @@ const sourceOptions = [
   { label: '开放 API', value: 'OPENAPI' },
   { label: 'Redis Stream', value: 'REDIS' },
   { label: 'WebSocket', value: 'WEBSOCKET' },
-  { label: 'HTTP 轮询', value: 'POLLING' },
 ]
 const mediaFilterOptions = [
   { label: '纯文本', value: 'text' },
@@ -963,7 +962,7 @@ function startAssistant(mode: 'create' | 'edit', audit?: Audit) {
   assistantMessages.value = [{
     role: 'assistant',
     content: mode === 'create'
-      ? '你好，我是审核配置助手。请告诉我：这次要审核什么类型的档案？哪些情况必须驳回？是否需要按类别分类？任务通过什么方式接入（开放 API / Redis Stream / WebSocket / HTTP 轮询）？我会根据你的回答逐步确认并直接生成并保存配置。'
+      ? '你好，我是审核配置助手。请告诉我：这次要审核什么类型的档案？哪些情况必须驳回？是否需要按类别分类？任务通过什么方式接入（开放 API / Redis Stream / WebSocket）？如果选 Redis，我会从当前项目已启用且测试成功的 Redis 连接中选择。'
       : `当前正在编辑「${audit?.name || form.name}」（${audit?.code || form.code}）。它现在是${audit ? describeAudit(audit) : '当前表单中的配置'}。请告诉我：目前哪里不符合要求、你希望改成什么？例如“把默认结论改成 REVIEW”“新增发票分类并映射为通过”。我会只修改你指定的部分，其余配置保持不变。`,
   }]
   assistantShow.value = true
@@ -1075,18 +1074,51 @@ function summarizeAssistantChanges(config: AuditAssistantConfig) {
   return changes
 }
 
-async function applyAssistantTriggers(auditId: number, triggers: Record<string, string>) {
+async function applyAssistantTriggers(
+  auditId: number,
+  triggers: Record<string, string>,
+  redisTrigger?: AuditAssistantConfig['redis_trigger'],
+) {
   const desired = Object.entries(triggers).filter(([type, status]) =>
-    ['OPENAPI', 'REDIS', 'WEBSOCKET', 'POLLING'].includes(type)
+    ['OPENAPI', 'REDIS', 'WEBSOCKET'].includes(type)
     && (status === 'ACTIVE' || status === 'DISABLED'))
   if (!desired.length) return
   const detail = await auditApi.get(auditId)
   const failures: string[] = []
   for (const [type, status] of desired) {
     const trigger = detail.triggers.find((item) => item.type === type)
-    if (!trigger || trigger.status === status) continue
+    if (!trigger) continue
     try {
-      await auditApi.updateTrigger(trigger.id, { status })
+      if (type === 'REDIS') {
+        if (status === 'ACTIVE' && !redisTrigger) {
+          if (trigger.status === 'ACTIVE' && trigger.redis_connection_id && trigger.stream) continue
+          throw new Error('启用 Redis 接入需要先选择项目 Redis 连接并填写 Stream')
+        }
+        if (status === 'ACTIVE' && redisTrigger) {
+          const unchanged = trigger.status === 'ACTIVE'
+            && trigger.redis_connection_id === redisTrigger.connection_id
+            && trigger.redis_db === redisTrigger.db
+            && trigger.stream === redisTrigger.stream
+            && trigger.start_position === (redisTrigger.start_position || '$')
+          if (unchanged) continue
+          await auditApi.updateTrigger(trigger.id, {
+            status,
+            redis_connection_id: redisTrigger.connection_id,
+            redis_db: redisTrigger.db,
+            stream: redisTrigger.stream,
+            consumer_group: redisTrigger.consumer_group || '',
+            start_position: redisTrigger.start_position || '$',
+            batch_size: redisTrigger.batch_size || 16,
+            max_inflight: redisTrigger.max_inflight || 1,
+          })
+        } else {
+          if (trigger.status === status) continue
+          await auditApi.updateTrigger(trigger.id, { status })
+        }
+      } else {
+        if (trigger.status === status) continue
+        await auditApi.updateTrigger(trigger.id, { status })
+      }
     } catch (error) {
       failures.push(`${triggerLabel(type)}：${error instanceof Error ? error.message : '更新失败'}`)
     }
@@ -1123,7 +1155,7 @@ async function applyAssistantConfig(config: AuditAssistantConfig) {
   if (config.triggers && Object.keys(config.triggers).length) {
     upsertAssistantStep({ id: 'access', label: '应用接入方式', status: 'running', at: Date.now() })
     try {
-      await applyAssistantTriggers(saved.id, config.triggers)
+      await applyAssistantTriggers(saved.id, config.triggers, config.redis_trigger)
       await load()
       upsertAssistantStep({
         id: 'access', label: '应用接入方式', status: 'done',
@@ -1354,7 +1386,7 @@ function categoryResultLabel(result: string) {
 }
 
 function triggerLabel(type: string) {
-  return { OPENAPI: '开放 API', REDIS: 'Redis', WEBSOCKET: 'WebSocket', POLLING: '轮询' }[type] || type
+  return { OPENAPI: '开放 API', REDIS: 'Redis', WEBSOCKET: 'WebSocket' }[type] || type
 }
 
 watch(() => workspace.currentProjectId, load)
@@ -1745,8 +1777,8 @@ onMounted(async () => {
           </div>
           <div class="create-hint">
             <ShieldCheckmarkOutline />
-            <span v-if="editing">保存后可在「接入指南」中查看当前四种触发方式、接口参数和回调配置。</span>
-            <span v-else>创建后会自动生成 开放 API / Redis / WebSocket / HTTP 轮询 四种接入方式，并立即打开接入指南。</span>
+            <span v-if="editing">保存后可在「接入指南」中查看当前三种触发方式、接口参数和回调配置。</span>
+            <span v-else>创建后会自动生成 开放 API / Redis / WebSocket 三种接入方式，并立即打开接入指南。Redis 需要先在「数据连接」配置并测试连接。</span>
           </div>
           <div v-if="errorText" class="modal-error">{{ errorText }}</div>
         </div>

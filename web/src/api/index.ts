@@ -21,6 +21,7 @@ import type {
   ProviderModel,
   ProjectSecret,
   RecycleItem,
+  RedisConnection,
   ScriptExecution,
   ReviewSummary,
   RoleDefinition,
@@ -102,6 +103,18 @@ export const providerApi = {
     api_key?: string
     headers?: Record<string, string>
   }) => post<{ items: ProviderModel[]; total: number }>('/providers/models', payload),
+}
+
+export const redisConnectionApi = {
+  list: (projectId: number) =>
+    get<{ items: RedisConnection[]; total: number }>(`/projects/${projectId}/redis-connections`),
+  create: (projectId: number, payload: Record<string, unknown>) =>
+    post<RedisConnection>(`/projects/${projectId}/redis-connections`, payload),
+  update: (id: number, payload: Record<string, unknown>) =>
+    put<RedisConnection>(`/redis-connections/${id}`, payload),
+  remove: (id: number) => del<{ deleted: boolean }>(`/redis-connections/${id}`),
+  test: (id: number) =>
+    post<{ ok: boolean; latency_ms: number; health: string; message: string }>(`/redis-connections/${id}/test`),
 }
 
 export const auditApi = {

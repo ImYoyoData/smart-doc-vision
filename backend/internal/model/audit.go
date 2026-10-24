@@ -63,14 +63,25 @@ type AuditCategory struct {
 }
 
 type TriggerSource struct {
-	ID            uint64     `gorm:"primaryKey;autoIncrement" json:"id"`
-	ProjectID     uint64     `gorm:"not null;index" json:"project_id"`
-	AuditID       uint64     `gorm:"not null;index;uniqueIndex:idx_trigger_audit_type,priority:1" json:"audit_id"`
-	Type          string     `gorm:"size:16;not null;uniqueIndex:idx_trigger_audit_type,priority:2" json:"type"`
-	Name          string     `gorm:"size:64;not null" json:"name"`
-	ConfigJSON    JSONText   `gorm:"type:text" json:"config"`
-	Priority      int        `gorm:"not null;default:40" json:"priority"`
-	Status        string     `gorm:"size:16;not null;default:ACTIVE" json:"status"`
+	ID         uint64   `gorm:"primaryKey;autoIncrement" json:"id"`
+	ProjectID  uint64   `gorm:"not null;index" json:"project_id"`
+	AuditID    uint64   `gorm:"not null;index;uniqueIndex:idx_trigger_audit_type,priority:1" json:"audit_id"`
+	Type       string   `gorm:"size:16;not null;uniqueIndex:idx_trigger_audit_type,priority:2" json:"type"`
+	Name       string   `gorm:"size:64;not null" json:"name"`
+	ConfigJSON JSONText `gorm:"type:text" json:"config"`
+	Priority   int      `gorm:"not null;default:40" json:"priority"`
+	Status     string   `gorm:"size:16;not null;default:ACTIVE" json:"status"`
+
+	RedisConnectionID *uint64 `gorm:"index;uniqueIndex:idx_redis_stream_slot,priority:1" json:"redis_connection_id,omitempty"`
+	RedisDB           int     `gorm:"uniqueIndex:idx_redis_stream_slot,priority:2" json:"redis_db"`
+	Stream            string  `gorm:"size:128;uniqueIndex:idx_redis_stream_slot,priority:3" json:"stream"`
+	ConsumerGroup     string  `gorm:"size:128" json:"consumer_group"`
+	StartPosition     string  `gorm:"size:16;default:$" json:"start_position"`
+	BatchSize         int     `gorm:"not null;default:16" json:"batch_size"`
+	MaxInflight       int     `gorm:"not null;default:1" json:"max_inflight"`
+	PauseReason       string  `gorm:"size:32" json:"pause_reason"`
+	AutoPaused        bool    `gorm:"not null;default:false" json:"auto_paused"`
+
 	SecretEnc     string     `gorm:"type:text" json:"-"`
 	SecretSet     bool       `gorm:"-" json:"secret_set"`
 	CursorValue   string     `gorm:"type:text" json:"cursor"`
@@ -85,7 +96,6 @@ type TriggerSource struct {
 const (
 	TriggerOpenAPI   = "OPENAPI"
 	TriggerRedis     = "REDIS"
-	TriggerPolling   = "POLLING"
 	TriggerWebSocket = "WEBSOCKET"
 )
 

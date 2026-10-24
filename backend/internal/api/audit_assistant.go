@@ -31,20 +31,31 @@ type auditAssistantRequest struct {
 }
 
 type assistantDraft struct {
-	Name            string                `json:"name"`
-	Code            string                `json:"code"`
-	Description     string                `json:"description"`
-	MediaTypes      []string              `json:"media_types"`
-	DecisionMode    string                `json:"decision_mode"`
-	Categories      []model.AuditCategory `json:"categories"`
-	ProviderID      uint64                `json:"provider_id"`
-	ReviewPrompt    string                `json:"review_prompt"`
-	Rules           json.RawMessage       `json:"rules"`
-	Routes          json.RawMessage       `json:"routes"`
-	DefaultResult   string                `json:"default_result"`
-	OnModelFail     string                `json:"on_model_fail"`
-	DedupeWindowSec int                   `json:"dedupe_window_sec"`
-	Triggers        map[string]string     `json:"triggers,omitempty"`
+	Name            string                 `json:"name"`
+	Code            string                 `json:"code"`
+	Description     string                 `json:"description"`
+	MediaTypes      []string               `json:"media_types"`
+	DecisionMode    string                 `json:"decision_mode"`
+	Categories      []model.AuditCategory  `json:"categories"`
+	ProviderID      uint64                 `json:"provider_id"`
+	ReviewPrompt    string                 `json:"review_prompt"`
+	Rules           json.RawMessage        `json:"rules"`
+	Routes          json.RawMessage        `json:"routes"`
+	DefaultResult   string                 `json:"default_result"`
+	OnModelFail     string                 `json:"on_model_fail"`
+	DedupeWindowSec int                    `json:"dedupe_window_sec"`
+	Triggers        map[string]string      `json:"triggers,omitempty"`
+	RedisTrigger    *assistantRedisTrigger `json:"redis_trigger,omitempty"`
+}
+
+type assistantRedisTrigger struct {
+	ConnectionID  uint64 `json:"connection_id"`
+	DB            int    `json:"db"`
+	Stream        string `json:"stream"`
+	ConsumerGroup string `json:"consumer_group"`
+	StartPosition string `json:"start_position"`
+	BatchSize     int    `json:"batch_size"`
+	MaxInflight   int    `json:"max_inflight"`
 }
 
 // auditAssistant runs a guided interview and, once the model considers the
@@ -169,13 +180,28 @@ func (s *Server) handleAuditAssistant(c *gin.Context, stream bool) {
 		currentJSON = auditSnapshotJSON(*currentAudit, currentTriggers)
 	}
 
+	var redisConnections []model.RedisConnection
+	_ = s.db.Where("project_id = ? AND status = ? AND last_test_ok = ? AND health = ?",
+		req.ProjectID, model.RedisConnectionActive, true, model.RedisHealthOK).
+		Order("id asc").Find(&redisConnections).Error
+	allowedRedis := make(map[uint64]bool, len(redisConnections))
+
 	systemPrompt := assistantSystemPrompt
 	systemPrompt += "\n\n【当前项目】\n项目编码：" + s.projectCode(req.ProjectID) + "\n"
+	if len(redisConnections) == 0 {
+		systemPrompt += "【可用 Redis 连接】\n无。禁止启用 REDIS；如果用户要求 Redis 接入，请在 reply 中提示先到「数据连接」创建并测试 Redis 连接。\n"
+	} else {
+		systemPrompt += "【可用 Redis 连接】\n"
+		for _, connection := range redisConnections {
+			allowedRedis[connection.ID] = true
+			systemPrompt += fmt.Sprintf("id=%d name=%s addr=%s\n", connection.ID, connection.Name, connection.Addr)
+		}
+	}
 	if currentAudit != nil {
 		systemPrompt += "正在编辑已有审核配置，编码保持为 " + currentAudit.Code + "，除非用户明确要求改名。\n"
 		systemPrompt += "\n【当前接入方式（触发源）】\n" + assistantTriggerSnapshot(currentTriggers) + "\n"
 	} else {
-		systemPrompt += "\n【当前接入方式（触发源）】\n新建审核默认：OPENAPI=ACTIVE，REDIS/WEBSOCKET/POLLING=DISABLED。\n"
+		systemPrompt += "\n【当前接入方式（触发源）】\n新建审核默认：OPENAPI=ACTIVE，REDIS/WEBSOCKET=DISABLED。\n"
 	}
 	systemPrompt += "\n【当前配置快照】\n" + currentJSON + "\n"
 
@@ -233,6 +259,9 @@ func (s *Server) handleAuditAssistant(c *gin.Context, stream bool) {
 
 	emit(assistantStep{ID: "draft", Label: "解析并校验配置", Status: "running"})
 	reply, ready, draft, parseErr := parseAssistantReply(result.Content, provider.ID, req.ProjectID, req.AuditID, currentAudit, currentTriggers)
+	if ready && draft.RedisTrigger != nil && !allowedRedis[draft.RedisTrigger.ConnectionID] {
+		parseErr = fmt.Errorf("模型选择了一个当前项目不可用或未通过测试的 Redis 连接，请先在「数据连接」创建并测试")
+	}
 	if parseErr != nil && ready {
 		emit(assistantStep{ID: "draft", Label: "解析并校验配置", Status: "error", Detail: parseErr.Error()})
 		extra := gin.H{"raw": truncateText(result.Content, 3000)}
@@ -414,20 +443,21 @@ func parseAssistantReply(content string, providerID, projectID, auditID uint64, 
 		Reply  string `json:"reply"`
 		Ready  bool   `json:"ready"`
 		Config *struct {
-			Name            string                `json:"name"`
-			Code            string                `json:"code"`
-			Description     string                `json:"description"`
-			MediaTypes      []string              `json:"media_types"`
-			DecisionMode    string                `json:"decision_mode"`
-			Categories      []model.AuditCategory `json:"categories"`
-			ReviewPrompt    string                `json:"review_prompt"`
-			Rules           json.RawMessage       `json:"rules"`
-			RulesPreset     string                `json:"rules_preset"`
-			Routes          json.RawMessage       `json:"routes"`
-			DefaultResult   string                `json:"default_result"`
-			OnModelFail     string                `json:"on_model_fail"`
-			DedupeWindowSec int                   `json:"dedupe_window_sec"`
-			Triggers        map[string]string     `json:"triggers"`
+			Name            string                 `json:"name"`
+			Code            string                 `json:"code"`
+			Description     string                 `json:"description"`
+			MediaTypes      []string               `json:"media_types"`
+			DecisionMode    string                 `json:"decision_mode"`
+			Categories      []model.AuditCategory  `json:"categories"`
+			ReviewPrompt    string                 `json:"review_prompt"`
+			Rules           json.RawMessage        `json:"rules"`
+			RulesPreset     string                 `json:"rules_preset"`
+			Routes          json.RawMessage        `json:"routes"`
+			DefaultResult   string                 `json:"default_result"`
+			OnModelFail     string                 `json:"on_model_fail"`
+			DedupeWindowSec int                    `json:"dedupe_window_sec"`
+			Triggers        map[string]string      `json:"triggers"`
+			RedisTrigger    *assistantRedisTrigger `json:"redis_trigger"`
 		} `json:"config"`
 	}
 	if err := json.Unmarshal([]byte(jsonText), &raw); err != nil {
@@ -529,10 +559,39 @@ func parseAssistantReply(content string, providerID, projectID, auditID uint64, 
 		draft.DedupeWindowSec = 86400
 	}
 	draft.Triggers = normalizeAssistantTriggers(raw.Config.Triggers, auditID == 0, currentTriggers)
+	if raw.Config.RedisTrigger != nil {
+		redisTrigger := *raw.Config.RedisTrigger
+		redisTrigger.Stream = strings.TrimSpace(redisTrigger.Stream)
+		redisTrigger.ConsumerGroup = strings.TrimSpace(redisTrigger.ConsumerGroup)
+		if redisTrigger.DB < 0 || redisTrigger.DB > 255 {
+			redisTrigger.DB = 0
+		}
+		if redisTrigger.StartPosition != "0" {
+			redisTrigger.StartPosition = "$"
+		}
+		if redisTrigger.BatchSize < 1 || redisTrigger.BatchSize > 32 {
+			redisTrigger.BatchSize = 16
+		}
+		if redisTrigger.MaxInflight < 1 || redisTrigger.MaxInflight > 32 {
+			redisTrigger.MaxInflight = 1
+		}
+		if redisTrigger.ConnectionID > 0 && redisTrigger.Stream != "" {
+			draft.RedisTrigger = &redisTrigger
+			if draft.Triggers == nil {
+				draft.Triggers = map[string]string{
+					model.TriggerOpenAPI: "DISABLED", model.TriggerRedis: "ACTIVE", model.TriggerWebSocket: "DISABLED",
+				}
+			}
+			draft.Triggers[model.TriggerRedis] = "ACTIVE"
+		}
+	}
+	if len(raw.Config.Triggers) > 0 && draft.Triggers[model.TriggerRedis] == "ACTIVE" && draft.RedisTrigger == nil {
+		return "", false, draft, fmt.Errorf("启用 Redis 接入时必须选择项目 Redis 连接并填写 Stream")
+	}
 	return reply, true, draft, nil
 }
 
-var assistantTriggerTypes = []string{model.TriggerOpenAPI, model.TriggerRedis, model.TriggerWebSocket, model.TriggerPolling}
+var assistantTriggerTypes = []string{model.TriggerOpenAPI, model.TriggerRedis, model.TriggerWebSocket}
 
 func assistantDefaultTriggerStatus(triggerType string) string {
 	if triggerType == model.TriggerOpenAPI {
@@ -655,11 +714,11 @@ const assistantSystemPrompt = `你是「智审图档 SmartDoc Vision」的审核
 - 分类审核需要提供至少两个分类；纯分类器可提供任意数量分类，分类结果始终 PASS，不需要映射驳回。
 - 可绑定通用大模型（OpenAI 兼容 / Anthropic 协议）或 JEV 决策模型；分类场景优先建议 JEV。
 - rules 是规则组数组；routes 是 PASS / REJECT / REVIEW 三路结果动作对象，通常保持空动作，除非用户明确要求。
-- 接入方式（触发源）与审核配置一起保存，决定任务如何进入平台：OPENAPI（开放 API 提交）、REDIS（Redis Stream 消息）、WEBSOCKET（WebSocket）、POLLING（HTTP 定时轮询）。可以同时开启多种，也可以只开启一种。
+- 接入方式（触发源）与审核配置一起保存，决定任务如何进入平台：OPENAPI（开放 API 提交）、REDIS（Redis Stream 消息）、WEBSOCKET（WebSocket）。可以同时开启多种，也可以只开启一种。平台不再支持 HTTP/MySQL 轮询。
 
 【对话规则】
 1. 用简体中文，每次最多问 2~3 个最关键的问题，不要一次罗列冗长清单；用户已经说清楚的信息不要重复追问。
-2. 先确认：审核对象/业务场景、通过标准、驳回红线、是否需要分类、是否需要人工复核、任务通过什么方式接入（开放 API / Redis Stream / WebSocket / HTTP 轮询）。
+2. 先确认：审核对象/业务场景、通过标准、驳回红线、是否需要分类、是否需要人工复核、任务通过什么方式接入（开放 API / Redis Stream / WebSocket）。
 3. 如果用户回答“都行/你决定/直接生成/开始生成”，立即采用合理默认值并输出完整配置，不要继续追问。
 4. 最多进行 3 轮提问；信息足够时直接生成。不要声称已经保存，保存由前端执行。
 5. 用户明确给出的要求必须原样落进配置，禁止被平台默认值覆盖。例如用户说“用 Redis 接收消息”，必须输出 REDIS=ACTIVE、OPENAPI=DISABLED；除非用户同时要求保留开放 API。
@@ -684,7 +743,8 @@ const assistantSystemPrompt = `你是「智审图档 SmartDoc Vision」的审核
   "rules_preset":"standard",
   "rules":[],
   "routes":{"PASS":{"exec_mode":"sequential","on_error":"continue","actions":[]},"REJECT":{"exec_mode":"sequential","on_error":"continue","actions":[]},"REVIEW":{"exec_mode":"sequential","on_error":"to_review","actions":[]}},
-  "triggers":{"OPENAPI":"DISABLED","REDIS":"ACTIVE","WEBSOCKET":"DISABLED","POLLING":"DISABLED"}
+  "triggers":{"OPENAPI":"DISABLED","REDIS":"ACTIVE","WEBSOCKET":"DISABLED"},
+  "redis_trigger":{"connection_id":1,"db":0,"stream":"sdv:demo:audit:archive_review","consumer_group":"","start_position":"$","batch_size":16,"max_inflight":1}
 }}
 
 【字段约束】
@@ -693,12 +753,15 @@ const assistantSystemPrompt = `你是「智审图档 SmartDoc Vision」的审核
 - 分类模式下 categories 必须给出至少两个分类；纯分类器可给任意数量类型，result 会被平台统一为 PASS。
 - 纯分类器使用 decision_mode=CLASSIFY_ONLY，categories 中每项仍填写 code/name/description，result 写 PASS 即可。
 - routes 的键必须是 PASS、REJECT、REVIEW；动作默认空数组。
-- triggers 的键固定为 OPENAPI、REDIS、WEBSOCKET、POLLING，值只能是 ACTIVE 或 DISABLED，表示四种接入方式的最终期望状态。
-  - 用户提到接入方式时，必须输出完整的四个键；未提到的方式写 DISABLED，除非用户明确要求保留。
+- triggers 的键固定为 OPENAPI、REDIS、WEBSOCKET，值只能是 ACTIVE 或 DISABLED，表示三种接入方式的最终期望状态。
+  - 用户提到接入方式时，必须输出完整的三个键；未提到的方式写 DISABLED，除非用户明确要求保留。
   - 用户说“用 Redis 接收消息/走 Redis 队列”时：REDIS=ACTIVE、OPENAPI=DISABLED。
   - 用户说“用开放 API / HTTP 接口提交”时：OPENAPI=ACTIVE，其他未要求的方式 DISABLED。
   - 用户说“用 WebSocket 推送”时：WEBSOCKET=ACTIVE，其他未要求的方式 DISABLED。
-  - 用户说“定时拉取/轮询”时：POLLING=ACTIVE，其他未要求的方式 DISABLED。
+  - HTTP/MySQL 轮询已下线，不要建议或输出轮询配置。
+  - REDIS=ACTIVE 时必须同时输出 redis_trigger，且 connection_id 只能从【可用 Redis 连接】中选择。
+  - 如果【可用 Redis 连接】为空，禁止启用 REDIS；在 reply 中提示用户先到「数据连接」创建并测试 Redis 连接。
+  - redis_trigger.stream 是要监听的业务队列名；consumer_group 可留空，平台会自动生成；start_position 只能是 "$"（只消费新消息）或 "0"（从头消费）。
   - 新建且用户完全未提及接入方式时，可省略 triggers，平台默认启用开放 API；编辑且用户未提及接入方式时，必须省略 triggers，保持现有触发源不变。
 - 接入方式不能写进 review_prompt、rules 或 routes。
 - 编辑已有配置时，只修改用户要求的部分，保留未提及的字段和名称；code 由平台保持原值。
