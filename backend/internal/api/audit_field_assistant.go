@@ -108,6 +108,7 @@ func (s *Server) auditFieldAssistant(c *gin.Context) {
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 120*time.Second)
 	defer cancel()
+	started := time.Now()
 	result, err := ai.Chat(ctx, ai.ChatRequest{
 		Provider: *provider, APIKey: key, System: systemPrompt,
 		Messages:    []ai.ChatMessage{{Role: "user", Content: userContent}},
@@ -115,9 +116,11 @@ func (s *Server) auditFieldAssistant(c *gin.Context) {
 		Temperature: 0.2,
 	})
 	if err != nil {
+		s.recordProviderUsage(*provider, model.UsageSourceAuditAssistant, 0, nil, time.Since(started), err)
 		fail(c, http.StatusUnprocessableEntity, "ASSISTANT_FAILED", err.Error(), nil)
 		return
 	}
+	s.recordProviderUsage(*provider, model.UsageSourceAuditAssistant, 0, result, time.Since(started), nil)
 
 	var explanation, text string
 	decisionMode := assistantFieldDecisionMode(req.Context)

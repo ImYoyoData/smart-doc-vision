@@ -9,6 +9,7 @@ import (
 
 	"smartdoc-vision/backend/internal/ai"
 	"smartdoc-vision/backend/internal/model"
+	"smartdoc-vision/backend/internal/usage"
 )
 
 const providerAttemptTimeout = 45 * time.Second
@@ -123,6 +124,7 @@ func (e *Engine) reviewWithFailover(
 			if verdict.LatencyMS == 0 {
 				verdict.LatencyMS = time.Since(started).Milliseconds()
 			}
+			e.recordReviewUsage(candidate, task, audit, verdict, started, nil)
 			e.clearProviderFailure(candidate)
 			return verdict, candidate, nil
 		}
@@ -130,11 +132,48 @@ func (e *Engine) reviewWithFailover(
 			reviewErr = fmt.Errorf("模型未返回结论")
 		}
 		lastErr = reviewErr
+		e.recordReviewUsage(candidate, task, audit, nil, started, reviewErr)
 		e.recordProviderFailure(candidate, reviewErr)
 		log.Printf("task %s model %s(%s) failed, trying next provider: %v",
 			task.TaskNo, candidate.Name, candidate.Model, reviewErr)
 	}
 	return nil, primary, lastErr
+}
+
+// recordReviewUsage persists one review attempt. Failures are logged without
+// tokens so the provider card's request count still reflects real traffic.
+func (e *Engine) recordReviewUsage(
+	provider model.AIProvider,
+	task model.Task,
+	audit model.Audit,
+	verdict *model.Verdict,
+	started time.Time,
+	callErr error,
+) {
+	entry := usage.Entry{
+		ProjectID:    provider.ProjectID,
+		ProviderID:   provider.ID,
+		ProviderName: provider.Name,
+		Kind:         provider.Kind,
+		Model:        provider.Model,
+		Source:       model.UsageSourceReview,
+		AuditID:      audit.ID,
+		TaskID:       task.ID,
+		DurationMS:   time.Since(started).Milliseconds(),
+	}
+	if callErr != nil {
+		entry.Status = model.UsageStatusError
+		entry.ErrorMessage = callErr.Error()
+	} else if verdict != nil {
+		if verdict.Model != "" {
+			entry.Model = verdict.Model
+		}
+		entry.InputTokens = verdict.InputTokens
+		entry.CachedTokens = verdict.CachedTokens
+		entry.OutputTokens = verdict.OutputTokens
+		entry.TotalTokens = verdict.TotalTokens
+	}
+	usage.Record(e.db, entry)
 }
 
 func (e *Engine) recordProviderFailure(provider model.AIProvider, err error) {

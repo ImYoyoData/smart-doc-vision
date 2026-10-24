@@ -89,6 +89,10 @@ type Verdict struct {
 	Provider           string         `json:"provider"`
 	Model              string         `json:"model"`
 	LatencyMS          int64          `json:"latency_ms"`
+	InputTokens        int            `json:"input_tokens,omitempty"`
+	CachedTokens       int            `json:"cached_tokens,omitempty"`
+	OutputTokens       int            `json:"output_tokens,omitempty"`
+	TotalTokens        int            `json:"total_tokens,omitempty"`
 	Meta               map[string]any `json:"meta,omitempty"`
 }
 

@@ -57,6 +57,7 @@ type anthropicResponse struct {
 		Type    string `json:"type"`
 		Message string `json:"message"`
 	} `json:"error"`
+	Usage anthropicUsage `json:"usage"`
 }
 
 func (a *AnthropicAdapter) Review(ctx context.Context, req Request) (*model.Verdict, error) {
@@ -214,6 +215,7 @@ func (a *AnthropicAdapter) Review(ctx context.Context, req Request) (*model.Verd
 	}
 	verdict.LatencyMS = latency
 	verdict.Raw = obj
+	applyUsageToVerdict(verdict, parsed.Usage.usage())
 	normalizeVerdict(verdict)
 	return verdict, nil
 }

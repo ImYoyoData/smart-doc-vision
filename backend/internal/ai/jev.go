@@ -272,6 +272,7 @@ func (a *JEVAdapter) Review(ctx context.Context, req Request) (*model.Verdict, e
 	if verdict.Model == "" {
 		verdict.Model = req.Provider.Model
 	}
+	applyUsageToVerdict(verdict, usageFromMap(parsed.Usage))
 	normalizeVerdict(verdict)
 	return verdict, nil
 }
@@ -360,6 +361,7 @@ func jevClassificationVerdict(parsed jevResponse, choice jevChoiceAnswer, catego
 	if verdict.Model == "" {
 		verdict.Model = req.Provider.Model
 	}
+	applyUsageToVerdict(verdict, usageFromMap(parsed.Usage))
 	normalizeVerdict(verdict)
 	return verdict
 }

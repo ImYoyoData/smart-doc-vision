@@ -43,6 +43,7 @@ type openAIResponse struct {
 		Message string `json:"message"`
 		Type    string `json:"type"`
 	} `json:"error"`
+	Usage openAIUsage `json:"usage"`
 }
 
 func (a *OpenAIAdapter) Review(ctx context.Context, req Request) (*model.Verdict, error) {
@@ -200,6 +201,7 @@ func (a *OpenAIAdapter) Review(ctx context.Context, req Request) (*model.Verdict
 	}
 	verdict.LatencyMS = latency
 	verdict.Raw = obj
+	applyUsageToVerdict(verdict, parsed.Usage.usage())
 	normalizeVerdict(verdict)
 	return verdict, nil
 }

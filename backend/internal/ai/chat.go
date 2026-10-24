@@ -55,6 +55,7 @@ type ChatResult struct {
 	Model      string     `json:"model"`
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
 	StopReason string     `json:"stop_reason,omitempty"`
+	Usage      Usage      `json:"usage"`
 }
 
 // Chat powers the audit-configuration assistant. It intentionally supports
@@ -131,6 +132,7 @@ func chatOpenAI(ctx context.Context, req ChatRequest) (*ChatResult, error) {
 		Error *struct {
 			Message string `json:"message"`
 		} `json:"error"`
+		Usage openAIUsage `json:"usage"`
 	}
 	if err := json.Unmarshal(raw, &parsed); err != nil {
 		return nil, fmt.Errorf("解析模型响应失败: %w", err)
@@ -154,7 +156,7 @@ func chatOpenAI(ctx context.Context, req ChatRequest) (*ChatResult, error) {
 	}
 	return &ChatResult{
 		Content: strings.TrimSpace(choice.Message.Content), Model: parsed.Model,
-		ToolCalls: calls, StopReason: choice.FinishReason,
+		ToolCalls: calls, StopReason: choice.FinishReason, Usage: parsed.Usage.usage(),
 	}, nil
 }
 
@@ -306,6 +308,7 @@ func chatAnthropic(ctx context.Context, req ChatRequest) (*ChatResult, error) {
 		Error      *struct {
 			Message string `json:"message"`
 		} `json:"error"`
+		Usage anthropicUsage `json:"usage"`
 	}
 	if err := json.Unmarshal(raw, &parsed); err != nil {
 		return nil, fmt.Errorf("解析模型响应失败: %w", err)
@@ -332,7 +335,7 @@ func chatAnthropic(ctx context.Context, req ChatRequest) (*ChatResult, error) {
 	}
 	return &ChatResult{
 		Content: strings.TrimSpace(builder.String()), Model: parsed.Model,
-		ToolCalls: calls, StopReason: parsed.StopReason,
+		ToolCalls: calls, StopReason: parsed.StopReason, Usage: parsed.Usage.usage(),
 	}, nil
 }
 

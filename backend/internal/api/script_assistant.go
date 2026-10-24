@@ -25,6 +25,11 @@ type scriptAssistantRequest struct {
 	Messages      []assistantMessage `json:"messages"`
 }
 
+// scriptAssistantContextWindow is the context budget shown by the editor's
+// usage ring. It is deliberately a constant: the assistant does not know the
+// real window of every proxied model, and 400k is the platform-wide target.
+const scriptAssistantContextWindow = 400000
+
 func (s *Server) scriptAssistantStream(c *gin.Context) {
 	user := currentUser(c)
 	if !s.hasPermission(user.Role, "audit:write") {
@@ -142,15 +147,23 @@ func (s *Server) scriptAssistantStream(c *gin.Context) {
 	toolsUnavailable := false
 	var final *ai.ChatResult
 	modelName := provider.Model
+	auditID := uint64(0)
+	if audit != nil {
+		auditID = audit.ID
+	}
+	var usageTotals ai.Usage
+	usageRequests := 0
 
 	for turn := 0; turn < 8; turn++ {
 		stopHeartbeat := startScriptHeartbeat(c)
+		turnStarted := time.Now()
 		result, chatErr := ai.Chat(ctx, ai.ChatRequest{
 			Provider: *provider, APIKey: key, System: systemPrompt,
 			Messages: messages, Tools: tools, MaxTokens: 4096, Temperature: 0.2, Reasoning: req.Reasoning,
 		})
 		stopHeartbeat()
 		if chatErr != nil {
+			s.recordProviderUsage(*provider, model.UsageSourceScriptAssistant, auditID, nil, time.Since(turnStarted), chatErr)
 			if !toolsUnavailable && isToolUnsupportedError(chatErr) {
 				toolsUnavailable = true
 				tools = nil
@@ -166,6 +179,23 @@ func (s *Server) scriptAssistantStream(c *gin.Context) {
 			return
 		}
 		modelName = result.Model
+		s.recordProviderUsage(*provider, model.UsageSourceScriptAssistant, auditID, result, time.Since(turnStarted), nil)
+		usageRequests++
+		usageTotals.InputTokens += result.Usage.InputTokens
+		usageTotals.CachedTokens += result.Usage.CachedTokens
+		usageTotals.OutputTokens += result.Usage.OutputTokens
+		usageTotals.TotalTokens += result.Usage.TotalTokens
+		writeAssistantSSE(c, "usage", gin.H{
+			"model":          modelName,
+			"requests":       usageRequests,
+			"input_tokens":   usageTotals.InputTokens,
+			"cached_tokens":  usageTotals.CachedTokens,
+			"output_tokens":  usageTotals.OutputTokens,
+			"total_tokens":   usageTotals.TotalTokens,
+			"context_tokens": result.Usage.InputTokens + result.Usage.OutputTokens,
+			"context_window": scriptAssistantContextWindow,
+			"at":             time.Now().UnixMilli(),
+		})
 		if len(result.ToolCalls) == 0 {
 			final = result
 			if !readOnly && !state.changed {
@@ -259,6 +289,14 @@ func (s *Server) scriptAssistantStream(c *gin.Context) {
 		"changed": state.changed, "tools_used": toolsUsed,
 		"model": modelName, "provider_id": provider.ID, "provider_name": provider.Name,
 		"steps": steps,
+		"usage": gin.H{
+			"requests":       usageRequests,
+			"input_tokens":   usageTotals.InputTokens,
+			"cached_tokens":  usageTotals.CachedTokens,
+			"output_tokens":  usageTotals.OutputTokens,
+			"total_tokens":   usageTotals.TotalTokens,
+			"context_window": scriptAssistantContextWindow,
+		},
 	}
 	writeAssistantSSE(c, "reply", response)
 	writeAssistantSSE(c, "done", gin.H{})

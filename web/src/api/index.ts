@@ -20,6 +20,8 @@ import type {
   Project,
   Provider,
   ProviderModel,
+  ProviderUsageLog,
+  ProviderUsageSummary,
   ProjectSecret,
   RecycleItem,
   RedisConnection,
@@ -92,6 +94,11 @@ export const credentialApi = {
 export const providerApi = {
   list: (params?: Record<string, unknown>) => get<{ items: Provider[]; total: number }>('/providers', params),
   get: (id: number) => get<Provider>(`/providers/${id}`),
+  usage: (id: number, params?: Record<string, unknown>) =>
+    get<{ items: ProviderUsageLog[]; total: number; summary: ProviderUsageSummary; kind: string; model: string }>(
+      `/providers/${id}/usage`,
+      params,
+    ),
   create: (payload: Record<string, unknown>) => post<Provider>('/providers', payload),
   update: (id: number, payload: Record<string, unknown>) => put<Provider>(`/providers/${id}`, payload),
   remove: (id: number) => del<{ deleted: boolean }>(`/providers/${id}`),

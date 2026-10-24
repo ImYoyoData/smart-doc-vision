@@ -139,6 +139,7 @@ func (s *Server) Router() *gin.Engine {
 			auth.POST("/providers", s.createProvider)
 			auth.POST("/providers/models", s.listProviderModels)
 			auth.GET("/providers/:id", s.getProvider)
+			auth.GET("/providers/:id/usage", s.providerUsage)
 			auth.PUT("/providers/:id", s.updateProvider)
 			auth.DELETE("/providers/:id", s.deleteProvider)
 			auth.POST("/providers/:id/test", s.testProvider)

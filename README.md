@@ -414,6 +414,7 @@ db.close()
 - 凭据建议使用项目密钥 `ctx.secret('NAME')`，不要写明文密码。
 - 原 `mysql` 结果动作已移除；数据库写入请使用 JS 脚本的 `ctx.mysql` / `ctx.pg`。
 - 编辑器提供语法高亮、`ctx` API 补全和右侧 AI 脚本助手。AI 是可读写编辑器的多轮 Agent：会按需读取/替换/插入/删除行、联网搜索和读取网页；不确定时会先提问。修改会直接写入编辑器，可用 Ctrl+Z 撤销，保存后才会落库；查询/解释类请求不会改动脚本。
+- 助手输入区右侧的环形进度条显示本轮上下文占用（按 400000 Token 窗口估算，取最近一次请求的输入 + 输出并累加工具轮次）；点击可查看窗口、已用、剩余、请求次数、累计输入 / 缓存命中 / 输出 / 总量。每次调用同时计入「模型接入」的请求明细。
 - 编辑器右上角的「运行」支持沙盒模拟：默认使用当前脚本所在结论（PASS / REJECT / REVIEW）作为模拟结果，点击旁边的齿轮可改任务号、业务主键、输入文本、`ctx.detail` 摘要 / 风险 / 原因 / 标签 / 分类等参数。模拟运行时 `ctx.secret`、MySQL / PostgreSQL 连接和 `ctx.http` 全部返回占位数据，不会读取密钥或产生真实副作用；结果面板分「临时日志 / 返回值 / 临时变量」三栏，不落执行记录，真实日志仍在「脚本日志」查看。
 
 ### MySQL 说明
@@ -474,6 +475,13 @@ GET /api/admin/v1/audits/{aid}/export?start=2026-10-01&end=2026-10-31&status=SUC
 - 「自定义请求头」每行一个 Header。部分 OpenCode 兼容网关需要 `x-opencode-session`；平台默认自动附带随机会话 ID，测试连接和熔断恢复探测会强制使用新的随机值。
 - 审核调用失败时会立即尝试项目内同类别（通用模型 / JEV）的下一个启用模型；失败模型进入熔断冷却（30 秒起指数增长，最长 10 分钟），冷却期间不再参与调度。
 - 后台每 30 秒对到期熔断模型执行连接测试；测试通过后清除熔断并恢复可用，测试失败则延长冷却。手动「测试连接」成功也会立即清除熔断。
+
+### 请求用量与 Token 统计
+
+- 每次模型调用都会写入请求明细：来源（审核任务 / 脚本助手 / 配置助手）、输入 Token、缓存命中、输出 Token、总 Token、耗时与成功/失败。失败的调用也计入请求量，但没有 Token 数据。
+- 模型卡片显示累计请求量与总 Token；通用大模型额外显示输入 / 缓存命中 / 输出，JEV 决策模型只统计输入（其输出免费），与供应商计费口径一致。
+- 点击卡片上的「请求明细」可查看该模型最近 80 次请求及累计汇总。
+- Token 数据来自供应商响应：OpenAI 兼容读取 `usage.prompt_tokens` / `completion_tokens` / `prompt_tokens_details.cached_tokens`（兼容 DeepSeek 的 `prompt_cache_hit_tokens`）；Anthropic 读取 `usage.input_tokens` / `output_tokens` / `cache_read_input_tokens`；JEV 读取 `usage.input_tokens` / `output_tokens`。网关不返回 usage 时明细仍会记录，Token 显示为 0。
 
 ### 通用大模型 · OpenAI 兼容协议
 

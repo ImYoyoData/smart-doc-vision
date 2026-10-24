@@ -29,7 +29,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import { providerApi } from '@/api'
-import type { Provider, ProviderModel } from '@/api/types'
+import type { Provider, ProviderModel, ProviderUsageLog, ProviderUsageSummary } from '@/api/types'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 const workspace = useWorkspaceStore()
@@ -172,6 +172,56 @@ function resetProviderFilters() {
 watch(() => form.supportsThinking, (value) => {
   if (!value) form.preferReasoning = false
 })
+
+const usageShow = ref(false)
+const usageLoading = ref(false)
+const usageError = ref('')
+const usageProvider = ref<Provider | null>(null)
+const usageRows = ref<ProviderUsageLog[]>([])
+const usageSummary = ref<ProviderUsageSummary | null>(null)
+const usageJEV = computed(() => usageProvider.value?.kind === 'JEV')
+
+async function openUsage(provider: Provider) {
+  usageProvider.value = provider
+  usageRows.value = []
+  usageSummary.value = provider.usage || null
+  usageError.value = ''
+  usageShow.value = true
+  usageLoading.value = true
+  try {
+    const data = await providerApi.usage(provider.id, { limit: 80 })
+    usageRows.value = data.items
+    usageSummary.value = data.summary
+  } catch (error) {
+    usageError.value = error instanceof Error ? error.message : '加载请求明细失败'
+  } finally {
+    usageLoading.value = false
+  }
+}
+
+function usageSourceLabel(source: string) {
+  if (source === 'REVIEW') return '审核任务'
+  if (source === 'SCRIPT_ASSISTANT') return '脚本助手'
+  if (source === 'AUDIT_ASSISTANT') return '配置助手'
+  return source || '—'
+}
+
+function usageCardTokens(provider: Provider) {
+  if (provider.kind === 'JEV') return provider.usage?.input_tokens || 0
+  return provider.usage?.total_tokens || 0
+}
+
+function formatCount(value?: number) {
+  if (!value || value <= 0) return '0'
+  return value.toLocaleString('en-US')
+}
+
+function formatUsageTokens(value?: number) {
+  if (!value || value <= 0) return '0'
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`
+  if (value >= 100_000) return `${Math.round(value / 1_000)}K`
+  return value.toLocaleString('en-US')
+}
 
 function formatTokenCount(value?: number) {
   if (!value || value <= 0) return '—'
@@ -742,6 +792,24 @@ onMounted(load)
             </span>
           </div>
 
+          <div class="provider-usage">
+            <div class="usage-stat">
+              <span>累计请求</span>
+              <strong>{{ formatCount(provider.usage?.requests) }}</strong>
+            </div>
+            <div class="usage-stat">
+              <span>{{ provider.kind === 'JEV' ? '输入 Token' : '总 Token' }}</span>
+              <strong>{{ provider.usage ? formatUsageTokens(usageCardTokens(provider)) : '—' }}</strong>
+            </div>
+            <div class="usage-meta">
+              <span v-if="provider.kind === 'JEV'">决策模型输出免费，仅统计输入</span>
+              <span v-else>
+                输入 {{ formatUsageTokens(provider.usage?.input_tokens) }} · 命中 {{ formatUsageTokens(provider.usage?.cached_tokens) }} · 输出 {{ formatUsageTokens(provider.usage?.output_tokens) }}
+              </span>
+              <button type="button" class="usage-link" @click="openUsage(provider)">请求明细</button>
+            </div>
+          </div>
+
           <div class="provider-health">
             <div class="health-main">
               <span class="health-label">连通状态</span>
@@ -1034,6 +1102,82 @@ onMounted(load)
             <n-button :disabled="saving" @click="modalShow = false">取消</n-button>
             <n-button type="primary" :loading="saving" @click="save">保存接入</n-button>
           </div>
+        </div>
+      </div>
+    </n-modal>
+
+    <n-modal v-model:show="usageShow" preset="card" class="usage-modal">
+      <template #header>
+        <div class="usage-modal-title">
+          <span>模型请求明细</span>
+          <span v-if="usageProvider" class="usage-modal-sub">{{ usageProvider.name }} · {{ usageProvider.model }}</span>
+        </div>
+      </template>
+      <div class="usage-modal-body">
+        <div class="usage-summary-grid">
+          <div class="usage-summary-item">
+            <span>请求量</span>
+            <strong>{{ formatCount(usageSummary?.requests) }}</strong>
+          </div>
+          <div class="usage-summary-item">
+            <span>输入 Token</span>
+            <strong>{{ formatCount(usageSummary?.input_tokens) }}</strong>
+          </div>
+          <div v-if="!usageJEV" class="usage-summary-item">
+            <span>缓存命中</span>
+            <strong>{{ formatCount(usageSummary?.cached_tokens) }}</strong>
+          </div>
+          <div v-if="!usageJEV" class="usage-summary-item">
+            <span>输出 Token</span>
+            <strong>{{ formatCount(usageSummary?.output_tokens) }}</strong>
+          </div>
+          <div v-if="!usageJEV" class="usage-summary-item">
+            <span>总 Token</span>
+            <strong>{{ formatCount(usageSummary?.total_tokens) }}</strong>
+          </div>
+          <div v-else class="usage-summary-note">决策模型输出免费，只统计输入 Token。</div>
+        </div>
+
+        <div v-if="usageError" class="usage-modal-error">{{ usageError }}</div>
+
+        <div class="usage-table-wrap">
+          <table class="usage-table">
+            <thead>
+              <tr>
+                <th>时间</th>
+                <th>来源</th>
+                <th>模型</th>
+                <th class="num">输入</th>
+                <th v-if="!usageJEV" class="num">缓存</th>
+                <th v-if="!usageJEV" class="num">输出</th>
+                <th v-if="!usageJEV" class="num">总计</th>
+                <th class="num">耗时</th>
+                <th>状态</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-if="usageLoading">
+                <td :colspan="usageJEV ? 7 : 9" class="usage-empty">加载中…</td>
+              </tr>
+              <tr v-else-if="!usageRows.length">
+                <td :colspan="usageJEV ? 7 : 9" class="usage-empty">还没有请求记录。审核任务或 AI 助手调用后会自动累计。</td>
+              </tr>
+              <tr v-for="row in usageRows" :key="row.id">
+                <td class="mono usage-time">{{ formatTime(row.created_at) }}</td>
+                <td><span class="usage-source" :class="row.source.toLowerCase()">{{ usageSourceLabel(row.source) }}</span></td>
+                <td class="mono usage-model" :title="row.model">{{ row.model }}</td>
+                <td class="num">{{ formatCount(row.input_tokens) }}</td>
+                <td v-if="!usageJEV" class="num">{{ formatCount(row.cached_tokens) }}</td>
+                <td v-if="!usageJEV" class="num">{{ formatCount(row.output_tokens) }}</td>
+                <td v-if="!usageJEV" class="num strong">{{ formatCount(row.total_tokens) }}</td>
+                <td class="num">{{ row.duration_ms }}ms</td>
+                <td>
+                  <span class="usage-status" :class="row.status.toLowerCase()">{{ row.status === 'SUCCESS' ? '成功' : '失败' }}</span>
+                  <span v-if="row.error_message" class="usage-row-error" :title="row.error_message">{{ row.error_message }}</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
         </div>
       </div>
     </n-modal>
@@ -1386,6 +1530,236 @@ onMounted(load)
 .provider-capabilities :deep(svg) {
   width: 11px;
   height: 11px;
+}
+
+.provider-usage {
+  display: flex;
+  align-items: flex-end;
+  gap: 18px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed #edf1f7;
+}
+
+.usage-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.usage-stat span {
+  color: var(--muted-light);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+}
+
+.usage-stat strong {
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.usage-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.usage-meta > span {
+  color: var(--muted-light);
+  font-size: 8.5px;
+}
+
+.usage-link {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--brand);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.usage-link:hover {
+  text-decoration: underline;
+}
+
+.usage-modal {
+  width: min(1040px, calc(100vw - 32px));
+}
+
+.usage-modal-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.usage-modal-title > span:first-child {
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.usage-modal-sub {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.usage-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.usage-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+  gap: 10px;
+}
+
+.usage-summary-item {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-soft);
+}
+
+.usage-summary-item span {
+  display: block;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.usage-summary-item strong {
+  display: block;
+  margin-top: 4px;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 16px;
+}
+
+.usage-summary-note {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.usage-modal-error {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #fef2f2;
+  color: #b91c1c;
+  font-size: 11px;
+}
+
+.usage-table-wrap {
+  max-height: 52vh;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.usage-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.usage-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-weight: 600;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.usage-table td {
+  padding: 9px 10px;
+  border-bottom: 1px solid #edf1f7;
+  color: var(--ink);
+  vertical-align: top;
+}
+
+.usage-table tr:last-child td {
+  border-bottom: none;
+}
+
+.usage-table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.usage-table .strong {
+  font-weight: 650;
+}
+
+.usage-time {
+  color: var(--muted-light);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.usage-model {
+  max-width: 190px;
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.usage-source {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 99px;
+  background: #eef3fc;
+  color: #4b6a9b;
+  font-size: 9.5px;
+  white-space: nowrap;
+}
+
+.usage-source.script_assistant {
+  background: #f0fdf4;
+  color: #15803d;
+}
+
+.usage-source.audit_assistant {
+  background: #f5f1ff;
+  color: #7c3aed;
+}
+
+.usage-status {
+  color: var(--green);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.usage-status.error {
+  color: #b91c1c;
+}
+
+.usage-row-error {
+  display: block;
+  max-width: 220px;
+  overflow: hidden;
+  color: #b91c1c;
+  font-size: 9.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.usage-empty {
+  padding: 26px 10px !important;
+  color: var(--muted);
+  text-align: center;
 }
 
 .provider-health {

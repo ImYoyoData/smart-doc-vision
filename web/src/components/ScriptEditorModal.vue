@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { NButton, NIcon, NInput, NInputNumber, NModal, NSelect, NSpin, NTabPane, NTabs, NTooltip, useThemeVars } from 'naive-ui'
+import { NButton, NIcon, NInput, NInputNumber, NModal, NPopover, NSelect, NSpin, NTabPane, NTabs, NTooltip, useThemeVars } from 'naive-ui'
 import { EditorView, basicSetup } from 'codemirror'
 import { Compartment } from '@codemirror/state'
 import { javascript, javascriptLanguage } from '@codemirror/lang-javascript'
@@ -94,6 +94,42 @@ const aiProviderId = ref<number | null>(null)
 const aiProviders = ref<Provider[]>([])
 const aiReasoning = ref('auto')
 const aiLastPrompt = ref('')
+
+interface AiUsage {
+  model?: string
+  requests: number
+  input_tokens: number
+  cached_tokens: number
+  output_tokens: number
+  total_tokens: number
+  context_tokens: number
+  context_window: number
+}
+
+const aiUsage = ref<AiUsage | null>(null)
+const CONTEXT_WINDOW_DEFAULT = 400000
+const contextWindow = computed(() => aiUsage.value?.context_window || CONTEXT_WINDOW_DEFAULT)
+const contextTokens = computed(() => aiUsage.value?.context_tokens || 0)
+const contextPercent = computed(() => {
+  if (!contextWindow.value) return 0
+  return Math.min(100, Math.round((contextTokens.value / contextWindow.value) * 1000) / 10)
+})
+const contextRemaining = computed(() => Math.max(0, contextWindow.value - contextTokens.value))
+const contextTone = computed(() => {
+  if (contextPercent.value >= 85) return 'danger'
+  if (contextPercent.value >= 60) return 'warn'
+  return 'ok'
+})
+const contextRingOffset = computed(() => {
+  const circumference = 2 * Math.PI * 15
+  return circumference * (1 - Math.min(1, contextTokens.value / contextWindow.value))
+})
+
+function formatTokens(value?: number) {
+  if (!value || value <= 0) return '0'
+  return value.toLocaleString('en-US')
+}
+
 const apiShow = ref(false)
 const initialScript = ref(props.script)
 const initialRemark = ref(props.remark)
@@ -674,6 +710,17 @@ async function sendAi() {
         } else if (event === 'script' && typeof value?.script === 'string') {
           if (applyScriptFromAi(value.script)) applied = true
           if (value.summary) aiStatus.value = String(value.summary)
+        } else if (event === 'usage') {
+          aiUsage.value = {
+            model: value.model ? String(value.model) : undefined,
+            requests: Number(value.requests) || 0,
+            input_tokens: Number(value.input_tokens) || 0,
+            cached_tokens: Number(value.cached_tokens) || 0,
+            output_tokens: Number(value.output_tokens) || 0,
+            total_tokens: Number(value.total_tokens) || 0,
+            context_tokens: Number(value.context_tokens) || 0,
+            context_window: Number(value.context_window) || CONTEXT_WINDOW_DEFAULT,
+          }
         } else if (event === 'reply') {
           payload = value
         } else if (event === 'error') {
@@ -925,6 +972,52 @@ function handleAiKeydown(event: KeyboardEvent) {
                     class="script-ai-model-select"
                   />
                   <div class="script-ai-composer-actions">
+                    <n-popover trigger="click" placement="top-end" :show-arrow="false" raw>
+                      <template #trigger>
+                        <button
+                          type="button"
+                          class="script-ai-context"
+                          :class="contextTone"
+                          :title="`上下文 ${formatTokens(contextTokens)} / ${formatTokens(contextWindow)} tokens`"
+                          aria-label="查看上下文用量"
+                        >
+                          <svg viewBox="0 0 36 36" class="script-ai-context-ring" aria-hidden="true">
+                            <circle class="ring-track" cx="18" cy="18" r="15" />
+                            <circle
+                              class="ring-fill"
+                              cx="18"
+                              cy="18"
+                              r="15"
+                              stroke-dasharray="94.25"
+                              :stroke-dashoffset="contextRingOffset"
+                            />
+                          </svg>
+                          <span>{{ contextPercent }}%</span>
+                        </button>
+                      </template>
+                      <div class="script-ai-context-pop" :class="{ 'script-theme-light': !isDark }">
+                        <div class="context-pop-head">
+                          <span>上下文用量</span>
+                          <strong>{{ formatTokens(contextTokens) }} / {{ formatTokens(contextWindow) }}</strong>
+                        </div>
+                        <div class="context-pop-bar">
+                          <span :class="contextTone" :style="{ width: `${Math.max(contextPercent, contextTokens ? 2 : 0)}%` }" />
+                        </div>
+                        <div class="context-pop-grid">
+                          <div><span>窗口</span><strong>{{ formatTokens(contextWindow) }}</strong></div>
+                          <div><span>已用</span><strong>{{ formatTokens(contextTokens) }}</strong></div>
+                          <div><span>剩余</span><strong>{{ formatTokens(contextRemaining) }}</strong></div>
+                          <div><span>请求次数</span><strong>{{ aiUsage?.requests || 0 }}</strong></div>
+                          <div><span>累计输入</span><strong>{{ formatTokens(aiUsage?.input_tokens) }}</strong></div>
+                          <div><span>缓存命中</span><strong>{{ formatTokens(aiUsage?.cached_tokens) }}</strong></div>
+                          <div><span>累计输出</span><strong>{{ formatTokens(aiUsage?.output_tokens) }}</strong></div>
+                          <div><span>累计总量</span><strong>{{ formatTokens(aiUsage?.total_tokens) }}</strong></div>
+                        </div>
+                        <div class="context-pop-note">
+                          {{ aiUsage?.model || '尚未调用模型' }} · 按最近一次请求的输入 + 输出估算
+                        </div>
+                      </div>
+                    </n-popover>
                     <div class="script-ai-reasoning" title="模型推理难度：自动由供应商决定，快速/标准/深度逐级增加推理投入">
                       <span class="script-ai-reasoning-label">推理难度</span>
                       <n-select
@@ -1761,6 +1854,139 @@ function handleAiKeydown(event: KeyboardEvent) {
   flex-shrink: 0;
   align-items: center;
   gap: 6px;
+}
+
+.script-ai-context {
+  display: inline-flex;
+  height: 24px;
+  align-items: center;
+  gap: 4px;
+  padding: 0 7px 0 4px;
+  border: 1px solid #24324a;
+  border-radius: 999px;
+  background: #0b1425;
+  color: #8fa3bd;
+  font-size: 9.5px;
+  cursor: pointer;
+}
+
+.script-ai-context:hover {
+  border-color: #3d557a;
+}
+
+.script-ai-context-ring {
+  width: 18px;
+  height: 18px;
+  transform: rotate(-90deg);
+}
+
+.script-ai-context-ring .ring-track {
+  fill: none;
+  stroke: rgba(148, 163, 184, 0.22);
+  stroke-width: 3;
+}
+
+.script-ai-context-ring .ring-fill {
+  fill: none;
+  stroke: #38bdf8;
+  stroke-width: 3;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.3s ease;
+}
+
+.script-ai-context.warn .ring-fill {
+  stroke: #f59e0b;
+}
+
+.script-ai-context.danger {
+  color: #fca5a5;
+}
+
+.script-ai-context.danger .ring-fill {
+  stroke: #ef4444;
+}
+
+.script-ai-context-pop {
+  width: 264px;
+  padding: 12px;
+  border: 1px solid #24324a;
+  border-radius: 12px;
+  background: #0f1a2d;
+  box-shadow: 0 18px 40px rgba(2, 6, 23, 0.55);
+  color: #e2e8f0;
+}
+
+.context-pop-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: #8fa3bd;
+}
+
+.context-pop-head strong {
+  color: #e2e8f0;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.context-pop-bar {
+  height: 5px;
+  margin: 8px 0 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.18);
+}
+
+.context-pop-bar span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #38bdf8;
+  transition: width 0.3s ease;
+}
+
+.context-pop-bar span.warn {
+  background: #f59e0b;
+}
+
+.context-pop-bar span.danger {
+  background: #ef4444;
+}
+
+.context-pop-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px 12px;
+}
+
+.context-pop-grid div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.context-pop-grid span {
+  color: #7c8ba1;
+  font-size: 9.5px;
+}
+
+.context-pop-grid strong {
+  color: #dbe4f0;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.context-pop-note {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid #24324a;
+  color: #64748b;
+  font-size: 9px;
+  line-height: 1.5;
 }
 
 .script-ai-reasoning {
@@ -3354,6 +3580,76 @@ function handleAiKeydown(event: KeyboardEvent) {
 
 .script-editor-modal .script-ai-reasoning-label {
   color: var(--muted);
+}
+
+.script-editor-modal .script-ai-context {
+  border-color: var(--border);
+  background: var(--card);
+  color: var(--muted);
+}
+
+.script-editor-modal .script-ai-context .ring-track {
+  stroke: var(--surface-strong);
+}
+
+.script-editor-modal .script-ai-context .ring-fill {
+  stroke: var(--brand);
+}
+
+.script-editor-modal .script-ai-context.warn .ring-fill {
+  stroke: #d97706;
+}
+
+.script-editor-modal .script-ai-context.danger {
+  color: var(--red);
+}
+
+.script-editor-modal .script-ai-context.danger .ring-fill {
+  stroke: var(--red);
+}
+
+.script-ai-context-pop.script-theme-light {
+  border-color: var(--border);
+  background: var(--card);
+  color: var(--text);
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.14);
+}
+
+.script-ai-context-pop.script-theme-light .context-pop-head {
+  color: var(--muted);
+}
+
+.script-ai-context-pop.script-theme-light .context-pop-head strong {
+  color: var(--text);
+}
+
+.script-ai-context-pop.script-theme-light .context-pop-bar {
+  background: var(--surface-strong);
+}
+
+.script-ai-context-pop.script-theme-light .context-pop-bar span {
+  background: var(--brand);
+}
+
+.script-ai-context-pop.script-theme-light .context-pop-bar span.warn {
+  background: #d97706;
+}
+
+.script-ai-context-pop.script-theme-light .context-pop-bar span.danger {
+  background: var(--red);
+}
+
+.script-ai-context-pop.script-theme-light .context-pop-grid span {
+  color: var(--muted);
+}
+
+.script-ai-context-pop.script-theme-light .context-pop-grid strong {
+  color: var(--text);
+}
+
+.script-ai-context-pop.script-theme-light .context-pop-note {
+  border-top-color: var(--border);
+  color: var(--muted-light);
 }
 
 .script-editor-modal .script-ai-error-row {

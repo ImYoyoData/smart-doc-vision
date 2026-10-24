@@ -16,12 +16,14 @@ import (
 	"smartdoc-vision/backend/internal/catalog"
 	"smartdoc-vision/backend/internal/model"
 	"smartdoc-vision/backend/internal/security"
+	"smartdoc-vision/backend/internal/usage"
 )
 
 type providerView struct {
 	model.AIProvider
-	APIKeyMasked string `json:"api_key_masked"`
-	HasAPIKey    bool   `json:"has_api_key"`
+	APIKeyMasked string        `json:"api_key_masked"`
+	HasAPIKey    bool          `json:"has_api_key"`
+	Usage        usage.Summary `json:"usage"`
 }
 
 type providerInput struct {
@@ -63,10 +65,53 @@ func (s *Server) listProviders(c *gin.Context) {
 		return
 	}
 	views := make([]providerView, 0, len(providers))
+	ids := make([]uint64, 0, len(providers))
 	for _, p := range providers {
-		views = append(views, s.toProviderView(p))
+		ids = append(ids, p.ID)
+	}
+	summaries, err := usage.Summaries(s.db, ids)
+	if err != nil {
+		serverError(c, err)
+		return
+	}
+	for _, p := range providers {
+		view := s.toProviderView(p)
+		view.Usage = summaries[p.ID]
+		views = append(views, view)
 	}
 	ok(c, gin.H{"items": views, "total": len(views)})
+}
+
+// providerUsage returns recent request details plus lifetime totals for one
+// model. JEV only reports input tokens because its output is not billed.
+func (s *Server) providerUsage(c *gin.Context) {
+	provider, err := s.findProvider(c)
+	if err != nil {
+		return
+	}
+	limit := 50
+	if raw := c.Query("limit"); raw != "" {
+		if parsed, okLimit := parseUint(raw); okLimit && parsed > 0 {
+			limit = int(parsed)
+		}
+	}
+	rows, err := usage.Recent(s.db, provider.ID, limit)
+	if err != nil {
+		serverError(c, err)
+		return
+	}
+	summaries, err := usage.Summaries(s.db, []uint64{provider.ID})
+	if err != nil {
+		serverError(c, err)
+		return
+	}
+	ok(c, gin.H{
+		"items":   rows,
+		"total":   len(rows),
+		"summary": summaries[provider.ID],
+		"kind":    provider.Kind,
+		"model":   provider.Model,
+	})
 }
 
 func (s *Server) getProvider(c *gin.Context) {

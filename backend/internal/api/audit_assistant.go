@@ -246,6 +246,7 @@ func (s *Server) handleAuditAssistant(c *gin.Context, stream bool) {
 		Messages: messages, MaxTokens: 2600, Temperature: 0.25,
 	})
 	if err != nil {
+		s.recordProviderUsage(*provider, model.UsageSourceAuditAssistant, req.AuditID, nil, time.Since(started), err)
 		emit(assistantStep{ID: "thinking", Label: "调用大模型思考", Status: "error", Detail: err.Error()})
 		if stream {
 			writeAssistantSSE(c, "error", gin.H{"code": "ASSISTANT_FAILED", "message": err.Error()})
@@ -256,6 +257,7 @@ func (s *Server) handleAuditAssistant(c *gin.Context, stream bool) {
 	}
 	emit(assistantStep{ID: "thinking", Label: "调用大模型思考", Status: "done",
 		Detail: fmt.Sprintf("%s · %.1fs", result.Model, time.Since(started).Seconds())})
+	s.recordProviderUsage(*provider, model.UsageSourceAuditAssistant, req.AuditID, result, time.Since(started), nil)
 
 	emit(assistantStep{ID: "draft", Label: "解析并校验配置", Status: "running"})
 	reply, ready, draft, parseErr := parseAssistantReply(result.Content, provider.ID, req.ProjectID, req.AuditID, currentAudit, currentTriggers)

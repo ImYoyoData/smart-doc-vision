@@ -160,6 +160,35 @@ export interface ProviderModel {
   source: 'metadata' | 'unknown' | string
 }
 
+export interface ProviderUsageSummary {
+  requests: number
+  input_tokens: number
+  cached_tokens: number
+  output_tokens: number
+  total_tokens: number
+  last_used_at?: string | null
+}
+
+export interface ProviderUsageLog {
+  id: number
+  project_id: number
+  provider_id: number
+  provider_name: string
+  kind: string
+  model: string
+  source: string
+  audit_id: number
+  task_id: number
+  input_tokens: number
+  cached_tokens: number
+  output_tokens: number
+  total_tokens: number
+  duration_ms: number
+  status: string
+  error_message?: string
+  created_at: string
+}
+
 export interface Provider {
   id: number
   project_id: number
@@ -181,6 +210,7 @@ export interface Provider {
   updated_at: string
   api_key_masked: string
   has_api_key: boolean
+  usage?: ProviderUsageSummary
 }
 
 export interface RuleItem {
