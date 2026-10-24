@@ -17,7 +17,7 @@ type Audit struct {
 	Routes                 JSONText   `gorm:"type:longtext" json:"routes"`
 	DefaultResult          string     `gorm:"size:16;not null;default:REVIEW" json:"default_result"`
 	OnModelFail            string     `gorm:"size:16;not null;default:REVIEW" json:"on_model_fail"`
-	DedupeWindowSec        int        `gorm:"not null;default:86400" json:"dedupe_window_sec"`
+	DedupeWindowSec        int        `gorm:"not null" json:"dedupe_window_sec"`
 	CallbackEnabled        bool       `gorm:"not null;default:false" json:"callback_enabled"`
 	CallbackURL            string     `gorm:"size:1024" json:"callback_url"`
 	CallbackResults        JSONText   `gorm:"type:text" json:"callback_results"`

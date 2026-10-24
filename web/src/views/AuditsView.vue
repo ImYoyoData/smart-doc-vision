@@ -1053,7 +1053,7 @@ function applyAssistantDraft(config: AuditAssistantConfig) {
   if (form.decisionMode === 'CLASSIFY_ONLY') ensureClassifierUnknownCategory()
   form.defaultResult = form.decisionMode === 'CLASSIFY_ONLY' ? 'PASS' : config.default_result || 'REVIEW'
   form.onModelFail = config.on_model_fail || 'REVIEW'
-  form.dedupeWindowSec = config.dedupe_window_sec || 86400
+  form.dedupeWindowSec = config.dedupe_window_sec ?? 86400
 }
 
 function assistantTriggerText(triggers?: Record<string, string>): string {
@@ -1858,7 +1858,7 @@ onMounted(async () => {
               />
             </div>
             <div class="field">
-              <label>去重窗口（秒）</label>
+              <label>去重窗口（秒，0 表示不去重）</label>
               <n-input-number v-model:value="form.dedupeWindowSec" :min="0" :max="604800" :step="3600" style="width: 100%" />
             </div>
           </div>
