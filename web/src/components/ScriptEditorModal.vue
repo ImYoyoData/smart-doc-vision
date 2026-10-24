@@ -76,6 +76,8 @@ const aiError = ref('')
 const aiStatus = ref('')
 const aiProviderId = ref<number | null>(null)
 const aiProviders = ref<Provider[]>([])
+const aiReasoning = ref('auto')
+const aiLastPrompt = ref('')
 const apiShow = ref(false)
 const initialScript = ref(props.script)
 const initialRemark = ref(props.remark)
@@ -198,6 +200,13 @@ const aiProviderOptions = computed(() =>
     value: provider.id,
   })),
 )
+
+const aiReasoningOptions = [
+  { label: '自动', value: 'auto' },
+  { label: '快速', value: 'low' },
+  { label: '标准', value: 'medium' },
+  { label: '深度', value: 'high' },
+]
 
 const ctxCompletions = [
   { label: 'ctx', type: 'variable', detail: '脚本上下文' },
@@ -366,45 +375,77 @@ function renderMarkdown(content: string) {
   return DOMPurify.sanitize(typeof html === 'string' ? html : '')
 }
 
-async function loadProviders() {
-  if (!workspace.currentProjectId || aiProviders.value.length) return
+async function loadProviders(force = false) {
+  if (!workspace.currentProjectId) return
+  if (!force && aiProviders.value.length) return
   try {
     const data = await providerApi.list({ project_id: workspace.currentProjectId })
     aiProviders.value = data.items.filter((provider) => provider.status === 'ACTIVE' && provider.kind !== 'JEV')
     if (!aiProviderId.value || !aiProviders.value.some((provider) => provider.id === aiProviderId.value)) {
       aiProviderId.value = aiProviders.value[0]?.id || null
     }
+    if (!aiProviders.value.length) {
+      aiError.value = '当前项目没有启用的通用大模型，请先在模型接入中启用 OpenAI 兼容或 Anthropic 模型'
+    }
   } catch (error) {
-    aiError.value = error instanceof Error ? error.message : '加载通用大模型失败'
+    aiError.value = normalizeAiError(error, '加载通用大模型失败')
   }
 }
 
 async function openAi() {
   aiOpen.value = true
-  await loadProviders()
+  aiError.value = ''
+  await loadProviders(true)
+}
+
+function normalizeAiError(error: unknown, fallback = '脚本助手请求失败') {
+  if (!(error instanceof Error)) return fallback
+  if (/failed to fetch|networkerror|load failed|network request failed/i.test(error.message)) {
+    return '无法连接后端服务，请检查网络或后端是否已启动'
+  }
+  return error.message || fallback
+}
+
+function retryAi() {
+  if (!aiLastPrompt.value || aiBusy.value) return
+  const last = aiMessages.value[aiMessages.value.length - 1]
+  if (last?.role === 'user' && last.content === aiLastPrompt.value) aiMessages.value.pop()
+  aiInput.value = aiLastPrompt.value
+  void sendAi()
 }
 
 async function sendAi() {
   const text = aiInput.value.trim()
   if (!text || aiBusy.value) return
+  if (!aiProviderId.value || !aiProviders.value.some((provider) => provider.id === aiProviderId.value)) {
+    await loadProviders(true)
+  }
   if (!aiProviderId.value) {
-    aiError.value = '当前项目没有启用的通用大模型'
+    aiError.value = '当前项目没有启用的通用大模型，请先在模型接入中启用'
     return
   }
   aiInput.value = ''
   aiError.value = ''
+  aiLastPrompt.value = text
   aiMessages.value.push({ role: 'user', content: text })
   aiBusy.value = true
   aiStatus.value = 'AI 正在生成脚本…'
   const controller = new AbortController()
   aiAbort = controller
   let payload: Record<string, any> | null = null
+  let streamError = ''
+  let timedOut = false
+  const timeout = window.setTimeout(() => {
+    timedOut = true
+    controller.abort()
+  }, 180_000)
   try {
     await scriptApi.assistantStream({
       project_id: workspace.currentProjectId,
       provider_id: aiProviderId.value,
       audit_id: props.auditId || 0,
       current_script: props.script,
+      reasoning: aiReasoning.value === 'auto' ? undefined : aiReasoning.value,
       messages: aiMessages.value.map((message) => ({ role: message.role, content: message.content })),
     }, {
       signal: controller.signal,
@@ -415,13 +456,18 @@ async function sendAi() {
         } else if (event === 'reply') {
           payload = value
         } else if (event === 'error') {
-          throw new Error(String(value?.message || '脚本助手请求失败'))
+          streamError = String(value?.message || '脚本助手请求失败')
         }
       },
     })
+    if (timedOut) {
+      aiError.value = '模型响应超时（180 秒），请重试或换用更快的模型'
+      return
+    }
     if (controller.signal.aborted) return
+    if (streamError) throw new Error(streamError)
     const result = payload as Record<string, any> | null
-    if (!result) throw new Error('模型没有返回结果')
+    if (!result) throw new Error('模型没有返回结果，连接可能已中断，请重试')
     aiMessages.value.push({
       role: 'assistant',
       content: String(result.reply || '已生成脚本'),
@@ -430,10 +476,13 @@ async function sendAi() {
       scriptError: String(result.script_error || ''),
     })
   } catch (error) {
-    if (!controller.signal.aborted && aiAbort === controller) {
-      aiError.value = error instanceof Error ? error.message : '脚本助手请求失败'
+    if (timedOut) {
+      aiError.value = '模型响应超时（180 秒），请重试或换用更快的模型'
+    } else if (!controller.signal.aborted && aiAbort === controller) {
+      aiError.value = normalizeAiError(error)
     }
   } finally {
+    window.clearTimeout(timeout)
     if (aiAbort === controller) {
       aiAbort = null
       aiBusy.value = false
@@ -607,15 +656,31 @@ function handleAiKeydown(event: KeyboardEvent) {
                     :options="aiProviderOptions"
                     :disabled="aiBusy || !aiProviderOptions.length"
                     placeholder="选择通用大模型"
-                    style="max-width: 220px"
+                    class="script-ai-model-select"
                   />
-                  <n-button size="tiny" type="primary" :loading="aiBusy" :disabled="!aiInput.trim() || !aiProviderId" @click="sendAi">
-                    <template #icon><n-icon :component="SendOutline" /></template>
-                    发送
-                  </n-button>
+                  <div class="script-ai-composer-actions">
+                    <div class="script-ai-reasoning" title="模型推理难度：自动由供应商决定，快速/标准/深度逐级增加推理投入">
+                      <span class="script-ai-reasoning-label">推理难度</span>
+                      <n-select
+                        v-model:value="aiReasoning"
+                        size="tiny"
+                        :options="aiReasoningOptions"
+                        :disabled="aiBusy"
+                        class="script-ai-reasoning-select"
+                        aria-label="模型推理难度"
+                      />
+                    </div>
+                    <n-button size="tiny" type="primary" :loading="aiBusy" :disabled="!aiInput.trim() || !aiProviderId" @click="sendAi">
+                      <template #icon><n-icon :component="SendOutline" /></template>
+                      发送
+                    </n-button>
+                  </div>
                 </div>
               </div>
-              <div v-if="aiError" class="script-ai-error">{{ aiError }}</div>
+              <div v-if="aiError" class="script-ai-error-row">
+                <span class="script-ai-error">{{ aiError }}</span>
+                <n-button v-if="aiLastPrompt && !aiBusy" size="tiny" secondary @click="retryAi">重试</n-button>
+              </div>
             </div>
           </aside>
         </Transition>
@@ -1187,6 +1252,57 @@ function handleAiKeydown(event: KeyboardEvent) {
   justify-content: space-between;
   gap: 8px;
   margin-top: 7px;
+}
+
+.script-ai-model-select {
+  max-width: 160px;
+  flex: 1;
+  min-width: 0;
+}
+
+.script-ai-composer-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.script-ai-reasoning {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 3px 1px 7px;
+  border: 1px solid #24324a;
+  border-radius: 7px;
+  background: #0b1425;
+}
+
+.script-ai-reasoning-label {
+  color: #7c8ba1;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.script-ai-reasoning :deep(.n-select) {
+  width: 68px;
+}
+
+.script-ai-error-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 7px;
+  padding: 5px 5px 5px 9px;
+  border: 1px solid rgba(248, 113, 113, 0.24);
+  border-radius: 8px;
+  background: rgba(248, 113, 113, 0.07);
+}
+
+.script-ai-error-row .script-ai-error {
+  flex: 1;
+  padding: 0;
+  line-height: 1.45;
 }
 
 .script-api-modal {
@@ -2285,6 +2401,20 @@ function handleAiKeydown(event: KeyboardEvent) {
   --n-border-active: 1px solid var(--border) !important;
   --n-box-shadow-active: none !important;
   --n-box-shadow-focus: none !important;
+}
+
+.script-editor-modal .script-ai-reasoning {
+  border-color: var(--border);
+  background: var(--card);
+}
+
+.script-editor-modal .script-ai-reasoning-label {
+  color: var(--muted);
+}
+
+.script-editor-modal .script-ai-error-row {
+  border-color: rgba(220, 38, 38, 0.16);
+  background: rgba(220, 38, 38, 0.05);
 }
 
 .script-editor-modal .script-ai-tab {

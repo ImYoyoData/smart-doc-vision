@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Calcium-Ion/moejs"
@@ -20,6 +21,7 @@ type scriptAssistantRequest struct {
 	ProviderID    uint64             `json:"provider_id"`
 	AuditID       uint64             `json:"audit_id"`
 	CurrentScript string             `json:"current_script"`
+	Reasoning     string             `json:"reasoning"`
 	Messages      []assistantMessage `json:"messages"`
 }
 
@@ -129,10 +131,29 @@ func (s *Server) scriptAssistantStream(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 150*time.Second)
 	defer cancel()
 	started := time.Now()
+	heartbeatDone := make(chan struct{})
+	var heartbeat sync.WaitGroup
+	heartbeat.Add(1)
+	go func() {
+		defer heartbeat.Done()
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				_, _ = fmt.Fprint(c.Writer, ": keep-alive\n\n")
+				c.Writer.Flush()
+			case <-heartbeatDone:
+				return
+			}
+		}
+	}()
 	result, chatErr := ai.Chat(ctx, ai.ChatRequest{
 		Provider: *provider, APIKey: key, System: systemPrompt,
-		Messages: messages, MaxTokens: 3200, Temperature: 0.2,
+		Messages: messages, MaxTokens: 3200, Temperature: 0.2, Reasoning: req.Reasoning,
 	})
+	close(heartbeatDone)
+	heartbeat.Wait()
 	if chatErr != nil {
 		emit(assistantStep{ID: "thinking", Label: "AI 正在生成脚本", Status: "error", Detail: chatErr.Error()})
 		writeAssistantSSE(c, "error", gin.H{"code": "ASSISTANT_FAILED", "message": chatErr.Error()})

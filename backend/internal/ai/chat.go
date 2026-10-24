@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -30,6 +32,7 @@ type ChatRequest struct {
 	Messages    []ChatMessage
 	MaxTokens   int
 	Temperature float64
+	Reasoning   string
 }
 
 type ChatResult struct {
@@ -49,6 +52,11 @@ func Chat(ctx context.Context, req ChatRequest) (*ChatResult, error) {
 	if req.Temperature <= 0 {
 		req.Temperature = 0.3
 	}
+	req.Reasoning = normalizeReasoning(req.Reasoning)
+	if req.Reasoning != "" && !ParseConfig(req.Provider).SupportsThinking {
+		req.System = appendReasoningInstruction(req.System, req.Reasoning)
+		req.Reasoning = ""
+	}
 	switch strings.ToUpper(strings.TrimSpace(req.Provider.Kind)) {
 	case model.ProviderOpenAI, "OPENAI":
 		return chatOpenAI(ctx, req)
@@ -65,40 +73,25 @@ func chatOpenAI(ctx context.Context, req ChatRequest) (*ChatResult, error) {
 	if strings.TrimSpace(req.APIKey) == "" {
 		return nil, fmt.Errorf("供应商 API Key 未配置")
 	}
-	messages := make([]map[string]any, 0, len(req.Messages)+1)
-	if strings.TrimSpace(req.System) != "" {
-		messages = append(messages, map[string]any{"role": "system", "content": req.System})
-	}
-	for _, message := range req.Messages {
-		messages = append(messages, openAIChatMessage(message))
-	}
-	body := map[string]any{
-		"model":       req.Provider.Model,
-		"messages":    messages,
-		"temperature": req.Temperature,
-		"max_tokens":  req.MaxTokens,
-		"stream":      false,
-	}
-	payload, err := json.Marshal(body)
+	raw, status, err := callOpenAI(ctx, req, true)
 	if err != nil {
 		return nil, err
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, openAIEndpoint(req.Provider.BaseURL), bytes.NewReader(payload))
-	if err != nil {
-		return nil, err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+req.APIKey)
-	ApplyCustomHeaders(httpReq, ParseConfig(req.Provider).Headers)
-	client := &http.Client{Timeout: 120 * time.Second}
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("请求模型失败: %w", err)
-	}
-	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("模型返回 HTTP %d: %s", resp.StatusCode, truncateErr(string(raw)))
+	if status < 200 || status >= 300 {
+		// Some OpenAI-compatible gateways expose reasoning models but still reject
+		// reasoning_effort. Retry once with a prompt-level instruction instead of
+		// surfacing an opaque 400 to the administrator.
+		if req.Reasoning != "" && (status == http.StatusBadRequest || status == http.StatusUnprocessableEntity) && mentionsReasoning(raw) {
+			fallback := req
+			fallback.System = appendReasoningInstruction(req.System, req.Reasoning)
+			raw, status, err = callOpenAI(ctx, fallback, false)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if status < 200 || status >= 300 {
+			return nil, fmt.Errorf("模型返回 HTTP %d: %s", status, truncateErr(string(raw)))
+		}
 	}
 	var parsed struct {
 		Model   string `json:"model"`
@@ -121,6 +114,72 @@ func chatOpenAI(ctx context.Context, req ChatRequest) (*ChatResult, error) {
 		return nil, fmt.Errorf("模型未返回内容")
 	}
 	return &ChatResult{Content: strings.TrimSpace(parsed.Choices[0].Message.Content), Model: parsed.Model}, nil
+}
+
+func callOpenAI(ctx context.Context, req ChatRequest, useReasoning bool) ([]byte, int, error) {
+	messages := make([]map[string]any, 0, len(req.Messages)+1)
+	if strings.TrimSpace(req.System) != "" {
+		messages = append(messages, map[string]any{"role": "system", "content": req.System})
+	}
+	for _, message := range req.Messages {
+		messages = append(messages, openAIChatMessage(message))
+	}
+	body := map[string]any{
+		"model":      req.Provider.Model,
+		"messages":   messages,
+		"max_tokens": req.MaxTokens,
+		"stream":     false,
+	}
+	// OpenAI reasoning models expect the default temperature when
+	// reasoning_effort is supplied.
+	if useReasoning && req.Reasoning != "" {
+		body["reasoning_effort"] = req.Reasoning
+	} else {
+		body["temperature"] = req.Temperature
+	}
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return nil, 0, err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, openAIEndpoint(req.Provider.BaseURL), bytes.NewReader(payload))
+	if err != nil {
+		return nil, 0, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+req.APIKey)
+	ApplyCustomHeaders(httpReq, ParseConfig(req.Provider).Headers)
+	client := &http.Client{Timeout: 150 * time.Second}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return nil, 0, chatTransportError(err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	return raw, resp.StatusCode, nil
+}
+
+func mentionsReasoning(raw []byte) bool {
+	lower := strings.ToLower(string(raw))
+	for _, keyword := range []string{"reasoning_effort", "reasoning effort", "reasoning", "thinking", "unknown field"} {
+		if strings.Contains(lower, keyword) {
+			return true
+		}
+	}
+	return false
+}
+
+func chatTransportError(err error) error {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("模型响应超时，请重试或更换更快的模型")
+	}
+	if errors.Is(err, context.Canceled) {
+		return fmt.Errorf("模型请求已取消")
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return fmt.Errorf("模型响应超时，请重试或更换更快的模型")
+	}
+	return fmt.Errorf("请求模型失败: %w", err)
 }
 
 func chatAnthropic(ctx context.Context, req ChatRequest) (*ChatResult, error) {
@@ -155,13 +214,21 @@ func chatAnthropic(ctx context.Context, req ChatRequest) (*ChatResult, error) {
 		messages = append(messages, map[string]any{"role": role, "content": blocks})
 	}
 	body := map[string]any{
-		"model":       req.Provider.Model,
-		"max_tokens":  req.MaxTokens,
-		"temperature": req.Temperature,
-		"messages":    messages,
+		"model":      req.Provider.Model,
+		"max_tokens": req.MaxTokens,
+		"messages":   messages,
 	}
 	if strings.TrimSpace(req.System) != "" {
 		body["system"] = req.System
+	}
+	if budget := anthropicThinkingBudget(req.Reasoning); budget > 0 {
+		if req.MaxTokens < budget+2048 {
+			req.MaxTokens = budget + 2048
+		}
+		body["max_tokens"] = req.MaxTokens
+		body["thinking"] = map[string]any{"type": "enabled", "budget_tokens": budget}
+	} else {
+		body["temperature"] = req.Temperature
 	}
 	payload, err := json.Marshal(body)
 	if err != nil {
@@ -175,10 +242,10 @@ func chatAnthropic(ctx context.Context, req ChatRequest) (*ChatResult, error) {
 	httpReq.Header.Set("x-api-key", req.APIKey)
 	httpReq.Header.Set("anthropic-version", "2023-06-01")
 	ApplyCustomHeaders(httpReq, ParseConfig(req.Provider).Headers)
-	client := &http.Client{Timeout: 120 * time.Second}
+	client := &http.Client{Timeout: 150 * time.Second}
 	resp, err := client.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("请求模型失败: %w", err)
+		return nil, chatTransportError(err)
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
@@ -211,6 +278,50 @@ func chatAnthropic(ctx context.Context, req ChatRequest) (*ChatResult, error) {
 		return nil, fmt.Errorf("模型未返回内容")
 	}
 	return &ChatResult{Content: strings.TrimSpace(builder.String()), Model: parsed.Model}, nil
+}
+
+func normalizeReasoning(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "low", "fast", "quick":
+		return "low"
+	case "medium", "standard", "normal", "balanced":
+		return "medium"
+	case "high", "deep":
+		return "high"
+	default:
+		return ""
+	}
+}
+
+func appendReasoningInstruction(system, level string) string {
+	var instruction string
+	switch level {
+	case "low":
+		instruction = "【推理深度：快速】优先直接给出结果，只做必要的检查，不要展开冗长的推理过程。"
+	case "high":
+		instruction = "【推理深度：深度】在给出结果前进行充分推理与自检，覆盖边界条件、失败路径和潜在风险，但最终答复保持简洁。"
+	default:
+		instruction = "【推理深度：标准】在给出结果前进行适度分析，权衡关键约束，避免无关推演。"
+	}
+	instruction += "无论推理深度如何，最终输出必须严格遵守系统提示要求的格式。"
+	system = strings.TrimSpace(system)
+	if system == "" {
+		return instruction
+	}
+	return system + "\n\n" + instruction
+}
+
+func anthropicThinkingBudget(level string) int {
+	switch level {
+	case "low":
+		return 1024
+	case "high":
+		return 4096
+	case "medium":
+		return 2048
+	default:
+		return 0
+	}
 }
 
 func openAIChatMessage(message ChatMessage) map[string]any {
