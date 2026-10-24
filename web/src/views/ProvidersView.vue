@@ -38,6 +38,9 @@ const dialog = useDialog()
 const loading = ref(false)
 const saving = ref(false)
 const testingId = ref<number | null>(null)
+const testingAll = ref(false)
+const testAllDone = ref(0)
+const testAllTotal = ref(0)
 const modalShow = ref(false)
 const editing = ref<Provider | null>(null)
 const errorText = ref('')
@@ -466,6 +469,50 @@ async function test(provider: Provider) {
   }
 }
 
+async function testAllProviders() {
+  if (testingAll.value || testingId.value !== null) return
+  const targets = filteredProviders.value.slice()
+  if (!targets.length) return
+  testingAll.value = true
+  testAllDone.value = 0
+  testAllTotal.value = targets.length
+  let success = 0
+  let failed = 0
+  let cursor = 0
+
+  async function worker() {
+    while (true) {
+      const index = cursor
+      cursor += 1
+      if (index >= targets.length) return
+      try {
+        await providerApi.test(targets[index].id)
+        success += 1
+      } catch {
+        failed += 1
+      } finally {
+        testAllDone.value += 1
+      }
+    }
+  }
+
+  try {
+    await Promise.all(
+      Array.from({ length: Math.min(3, targets.length) }, () => worker()),
+    )
+    await load()
+    if (failed === 0) {
+      message.success(`连接测试完成：${success} 个全部正常`)
+    } else if (success === 0) {
+      message.error(`连接测试完成：${failed} 个全部失败`, { duration: 6000 })
+    } else {
+      message.warning(`连接测试完成：${success} 个正常，${failed} 个失败`, { duration: 6000 })
+    }
+  } finally {
+    testingAll.value = false
+  }
+}
+
 async function toggle(provider: Provider, value: boolean) {
   try {
     await providerApi.update(provider.id, {
@@ -527,7 +574,7 @@ onMounted(load)
       subtitle="统一管理通用大模型与 JEV 决策模型。通用大模型是一个业务分类，OpenAI 兼容 / Anthropic 只是两种 API 协议。"
     >
       <template #actions>
-        <n-button quaternary circle :loading="loading" @click="load">
+        <n-button quaternary circle :loading="loading" :disabled="testingAll" @click="load">
           <template #icon><RefreshOutline /></template>
         </n-button>
         <n-popover trigger="click" placement="bottom-end" :width="440" :show-arrow="false">
@@ -585,6 +632,17 @@ onMounted(load)
           </button>
         </div>
         <div class="summary-actions">
+          <n-button
+            size="small"
+            secondary
+            :loading="testingAll"
+            :disabled="loading || !filteredProviders.length || testingId !== null"
+            :title="`测试当前筛选的 ${filteredProviders.length} 个连接`"
+            @click="testAllProviders"
+          >
+            <template #icon><FlashOutline /></template>
+            {{ testingAll ? `测试中 ${testAllDone}/${testAllTotal}` : '一键测试连接' }}
+          </n-button>
           <n-button
             v-if="statusFilter !== 'all' || kindFilter !== 'all'"
             text
@@ -689,7 +747,7 @@ onMounted(load)
             <n-button
               size="small"
               :loading="testingId === provider.id"
-              :disabled="testingId !== null"
+              :disabled="testingId !== null || testingAll"
               @click="test(provider)"
             >
               <template #icon><FlashOutline /></template>
@@ -1129,7 +1187,9 @@ onMounted(load)
 
 .summary-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
   margin-left: auto;
 }
