@@ -712,9 +712,13 @@ smart-doc-vision/
 cd video
 npm install
 SDV_TOKEN=<后台 access_token> npm run capture   # 采集当前界面的高清截图
-npm run render                                  # 输出 out/smartdoc-vision-promo.mp4
+npm run render                                  # 输出 out/smartdoc-vision-promo.mp4（品牌介绍版）
+node scripts/make-beat.mjs                      # 合成 120 BPM 原创配乐（40 秒）
+npm run render:launch                           # 输出 out/smartdoc-vision-launch.mp4（发布会卡点版）
 npm run studio                                  # 可视化调整分镜
 ```
+
+发布会卡点版使用 120 BPM、40 秒的原创电子配乐，画面按拍点切换并叠加冲击波、闪光、震屏与频谱；配乐由 `scripts/make-beat.mjs` 用振荡器和噪声合成，无第三方版权素材。
 
 截图脚本使用无头 Chrome 打开本地前端（默认 `http://localhost:5173`），通过 `SDV_TOKEN` 注入登录态；可用 `BASE_URL`、`BROWSER_PATH` 覆盖默认值。
 
