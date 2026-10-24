@@ -664,6 +664,15 @@ export interface AuditAssistantResult {
   images?: number
 }
 
+export interface AuditFieldAssistantResult {
+  field: 'rules' | 'review_prompt' | string
+  text: string
+  explanation: string
+  provider_id: number
+  provider_name: string
+  model?: string
+}
+
 export interface RuleTemplate {
   key: string
   name: string

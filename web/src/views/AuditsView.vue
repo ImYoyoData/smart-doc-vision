@@ -10,6 +10,7 @@ import {
   NDrawer,
   NDrawerContent,
   NImage,
+  NIcon,
   NSpin,
   NDropdown,
   NInput,
@@ -18,19 +19,23 @@ import {
   NSelect,
   useDialog,
   useMessage,
+  type InputInst,
 } from 'naive-ui'
 import {
   AddOutline,
+  CheckmarkCircleOutline,
   CloudOutline,
-  ChatbubbleEllipsesOutline,
   CloseCircleOutline,
+  CloseOutline,
   CopyOutline,
   CreateOutline,
   DownloadOutline,
   EllipsisHorizontalOutline,
   FlashOutline,
+  PersonOutline,
   RefreshOutline,
   SearchOutline,
+  SendOutline,
   ShieldCheckmarkOutline,
   SparklesOutline,
   TextOutline,
@@ -41,6 +46,7 @@ import StatusTag from '@/components/StatusTag.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import TaskSubmitModal from '@/components/TaskSubmitModal.vue'
 import AuditIntegrationDrawer from '@/components/AuditIntegrationDrawer.vue'
+import AuditFieldAssistantModal from '@/components/AuditFieldAssistantModal.vue'
 import ResultRoutesEditor from '@/components/ResultRoutesEditor.vue'
 import TriggerManageModal from '@/components/TriggerManageModal.vue'
 import ScriptLogsModal from '@/components/ScriptLogsModal.vue'
@@ -96,7 +102,13 @@ const assistantPickId = ref<number | null>(null)
 const scriptLogsShow = ref(false)
 const scriptLogsAudit = ref<Audit | null>(null)
 const assistantChat = ref<HTMLElement | null>(null)
+const assistantInputRef = ref<InputInst | null>(null)
 const assistantImages = ref<AssistantImage[]>([])
+const fieldAssistantShow = ref(false)
+const fieldAssistantField = ref<'rules' | 'review_prompt'>('rules')
+const fieldAssistantCurrent = ref('')
+const fieldAssistantProviderId = ref<number | null>(null)
+const fieldAssistantContext = ref<Record<string, unknown>>({})
 let assistantAbort: AbortController | null = null
 
 interface AssistantImage {
@@ -214,6 +226,19 @@ const assistantProviderOptions = computed(() =>
       value: p.id,
     })),
 )
+const assistantStarters = computed(() =>
+  assistantMode.value === 'edit'
+    ? ['把规则改得更严格', '增加敏感信息检查', '把接入方式改成 Redis', '优化审核要求提示词']
+    : ['创建一条档案完整性合规审核', '按档案类型分类并低置信度转人工', '需要 Redis Stream 接入', '按合规审核创建并启用开放 API'],
+)
+const showAssistantStarters = computed(
+  () => !assistantBusy.value && !assistantMessages.value.some((item) => item.role === 'user'),
+)
+
+function useAssistantStarter(text: string) {
+  assistantInput.value = text
+  nextTick(() => assistantInputRef.value?.focus())
+}
 const isClassifyMode = computed(() =>
   form.decisionMode === 'CLASSIFY' || form.decisionMode === 'CLASSIFY_ONLY',
 )
@@ -364,6 +389,7 @@ const templateOptions = computed(() => [
   ...templates.value
     .filter((t) => (t.kind || 'REVIEW') === form.decisionMode)
     .map((t) => ({ label: `${t.name} · ${t.description}`, value: t.key })),
+  { label: '自定义规则 · 直接编辑 JSON', value: 'custom' },
 ])
 
 function rulesTextForPreset(key: string) {
@@ -373,7 +399,7 @@ function rulesTextForPreset(key: string) {
 
 function applyRulesPreset(key: string) {
   form.rulesPreset = key
-  if (key !== 'keep') form.rulesText = rulesTextForPreset(key)
+  if (key !== 'keep' && key !== 'custom') form.rulesText = rulesTextForPreset(key)
 }
 
 const activeCount = computed(() => audits.value.filter((a) => a.status === 'ACTIVE').length)
@@ -1275,6 +1301,42 @@ function closeAssistant() {
   assistantSaved.value = false
 }
 
+function openFieldAssistant(field: 'rules' | 'review_prompt') {
+  if (!hasGeneralProvider.value) {
+    message.warning('需要先在模型接入中配置并启用通用大模型')
+    return
+  }
+  if (!workspace.currentProjectId) {
+    message.warning('请先选择项目')
+    return
+  }
+  fieldAssistantField.value = field
+  fieldAssistantCurrent.value = field === 'rules' ? form.rulesText : form.reviewPrompt
+  fieldAssistantProviderId.value = assistantProviderId.value || assistantProviderOptions.value[0]?.value || null
+  fieldAssistantContext.value = {
+    name: form.name,
+    description: form.description,
+    decision_mode: form.decisionMode,
+    media_types: form.mediaTypes,
+    categories: form.categories.map((category) => ({
+      code: category.code,
+      name: category.name,
+      result: category.result,
+    })),
+  }
+  fieldAssistantShow.value = true
+}
+
+function applyFieldAssistant(text: string) {
+  if (fieldAssistantField.value === 'rules') {
+    form.rulesText = text
+    form.rulesPreset = 'custom'
+    message.success('AI 规则已应用，保存审核配置后生效')
+    return
+  }
+  form.reviewPrompt = text
+  message.success('AI 优化后的审核要求已应用，保存审核配置后生效')
+}
 
 async function toggleStatus(audit: Audit) {
   const next = audit.status === 'ACTIVE' ? 'PAUSED' : 'ACTIVE'
@@ -1640,7 +1702,19 @@ onMounted(async () => {
             </div>
           </div>
           <div class="field">
-            <label>审核要求</label>
+            <div class="field-label-row">
+              <label>审核要求</label>
+              <n-button
+                size="tiny"
+                secondary
+                :disabled="!hasGeneralProvider"
+                title="根据你的描述优化当前审核要求"
+                @click="openFieldAssistant('review_prompt')"
+              >
+                <template #icon><SparklesOutline /></template>
+                AI 优化提示词
+              </n-button>
+            </div>
             <n-input
               v-model:value="form.reviewPrompt"
               type="textarea"
@@ -1715,17 +1789,30 @@ onMounted(async () => {
                 <span v-else-if="form.decisionMode === 'CLASSIFY'">按分类映射结论，并对低置信度的通过结果转人工。仅支持多文本/多图片，不支持视频。</span>
                 <span v-else>决定模型输出后的 PASS / REJECT / REVIEW 阈值。仅支持多文本/多图片，不支持视频。</span>
               </div>
-              <n-select
-                :value="form.rulesPreset"
-                :options="templateOptions"
-                size="small"
-                style="width: 190px"
-                @update:value="applyRulesPreset"
-              />
+              <div class="rule-head-actions">
+                <n-button
+                  size="small"
+                  secondary
+                  :disabled="!hasGeneralProvider"
+                  title="根据需求生成可执行的规则 JSON"
+                  @click="openFieldAssistant('rules')"
+                >
+                  <template #icon><SparklesOutline /></template>
+                  AI 生成规则
+                </n-button>
+                <n-select
+                  :value="form.rulesPreset"
+                  :options="templateOptions"
+                  size="small"
+                  style="width: 190px"
+                  @update:value="applyRulesPreset"
+                />
+              </div>
             </div>
             <div class="template-desc">
               <span v-if="selectedTemplate">{{ selectedTemplate.description }}</span>
               <span v-else-if="form.rulesPreset === 'keep'">保持当前已有规则，不会覆盖自定义条件。</span>
+              <span v-else-if="form.rulesPreset === 'custom'">当前为自定义规则，下方 JSON 会直接保存。</span>
             </div>
             <div class="json-editor-grid">
               <div class="field">
@@ -1736,7 +1823,7 @@ onMounted(async () => {
                   :autosize="{ minRows: 6, maxRows: 14 }"
                   class="code-input"
                   spellcheck="false"
-                  placeholder='[{"name":"高风险驳回","priority":10,"logic":"OR","enabled":true,"conditions":[...],"result":"REJECT"}]'
+                  placeholder='[{"name":"高风险直接驳回","priority":10,"logic":"OR","stop_on_hit":true,"on_hit_result":"REJECT","items":[{"field":"model.score","operator":"gte","value":0.85}]}]'
                 />
               </div>
               <div class="field routes-field">
@@ -1832,15 +1919,33 @@ onMounted(async () => {
       </div>
     </n-modal>
 
+    <AuditFieldAssistantModal
+      v-model:show="fieldAssistantShow"
+      :field="fieldAssistantField"
+      :current="fieldAssistantCurrent"
+      :context="fieldAssistantContext"
+      :project-id="workspace.currentProjectId"
+      :provider-options="assistantProviderOptions"
+      :initial-provider-id="fieldAssistantProviderId"
+      @apply="applyFieldAssistant"
+    />
+
     <n-modal :show="assistantShow" :mask-closable="!assistantBusy && !saving" @update:show="(value: boolean) => { if (!value) closeAssistant() }">
       <div class="assistant-modal">
         <div class="modal-head assistant-head">
-          <div>
-            <div class="modal-kicker">AI CONFIG ASSISTANT</div>
-            <h2>{{ assistantMode === 'edit' ? 'AI 帮我修改审核配置' : 'AI 帮我创建审核配置' }}</h2>
-            <p>{{ assistantMode === 'edit' ? 'AI 会读取当前配置与接入方式，确认“现在是什么、要改成什么”后只修改你指定的部分。' : '通用大模型会先向你提问，信息足够后自动生成并保存配置，包括任务接入方式。' }}</p>
+          <div class="assistant-heading">
+            <span class="assistant-header-icon">
+              <n-icon :component="SparklesOutline" />
+            </span>
+            <div>
+              <div class="modal-kicker">AI CONFIG ASSISTANT</div>
+              <h2>{{ assistantMode === 'edit' ? 'AI 帮我修改审核配置' : 'AI 帮我创建审核配置' }}</h2>
+              <p>{{ assistantMode === 'edit' ? 'AI 会读取当前配置与接入方式，确认“现在是什么、要改成什么”后只修改你指定的部分。' : '通用大模型会先向你提问，信息足够后自动生成并保存配置，包括任务接入方式。' }}</p>
+            </div>
           </div>
-          <span class="modal-icon"><ChatbubbleEllipsesOutline /></span>
+          <n-button quaternary circle title="关闭" aria-label="关闭" :disabled="assistantBusy || saving" @click="closeAssistant">
+            <template #icon><n-icon :component="CloseOutline" /></template>
+          </n-button>
         </div>
         <div v-if="assistantMode === 'edit' && editing" class="assistant-target">
           <span class="assistant-target-label">正在编辑</span>
@@ -1855,7 +1960,9 @@ onMounted(async () => {
             class="assistant-message"
             :class="[item.role, { pending: item.pending }]"
           >
-            <span class="assistant-avatar">{{ item.role === 'user' ? '我' : 'AI' }}</span>
+            <span class="assistant-avatar" :class="item.role">
+              <n-icon :component="item.role === 'user' ? PersonOutline : SparklesOutline" />
+            </span>
             <div v-if="item.role === 'user'" class="assistant-bubble">
               <div v-if="item.images?.length" class="assistant-message-images">
                 <n-image v-for="(src, imageIndex) in item.images" :key="imageIndex" :src="src" width="88" />
@@ -1863,9 +1970,22 @@ onMounted(async () => {
               <span v-if="item.content">{{ item.content }}</span>
             </div>
             <div v-else class="assistant-content">
-              <div v-if="item.pending" class="assistant-pending-line">
-                <n-spin :size="12" />
-                <span>{{ assistantStatusText(item) }}</span>
+              <div v-if="item.pending" class="assistant-progress">
+                <div class="assistant-progress-head">
+                  <n-spin :size="13" />
+                  <span>{{ assistantStatusText(item) }}</span>
+                </div>
+                <div v-if="item.steps?.length" class="assistant-trace-list">
+                  <div v-for="step in item.steps" :key="step.id" class="assistant-step" :class="step.status">
+                    <span class="assistant-step-icon">
+                      <n-spin v-if="step.status === 'running'" :size="11" />
+                      <n-icon v-else-if="step.status === 'error'" :component="CloseCircleOutline" />
+                      <n-icon v-else :component="CheckmarkCircleOutline" />
+                    </span>
+                    <span class="assistant-step-label">{{ step.label }}</span>
+                    <span v-if="step.detail" class="assistant-step-detail">{{ step.detail }}</span>
+                  </div>
+                </div>
               </div>
               <div v-if="item.content" class="assistant-answer markdown-body" v-html="renderAssistantMarkdown(item.content)"></div>
               <div v-if="index === assistantMessages.length - 1 && assistantReadyConfig" class="assistant-ready">
@@ -1877,6 +1997,20 @@ onMounted(async () => {
                 </ul>
                 <span v-else-if="assistantMode === 'edit'">未检测到与当前配置的字段差异。</span>
               </div>
+            </div>
+          </div>
+          <div v-if="showAssistantStarters" class="assistant-starters">
+            <span class="assistant-starters-title">可以这样开始</span>
+            <div class="assistant-starter-list">
+              <button
+                v-for="starter in assistantStarters"
+                :key="starter"
+                type="button"
+                @click="useAssistantStarter(starter)"
+              >
+                <n-icon :component="FlashOutline" />
+                {{ starter }}
+              </button>
             </div>
           </div>
         </div>
@@ -1891,32 +2025,37 @@ onMounted(async () => {
             </div>
           </div>
           <n-input
+            ref="assistantInputRef"
             v-model:value="assistantInput"
             type="textarea"
             :autosize="{ minRows: 2, maxRows: 5 }"
             :disabled="assistantBusy || saving"
             placeholder="回答 AI 的问题，或直接说「按你的建议生成」；支持粘贴截图，Enter 发送，Shift+Enter 换行"
             :input-props="{ onKeydown: handleAssistantKeydown, onPaste: handleAssistantPaste }"
+            class="assistant-input"
           />
-          <div class="assistant-model-row">
-            <span class="assistant-model-label">对话模型</span>
-            <n-select
-              v-model:value="assistantProviderId"
-              size="small"
-              :options="assistantProviderOptions"
-              :disabled="assistantBusy || saving"
-              placeholder="选择通用大模型"
-              class="assistant-model-select"
-            />
-          </div>
-          <div class="assistant-actions">
-            <span class="assistant-note">
-              {{ assistantImages.length ? `已附加 ${assistantImages.length} 张图片（最多 4 张）` : assistantSaved && assistantMode === 'edit' ? '修改已保存；可以继续描述调整，或关闭窗口' : hasGeneralProvider ? '使用项目内启用的通用大模型，不会调用 JEV' : '需要先配置通用大模型' }}
-            </span>
-            <n-button :disabled="assistantBusy || saving" @click="closeAssistant">关闭</n-button>
-            <n-button type="primary" :loading="assistantBusy || saving" :disabled="(!assistantInput.trim() && !assistantImages.length) || assistantBusy || saving" @click="sendAssistant">
-              发送
-            </n-button>
+          <div class="assistant-composer-bar">
+            <div class="assistant-model-row">
+              <span class="assistant-model-label">生成模型</span>
+              <n-select
+                v-model:value="assistantProviderId"
+                size="small"
+                :options="assistantProviderOptions"
+                :disabled="assistantBusy || saving"
+                placeholder="选择通用大模型"
+                class="assistant-model-select"
+              />
+            </div>
+            <div class="assistant-actions">
+              <span class="assistant-note">
+                {{ assistantImages.length ? `已附加 ${assistantImages.length} 张图片（最多 4 张）` : assistantSaved && assistantMode === 'edit' ? '修改已保存；可以继续描述调整，或关闭窗口' : hasGeneralProvider ? '使用项目内启用的通用大模型，不会调用 JEV' : '需要先配置通用大模型' }}
+              </span>
+              <n-button :disabled="assistantBusy || saving" @click="closeAssistant">关闭</n-button>
+              <n-button type="primary" :loading="assistantBusy || saving" :disabled="(!assistantInput.trim() && !assistantImages.length) || assistantBusy || saving" @click="sendAssistant">
+                <template #icon><n-icon :component="SendOutline" /></template>
+                发送
+              </n-button>
+            </div>
           </div>
           <div v-if="assistantError" class="modal-error">{{ assistantError }}</div>
         </div>
@@ -2426,6 +2565,18 @@ onMounted(async () => {
   font-weight: 550;
 }
 
+.field-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.field-label-row label {
+  margin-bottom: 0;
+}
+
 .required {
   color: var(--red);
 }
@@ -2479,6 +2630,13 @@ onMounted(async () => {
   font-size: 9.5px;
 }
 
+.rule-head-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+}
+
 .template-desc {
   margin-top: 8px;
   color: var(--muted);
@@ -2508,6 +2666,15 @@ onMounted(async () => {
 @media (max-width: 900px) {
   .json-editor-grid {
     grid-template-columns: 1fr;
+  }
+
+  .rule-template-head {
+    flex-wrap: wrap;
+  }
+
+  .rule-head-actions {
+    width: 100%;
+    justify-content: flex-end;
   }
 }
 
@@ -4102,5 +4269,414 @@ onMounted(async () => {
 .assistant-model-select {
   max-width: 360px;
   flex: 1;
+}
+
+/* AI 配置助手：视觉与阅读体验升级 */
+.assistant-modal {
+  width: min(880px, calc(100vw - 40px));
+  max-height: min(860px, calc(100vh - 40px));
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: var(--card);
+  box-shadow: 0 34px 90px -24px rgba(15, 23, 42, 0.42);
+}
+
+.assistant-head {
+  align-items: flex-start;
+  padding: 22px 24px 18px;
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(130deg, #f7faff 0%, #fff 65%);
+}
+
+.assistant-heading {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.assistant-heading > div {
+  min-width: 0;
+  flex: 1;
+}
+
+.assistant-header-icon {
+  display: flex;
+  width: 42px;
+  height: 42px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #c7d9fb;
+  border-radius: 12px;
+  background: var(--brand-soft);
+  color: var(--brand);
+  box-shadow: 0 6px 16px -8px rgba(43, 108, 246, 0.45);
+}
+
+.assistant-header-icon :deep(svg) {
+  width: 21px;
+  height: 21px;
+}
+
+.assistant-heading h2 {
+  margin: 4px 0;
+  color: var(--ink);
+  font-size: 19px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.assistant-heading p {
+  max-width: 660px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.65;
+}
+
+.assistant-head :deep(.n-button) {
+  --n-text-color: var(--muted) !important;
+  --n-text-color-hover: var(--ink) !important;
+}
+
+.assistant-target {
+  padding: 10px 24px;
+  border-bottom: 1px solid var(--border);
+  background: var(--brand-softer);
+}
+
+.assistant-target-label {
+  padding: 3px 7px;
+  border-radius: 5px;
+  background: #e1ebff;
+  color: #1d55d8;
+  font-size: 9px;
+}
+
+.assistant-target strong {
+  font-size: 11.5px;
+}
+
+.assistant-target code {
+  font-size: 9.5px;
+}
+
+.assistant-target-current {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.assistant-chat {
+  min-height: 360px;
+  gap: 14px;
+  padding: 20px 24px;
+  background: linear-gradient(180deg, #f8fafd 0%, #f5f9ff 100%);
+}
+
+.assistant-message {
+  gap: 10px;
+}
+
+.assistant-avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-size: 0;
+}
+
+.assistant-avatar :deep(svg) {
+  width: 16px;
+  height: 16px;
+}
+
+.assistant-message.user .assistant-avatar {
+  background: var(--green-soft);
+  color: #15803d;
+}
+
+.assistant-bubble {
+  max-width: 76%;
+  padding: 10px 13px;
+  border: 1px solid #d9e8ff;
+  border-radius: 14px 4px 14px 14px;
+  background: var(--brand-soft);
+  color: #1e3a8a;
+  font-size: 12px;
+  line-height: 1.75;
+  box-shadow: var(--shadow-sm);
+}
+
+.assistant-message.user .assistant-bubble {
+  border-color: #d9e8ff;
+  border-radius: 14px 4px 14px 14px;
+  background: var(--brand-soft);
+  color: #1e3a8a;
+}
+
+.assistant-content {
+  display: flex;
+  min-width: 0;
+  max-width: 86%;
+  flex: 0 1 auto;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 4px 14px 14px 14px;
+  background: #fff;
+  box-shadow: var(--shadow-sm);
+}
+
+.assistant-answer {
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.8;
+}
+
+.assistant-answer.markdown-body strong {
+  color: var(--brand-strong);
+}
+
+.assistant-answer.markdown-body code {
+  font-size: 10.5px;
+}
+
+.assistant-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid #e1eaf8;
+  border-radius: 10px;
+  background: #f8fbff;
+}
+
+.assistant-progress-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.assistant-trace-list {
+  gap: 5px;
+  padding-top: 8px;
+  border-top: 1px solid #e8effa;
+}
+
+.assistant-step {
+  gap: 7px;
+  font-size: 10.5px;
+}
+
+.assistant-step-label {
+  color: var(--text);
+  font-weight: 550;
+}
+
+.assistant-step-detail {
+  color: var(--muted-light);
+  font-size: 10px;
+}
+
+.assistant-step-icon svg {
+  width: 12px;
+  height: 12px;
+}
+
+.assistant-ready {
+  gap: 5px;
+  padding: 12px 13px;
+  border: 1px solid #cdebd9;
+  border-radius: 11px;
+  background: #f2fcf6;
+}
+
+.assistant-ready strong {
+  color: #166534;
+  font-size: 12px;
+}
+
+.assistant-ready span {
+  color: #4b7a5c;
+  font-size: 10.5px;
+}
+
+.assistant-changes {
+  font-size: 10.5px;
+  line-height: 1.8;
+}
+
+.assistant-starters {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 2px;
+  padding-left: 40px;
+}
+
+.assistant-starters-title {
+  color: var(--muted-light);
+  font-size: 9.5px;
+}
+
+.assistant-starter-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.assistant-starter-list button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 10px;
+  transition: border-color 0.16s ease, background 0.16s ease, color 0.16s ease;
+}
+
+.assistant-starter-list button:hover {
+  border-color: #c7d9fb;
+  background: var(--brand-soft);
+  color: var(--brand-strong);
+}
+
+.assistant-starter-list button svg {
+  width: 13px;
+  height: 13px;
+}
+
+.assistant-composer {
+  padding: 14px 20px 18px;
+  border-top: 1px solid var(--border);
+  background: #fff;
+}
+
+.assistant-input :deep(textarea) {
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.assistant-composer-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.assistant-model-row {
+  display: flex;
+  flex: 0 1 340px;
+  align-items: center;
+  gap: 8px;
+  margin-top: 0;
+}
+
+.assistant-model-label {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.assistant-model-select {
+  max-width: 300px;
+  flex: 1;
+}
+
+.assistant-actions {
+  flex: 1;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 0;
+}
+
+.assistant-note {
+  flex: 1;
+  color: var(--muted-light);
+  font-size: 9.5px;
+  text-align: right;
+}
+
+@media (max-width: 720px) {
+  .assistant-modal {
+    width: calc(100vw - 16px);
+    max-height: calc(100vh - 16px);
+  }
+
+  .assistant-head {
+    padding: 16px;
+  }
+
+  .assistant-heading h2 {
+    font-size: 16px;
+  }
+
+  .assistant-heading p {
+    font-size: 10.5px;
+  }
+
+  .assistant-header-icon {
+    width: 36px;
+    height: 36px;
+  }
+
+  .assistant-target {
+    padding: 9px 16px;
+  }
+
+  .assistant-chat {
+    min-height: 280px;
+    gap: 12px;
+    padding: 14px 16px;
+  }
+
+  .assistant-avatar {
+    width: 26px;
+    height: 26px;
+  }
+
+  .assistant-content,
+  .assistant-bubble {
+    max-width: 88%;
+  }
+
+  .assistant-starters {
+    padding-left: 0;
+  }
+
+  .assistant-composer {
+    padding: 12px 14px 14px;
+  }
+
+  .assistant-composer-bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .assistant-model-row {
+    flex-basis: auto;
+  }
+
+  .assistant-model-select {
+    max-width: none;
+  }
+
+  .assistant-actions {
+    justify-content: flex-end;
+  }
+
+  .assistant-note {
+    display: none;
+  }
 }
 </style>

@@ -7,6 +7,7 @@ import type {
   AuditLog,
   AuditAssistantResult,
   AuditAssistantMessage,
+  AuditFieldAssistantResult,
   CaptchaChallenge,
   DashboardData,
   IntegrationGuide,
@@ -124,6 +125,8 @@ export const auditApi = {
   assistant: (payload: Record<string, unknown>) => post<AuditAssistantResult>('/audits/assistant', payload),
   assistantStream: (payload: Record<string, unknown>, handlers: SSEHandlers) =>
     postSSE('/audits/assistant/stream', payload, handlers),
+  assistantField: (payload: Record<string, unknown>) =>
+    post<AuditFieldAssistantResult>('/audits/assistant/field', payload),
   update: (id: number, payload: Record<string, unknown>) => put<Audit>(`/audits/${id}`, payload),
   setStatus: (id: number, status: string) => patch<{ status: string }>(`/audits/${id}/status`, { status }),
   clone: (id: number, payload: { name: string; code: string }) => post<Audit>(`/audits/${id}/clone`, payload),
