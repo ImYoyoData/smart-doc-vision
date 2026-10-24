@@ -2042,6 +2042,7 @@ onMounted(async () => {
                 size="small"
                 :options="assistantProviderOptions"
                 :disabled="assistantBusy || saving"
+                placement="top-start"
                 placeholder="选择通用大模型"
                 class="assistant-model-select"
               />

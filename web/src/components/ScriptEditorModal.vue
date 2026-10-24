@@ -981,6 +981,7 @@ function handleAiKeydown(event: KeyboardEvent) {
                     size="tiny"
                     :options="aiProviderOptions"
                     :disabled="aiBusy || !aiProviderOptions.length"
+                    placement="top-start"
                     placeholder="选择通用大模型"
                     class="script-ai-model-select"
                   />

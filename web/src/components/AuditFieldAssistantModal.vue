@@ -201,6 +201,7 @@ function apply() {
               size="small"
               :options="providerOptions"
               :disabled="busy || !providerOptions.length"
+              placement="top-start"
               placeholder="选择通用大模型"
             />
           </div>
