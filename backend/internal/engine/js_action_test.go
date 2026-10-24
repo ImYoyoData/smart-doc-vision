@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-sql-driver/mysql"
+
 	"smartdoc-vision/backend/internal/config"
 	"smartdoc-vision/backend/internal/model"
 )
@@ -196,4 +198,21 @@ func fmtString(value any) string {
 		return text
 	}
 	return ""
+}
+
+func TestMySQLDSNAllowsNativePassword(t *testing.T) {
+	run := newTestScriptRun()
+	dsn, err := run.mysqlDSN(map[string]any{
+		"host": "127.0.0.1", "user": "testacc", "password": "testacc", "database": "TestDb",
+	})
+	if err != nil {
+		t.Fatalf("mysqlDSN: %v", err)
+	}
+	parsed, err := mysql.ParseDSN(dsn)
+	if err != nil {
+		t.Fatalf("parse DSN: %v", err)
+	}
+	if !parsed.AllowNativePasswords {
+		t.Fatalf("DSN must enable native password auth for MySQL 5.7: %s", dsn)
+	}
 }

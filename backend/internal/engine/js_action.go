@@ -856,8 +856,13 @@ func (r *scriptRun) mysqlDSN(options map[string]any) (string, error) {
 	cfg := mysql.Config{
 		User: user, Passwd: password, Net: "tcp",
 		Addr: net.JoinHostPort(host, strconv.Itoa(port)), DBName: database,
-		Params:  map[string]string{"charset": "utf8mb4", "parseTime": "true"},
-		Timeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second,
+		// MySQL 5.7 and most managed instances still authenticate with
+		// mysql_native_password. The zero-value Config disables it, so enable
+		// the plugin explicitly or every connection fails with
+		// "this user requires mysql native password authentication".
+		AllowNativePasswords: true,
+		Params:               map[string]string{"charset": "utf8mb4", "parseTime": "true"},
+		Timeout:              5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second,
 	}
 	if tlsMode := stringOption(options, "tls", ""); tlsMode != "" {
 		cfg.TLSConfig = tlsMode
