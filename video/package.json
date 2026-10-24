@@ -7,7 +7,9 @@
     "capture": "node scripts/capture.mjs",
     "studio": "remotion studio src/index.ts",
     "render": "remotion render src/index.ts SmartDocPromo out/smartdoc-vision-promo.mp4 --browser-executable=\"C:/Program Files/Google/Chrome/Application/chrome.exe\" --codec=h264 --crf=18",
-    "still": "remotion still src/index.ts SmartDocPromo out/poster.png --frame=240 --browser-executable=\"C:/Program Files/Google/Chrome/Application/chrome.exe\" --codec=h264 --crf=18"
+    "still": "remotion still src/index.ts SmartDocPromo out/poster.png --frame=240 --browser-executable=\"C:/Program Files/Google/Chrome/Application/chrome.exe\"",
+    "render:launch": "remotion render src/index.ts SmartDocLaunch out/smartdoc-vision-launch.mp4 --browser-executable=\"C:/Program Files/Google/Chrome/Application/chrome.exe\" --codec=h264 --crf=18",
+    "still:launch": "remotion still src/index.ts SmartDocLaunch out/launch-poster.png --frame=500 --browser-executable=\"C:/Program Files/Google/Chrome/Application/chrome.exe\""
   },
   "dependencies": {
     "@remotion/cli": "^4.0.0",
