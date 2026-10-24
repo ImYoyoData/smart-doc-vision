@@ -4,6 +4,12 @@
 
 **SmartDoc Vision** 是一个面向档案、图纸、扫描件与文本内容的审核中台。后端使用 **Go + Gin**，数据层使用 **MySQL + Redis**，管理后台使用 **Vue 3 + TypeScript + Naive UI + ECharts**。平台支持**通用大模型**（OpenAI 兼容协议或 **Anthropic Claude Messages API**，两者属于同一业务分类，仅协议不同），并原生支持 **JEV / TypeSafe System One** 结构化决策模型。
 
+### 发布会宣传片
+
+[![智审图档 · 40 秒发布会宣传片](docs/video/launch-preview.gif)](docs/video/smartdoc-vision-launch.mp4)
+
+[▶ 观看完整宣传片（40 秒 · 1080p · 含音效）](docs/video/smartdoc-vision-launch.mp4)
+
 ![登录页](docs/screenshots/login.png)
 
 ![仪表盘](docs/screenshots/dashboard.png)
