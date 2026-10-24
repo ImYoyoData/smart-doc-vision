@@ -22,7 +22,7 @@ type Audit struct {
 	CallbackURL            string     `gorm:"size:1024" json:"callback_url"`
 	CallbackResults        JSONText   `gorm:"type:text" json:"callback_results"`
 	CallbackHeaders        JSONText   `gorm:"type:text" json:"callback_headers"`
-	CallbackIncludeContent bool       `gorm:"not null;default:true" json:"callback_include_content"`
+	CallbackIncludeContent bool       `gorm:"not null" json:"callback_include_content"`
 	CallbackSecretEnc      string     `gorm:"type:text" json:"-"`
 	CallbackSecretSet      bool       `gorm:"-" json:"callback_secret_set"`
 	Status                 string     `gorm:"size:16;not null;default:ACTIVE;index" json:"status"`

@@ -15,7 +15,7 @@ type RedisConnection struct {
 	Status      string `gorm:"size:16;not null;default:ACTIVE;index" json:"status"`
 	Health      string `gorm:"size:16;not null;default:UNKNOWN" json:"health"`
 
-	AutoResumeTriggers bool       `gorm:"not null;default:true" json:"auto_resume_triggers"`
+	AutoResumeTriggers bool       `gorm:"not null" json:"auto_resume_triggers"`
 	LastTestAt         *time.Time `json:"last_test_at"`
 	LastTestOK         bool       `json:"last_test_ok"`
 	LastTestMS         int64      `json:"last_test_ms"`
