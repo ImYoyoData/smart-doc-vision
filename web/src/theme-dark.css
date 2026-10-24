@@ -898,6 +898,10 @@ html[data-theme='dark'] .mfa-chip {
   color: var(--green) !important;
 }
 
+html[data-theme='dark'] .user-meta .mfa-on {
+  color: var(--green) !important;
+}
+
 html[data-theme='dark'] .mfa-admin-panel {
   border-color: var(--border) !important;
   background: var(--surface-soft) !important;
@@ -920,11 +924,6 @@ html[data-theme='dark'] .mfa-admin-panel.enabled .mfa-admin-icon {
 
 html[data-theme='dark'] .mfa-admin-copy strong {
   color: var(--text) !important;
-}
-
-html[data-theme='dark'] .mfa-admin-state {
-  background: var(--surface-strong) !important;
-  color: var(--muted) !important;
 }
 
 html[data-theme='dark'] :is(

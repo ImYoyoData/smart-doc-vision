@@ -253,6 +253,10 @@ function resetMfa(user: User) {
     message.warning('当前账号请在「个人中心」关闭或重新绑定两步验证')
     return
   }
+  if (!user.mfa_enabled) {
+    message.info('该账号未开启两步验证，无需重置；用户绑定验证器后才需要此操作')
+    return
+  }
   dialog.warning({
     title: '重置两步验证',
     content: `确认清除「${user.display_name || user.username}」的两步验证绑定？清除后该账号可直接用密码登录，现有登录会话会立即失效，用户登录后可重新绑定验证器。`,
@@ -349,18 +353,22 @@ onMounted(load)
             </div>
             <div class="user-meta">
               <span>项目范围：{{ user.role === 'SUPER_ADMIN' ? '全部项目' : (user.project_ids || []).map((id) => workspace.projects.find((p) => p.id === id)?.name || `#${id}`).join('、') || '无' }}</span>
+              <span :class="{ 'mfa-on': user.mfa_enabled }">两步验证：{{ user.mfa_enabled ? '已开启' : '未开启' }}</span>
               <span>最近登录：{{ user.last_login_at ? user.last_login_at.replace('T', ' ').slice(0, 19) : '从未登录' }}</span>
             </div>
           </div>
           <div class="user-actions">
             <n-button size="small" quaternary @click="openEdit(user)">编辑</n-button>
             <n-button
-              v-if="user.mfa_enabled"
               size="small"
               quaternary
               type="warning"
-              :disabled="user.id === auth.user?.id"
-              :title="user.id === auth.user?.id ? '当前账号请在个人中心管理两步验证' : '清除该账号的两步验证绑定，帮助用户恢复登录'"
+              :disabled="user.id === auth.user?.id || !user.mfa_enabled"
+              :title="user.id === auth.user?.id
+                ? '当前账号请在个人中心管理两步验证'
+                : user.mfa_enabled
+                  ? '清除该账号的两步验证绑定，帮助用户恢复登录'
+                  : '该账号未开启两步验证，用户绑定后才需要重置'"
               @click="resetMfa(user)"
             >
               <template #icon><KeyOutline /></template>
@@ -477,7 +485,9 @@ onMounted(load)
             >
               重置 2FA
             </n-button>
-            <span v-else class="mfa-admin-state">未绑定</span>
+            <n-button v-else size="small" secondary disabled title="该账号尚未绑定验证器，无需重置">
+              重置 2FA
+            </n-button>
           </div>
           <div v-if="errorText" class="modal-error">{{ errorText }}</div>
         </div>
@@ -686,6 +696,10 @@ onMounted(load)
   margin-top: 3px;
   color: var(--muted-light);
   font-size: 8.5px;
+}
+
+.user-meta .mfa-on {
+  color: #15803d;
 }
 
 .user-actions {
@@ -1015,15 +1029,6 @@ onMounted(load)
   color: var(--muted);
   font-size: 9px;
   line-height: 1.5;
-}
-
-.mfa-admin-state {
-  flex-shrink: 0;
-  padding: 2px 7px;
-  border-radius: 5px;
-  background: var(--surface-strong);
-  color: var(--muted);
-  font-size: 9px;
 }
 
 .modal-error {
