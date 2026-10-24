@@ -16,6 +16,8 @@ import {
   CodeSlashOutline,
   CreateOutline,
   DocumentTextOutline,
+  ExpandOutline,
+  ContractOutline,
   PlayOutline,
   SaveOutline,
   SendOutline,
@@ -156,6 +158,7 @@ const riskLevelOptions = [
 const simConfigShow = ref(false)
 const simRunning = ref(false)
 const simShow = ref(false)
+const simExpanded = ref(false)
 const simTab = ref('logs')
 const simResult = ref<ScriptSimulationResult | null>(null)
 const simError = ref('')
@@ -201,9 +204,19 @@ const simOutputText = computed(() => {
   return typeof output === 'string' ? output : JSON.stringify(output, null, 2)
 })
 const simVariablesText = computed(() => JSON.stringify(simResult.value?.variables || {}, null, 2))
+// Keep the log list bounded so a noisy script cannot freeze the editor.
+const SIM_LOG_RENDER_LIMIT = 1000
+const simLogLines = computed(() => {
+  const lines = simResult.value?.logs || []
+  return lines.length > SIM_LOG_RENDER_LIMIT ? lines.slice(-SIM_LOG_RENDER_LIMIT) : lines
+})
+const simHiddenLogCount = computed(() => Math.max(0, (simResult.value?.logs?.length || 0) - simLogLines.value.length))
 const simMemoryText = computed(() => {
   const bytes = simResult.value?.memory_bytes || 0
-  return bytes > 0 ? `${(bytes / 1048576).toFixed(2)} MB` : '—'
+  if (bytes <= 0) return '—'
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / 1048576).toFixed(2)} MB`
 })
 
 const dirty = computed(() => props.script !== initialScript.value || props.remark !== initialRemark.value)
@@ -1061,7 +1074,7 @@ function handleAiKeydown(event: KeyboardEvent) {
         </Transition>
       </div>
 
-      <div v-if="simShow" class="script-sim-result">
+      <div v-if="simShow" class="script-sim-result" :class="{ expanded: simExpanded }">
         <div class="script-sim-result-head">
           <div class="script-sim-result-title">
             <n-icon :component="TerminalOutline" />
@@ -1072,14 +1085,25 @@ function handleAiKeydown(event: KeyboardEvent) {
           </div>
           <div class="script-sim-result-actions">
             <n-button size="tiny" secondary :loading="simRunning" :disabled="aiBusy" @click="runSimulation">重新运行</n-button>
+            <n-tooltip>
+              <template #trigger>
+                <n-button size="tiny" quaternary :title="simExpanded ? '收起面板' : '展开面板'" @click="simExpanded = !simExpanded">
+                  <template #icon><n-icon :component="simExpanded ? ContractOutline : ExpandOutline" /></template>
+                </n-button>
+              </template>
+              {{ simExpanded ? '收起面板' : '展开面板，查看完整日志与变量' }}
+            </n-tooltip>
             <n-button size="tiny" quaternary @click="simShow = false">收起</n-button>
           </div>
         </div>
         <n-tabs v-model:value="simTab" type="line" size="small" class="script-sim-tabs">
           <n-tab-pane name="logs" tab="临时日志">
             <div class="script-sim-logs">
+              <div v-if="simHiddenLogCount" class="script-sim-log-note">
+                日志较多，仅渲染最近 {{ simLogLines.length }} 行（共 {{ simResult?.logs?.length }} 行）
+              </div>
               <div
-                v-for="(line, index) in simResult?.logs || []"
+                v-for="(line, index) in simLogLines"
                 :key="index"
                 class="script-sim-log-line"
                 :class="simLogClass(line)"
@@ -1093,6 +1117,22 @@ function handleAiKeydown(event: KeyboardEvent) {
             <pre class="script-sim-code">{{ simVariablesText }}</pre>
           </n-tab-pane>
         </n-tabs>
+      </div>
+
+      <div v-else-if="simResult" class="script-sim-collapsed">
+        <span class="script-sim-collapsed-title">
+          <n-icon :component="TerminalOutline" />
+          模拟运行结果
+          <em class="script-sim-status" :class="simStatusTone">{{ simStatusLabel }}</em>
+          <em class="script-sim-meta">{{ simResult.duration_ms ?? 0 }} ms · {{ simMemoryText }}</em>
+        </span>
+        <div class="script-sim-collapsed-actions">
+          <n-button size="tiny" secondary @click="simShow = true">
+            <template #icon><n-icon :component="ExpandOutline" /></template>
+            展开结果
+          </n-button>
+          <n-button size="tiny" quaternary @click="simResult = null">关闭</n-button>
+        </div>
       </div>
 
       <div class="script-editor-foot">
@@ -2934,6 +2974,11 @@ function handleAiKeydown(event: KeyboardEvent) {
   flex-direction: column;
   border-top: 1px solid #24324a;
   background: #0b1425;
+  transition: height 0.18s ease;
+}
+
+.script-sim-result.expanded {
+  height: min(62vh, 680px);
 }
 
 .script-sim-result-head {
@@ -3002,6 +3047,43 @@ function handleAiKeydown(event: KeyboardEvent) {
   gap: 4px;
 }
 
+.script-sim-collapsed {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 12px;
+  border-top: 1px solid #24324a;
+  background: #0b1425;
+  font-size: 10px;
+}
+
+.script-sim-collapsed-title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  color: #e2e8f0;
+}
+
+.script-sim-collapsed-title :deep(svg) {
+  width: 14px;
+  height: 14px;
+  color: #7dd3fc;
+}
+
+.script-sim-collapsed-title em {
+  font-style: normal;
+}
+
+.script-sim-collapsed-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+}
+
 .script-sim-tabs {
   display: flex;
   min-height: 0;
@@ -3017,7 +3099,29 @@ function handleAiKeydown(event: KeyboardEvent) {
 .script-sim-tabs :deep(.n-tabs-pane-wrapper) {
   min-height: 0;
   flex: 1;
-  overflow: auto;
+  overflow: hidden;
+}
+
+.script-sim-tabs :deep(.n-tab-pane) {
+  box-sizing: border-box;
+  height: 100%;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: #334155 transparent;
+}
+
+.script-sim-tabs :deep(.n-tab-pane)::-webkit-scrollbar {
+  width: 6px;
+}
+
+.script-sim-tabs :deep(.n-tab-pane)::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: #334155;
+}
+
+.script-sim-tabs :deep(.n-tab-pane)::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .script-sim-logs {
@@ -3025,6 +3129,12 @@ function handleAiKeydown(event: KeyboardEvent) {
   font-family: var(--mono);
   font-size: 9.5px;
   line-height: 1.65;
+}
+
+.script-sim-log-note {
+  margin-bottom: 4px;
+  color: #fbbf24;
+  font-size: 9px;
 }
 
 .script-sim-log-line {
@@ -3067,6 +3177,43 @@ function handleAiKeydown(event: KeyboardEvent) {
 
 .script-theme-light .script-sim-meta {
   color: var(--muted-light);
+}
+
+.script-theme-light .script-sim-collapsed {
+  border-top-color: var(--border);
+  background: var(--card);
+}
+
+.script-theme-light .script-sim-collapsed-title {
+  color: var(--ink);
+}
+
+.script-theme-light .script-sim-log-note {
+  color: #b45309;
+}
+
+.script-theme-light .script-sim-log-line {
+  color: var(--muted);
+}
+
+.script-theme-light .script-sim-log-line.warn {
+  color: #b45309;
+}
+
+.script-theme-light .script-sim-log-line.error {
+  color: var(--red);
+}
+
+.script-theme-light .script-sim-code {
+  color: var(--text);
+}
+
+.script-theme-light .script-sim-tabs :deep(.n-tab-pane) {
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+.script-theme-light .script-sim-tabs :deep(.n-tab-pane)::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
 }
 
 .script-theme-light .script-sim-log-line,
