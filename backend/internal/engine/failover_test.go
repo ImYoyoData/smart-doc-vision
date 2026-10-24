@@ -35,3 +35,20 @@ func TestProviderCategoryKeepsJEVSeparate(t *testing.T) {
 		}
 	}
 }
+
+func TestOrderProviderCandidatesUsesPriorityAfterPrimary(t *testing.T) {
+	providers := []model.AIProvider{
+		{ID: 3, Priority: 10},
+		{ID: 1, Priority: 50},
+		{ID: 2, Priority: 20},
+		{ID: 4, Priority: 5},
+	}
+	ordered := orderProviderCandidates(providers, 3, false)
+	got := []uint64{ordered[0].ID, ordered[1].ID, ordered[2].ID, ordered[3].ID}
+	want := []uint64{3, 4, 2, 1}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("ordered IDs = %v, want %v", got, want)
+		}
+	}
+}

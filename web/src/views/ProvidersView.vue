@@ -66,6 +66,7 @@ const form = reactive({
   temperature: 0.1,
   headersText: '',
   status: 'ACTIVE',
+  priority: 100,
 })
 
 const isJEV = computed(() => form.kind === 'JEV')
@@ -130,7 +131,11 @@ function providerRank(provider: Provider) {
 }
 
 const sortedProviders = computed(() =>
-  [...providers.value].sort((a, b) => providerRank(a) - providerRank(b)),
+  [...providers.value].sort((a, b) => {
+    const rank = providerRank(a) - providerRank(b)
+    if (rank !== 0) return rank
+    return (a.priority ?? 100) - (b.priority ?? 100)
+  }),
 )
 
 const statusFilters = computed(() => {
@@ -331,6 +336,7 @@ function resetForm() {
   form.temperature = 0.1
   form.headersText = ''
   form.status = 'ACTIVE'
+  form.priority = 100
   modelOptions.value = []
   modelsError.value = ''
   modelsLoading.value = false
@@ -389,6 +395,7 @@ function openEdit(provider: Provider) {
   form.temperature = provider.config?.temperature ?? 0.1
   form.headersText = headersToText(provider.config?.headers)
   form.status = provider.status
+  form.priority = provider.priority ?? 100
   modelOptions.value = []
   modelsError.value = ''
   errorText.value = ''
@@ -448,6 +455,7 @@ async function save() {
     prompt: form.prompt,
     config,
     status: form.status || (form.apiKey ? 'ACTIVE' : 'DISABLED'),
+    priority: form.priority,
   }
   if (form.apiKey.trim()) payload.api_key = form.apiKey.trim()
 
@@ -752,6 +760,7 @@ onMounted(load)
               </div>
               <span class="provider-model mono">{{ provider.model }}</span>
               <span class="provider-protocol">{{ providerProtocolLabel(provider.kind) }}</span>
+              <span class="provider-priority" title="同类模型回落顺序，数字越小越优先">优先级 {{ provider.priority ?? 100 }}</span>
             </div>
             <n-switch
               :value="provider.status === 'ACTIVE'"
@@ -955,6 +964,19 @@ onMounted(load)
                   { label: '停用', value: 'DISABLED' },
                 ]"
               />
+            </div>
+          </div>
+
+          <div class="two-col">
+            <div class="field">
+              <label>优先级</label>
+              <n-input-number v-model:value="form.priority" :min="1" :max="999" :step="1" style="width: 100%" />
+            </div>
+            <div class="field">
+              <label>回落顺序</label>
+              <div class="priority-hint">
+                数字越小越优先。审核绑定的模型始终最先调用；失败或熔断后，同类型模型按优先级依次回落。
+              </div>
             </div>
           </div>
 
@@ -1458,6 +1480,29 @@ onMounted(load)
   font-size: 9.5px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.provider-priority {
+  display: inline-block;
+  margin-top: 3px;
+  padding: 1px 6px;
+  border: 1px solid #dbeafe;
+  border-radius: 99px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-family: var(--mono);
+  font-size: 8.5px;
+  white-space: nowrap;
+}
+
+.priority-hint {
+  padding: 8px 10px;
+  border: 1px dashed #dbeafe;
+  border-radius: 8px;
+  background: #f8fbff;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.6;
 }
 
 .provider-protocol {

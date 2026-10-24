@@ -199,6 +199,7 @@ export interface Provider {
   prompt: string
   config: ProviderConfig | null
   status: string
+  priority: number
   last_test_at?: string | null
   last_test_ok: boolean
   last_test_ms: number

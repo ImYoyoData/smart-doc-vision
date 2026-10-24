@@ -375,7 +375,8 @@ func (s *Server) assistantProvider(projectID, preferred uint64) (*model.AIProvid
 		return &provider, nil
 	}
 	var providers []model.AIProvider
-	if err := s.db.Where("project_id = ? AND status = ?", projectID, model.ProviderActive).Order("id asc").Find(&providers).Error; err != nil {
+	if err := s.db.Where("project_id = ? AND status = ?", projectID, model.ProviderActive).
+		Order("priority asc, id asc").Find(&providers).Error; err != nil {
 		return nil, err
 	}
 	for i := range providers {

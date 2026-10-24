@@ -34,7 +34,7 @@ func (e *Engine) providerCandidates(primary model.AIProvider, preferReasoning bo
 		q = q.Where("kind IN ?", []string{model.ProviderOpenAI, model.ProviderAnthropic})
 	}
 	var providers []model.AIProvider
-	if err := q.Order("id asc").Find(&providers).Error; err != nil {
+	if err := q.Order("priority asc, id asc").Find(&providers).Error; err != nil {
 		return nil, err
 	}
 
@@ -47,23 +47,33 @@ func (e *Engine) providerCandidates(primary model.AIProvider, preferReasoning bo
 		}
 		available = append(available, provider)
 	}
-	sort.SliceStable(available, func(i, j int) bool {
-		if available[i].ID == primary.ID {
-			return true
+	return orderProviderCandidates(available, primary.ID, preferReasoning), nil
+}
+
+// orderProviderCandidates keeps the audit-bound provider first, then orders the
+// fallbacks by explicit priority (smaller first). Reasoning preference and ID
+// only break ties.
+func orderProviderCandidates(available []model.AIProvider, primaryID uint64, preferReasoning bool) []model.AIProvider {
+	out := append([]model.AIProvider(nil), available...)
+	sort.SliceStable(out, func(i, j int) bool {
+		iPrimary := out[i].ID == primaryID
+		jPrimary := out[j].ID == primaryID
+		if iPrimary != jPrimary {
+			return iPrimary
 		}
-		if available[j].ID == primary.ID {
-			return false
+		if out[i].Priority != out[j].Priority {
+			return out[i].Priority < out[j].Priority
 		}
 		if preferReasoning {
-			left := ai.ParseConfig(available[i])
-			right := ai.ParseConfig(available[j])
+			left := ai.ParseConfig(out[i])
+			right := ai.ParseConfig(out[j])
 			if left.SupportsThinking != right.SupportsThinking {
 				return left.SupportsThinking
 			}
 		}
-		return available[i].ID < available[j].ID
+		return out[i].ID < out[j].ID
 	})
-	return available, nil
+	return out
 }
 
 func providerCategory(kind string) string {

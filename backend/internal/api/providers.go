@@ -36,6 +36,7 @@ type providerInput struct {
 	Prompt    string          `json:"prompt"`
 	Config    json.RawMessage `json:"config"`
 	Status    string          `json:"status"`
+	Priority  *int            `json:"priority"`
 }
 
 func (s *Server) listProviders(c *gin.Context) {
@@ -60,7 +61,7 @@ func (s *Server) listProviders(c *gin.Context) {
 		q = q.Where("status = ?", status)
 	}
 	var providers []model.AIProvider
-	if err := q.Order("id asc").Find(&providers).Error; err != nil {
+	if err := q.Order("priority asc, id asc").Find(&providers).Error; err != nil {
 		serverError(c, err)
 		return
 	}
@@ -149,6 +150,11 @@ func (s *Server) createProvider(c *gin.Context) {
 		badRequest(c, err.Error())
 		return
 	}
+	priority, err := providerPriority(req.Priority, 100)
+	if err != nil {
+		badRequest(c, err.Error())
+		return
+	}
 	var count int64
 	_ = s.db.Model(&model.AIProvider{}).Where("project_id = ? AND name = ?", req.ProjectID, req.Name).Count(&count).Error
 	if count > 0 {
@@ -179,6 +185,7 @@ func (s *Server) createProvider(c *gin.Context) {
 		ProjectID: req.ProjectID, Name: req.Name, Kind: req.Kind,
 		BaseURL: strings.TrimRight(req.BaseURL, "/"), Model: req.Model,
 		APIKeyEnc: keyEnc, Prompt: req.Prompt, ConfigJSON: model.JSONText(config), Status: status,
+		Priority: priority,
 	}
 	if err := s.db.Create(&provider).Error; err != nil {
 		serverError(c, err)
@@ -245,6 +252,14 @@ func (s *Server) updateProvider(c *gin.Context) {
 	}
 	if oneOf(req.Status, model.ProviderActive, model.ProviderDisabled) {
 		provider.Status = req.Status
+	}
+	if req.Priority != nil {
+		priority, err := providerPriority(req.Priority, provider.Priority)
+		if err != nil {
+			badRequest(c, err.Error())
+			return
+		}
+		provider.Priority = priority
 	}
 	if err := s.db.Save(provider).Error; err != nil {
 		serverError(c, err)
@@ -365,6 +380,16 @@ func (s *Server) toProviderView(p model.AIProvider) providerView {
 		APIKeyMasked: security.MaskSecret(key),
 		HasAPIKey:    key != "",
 	}
+}
+
+func providerPriority(value *int, fallback int) (int, error) {
+	if value == nil {
+		return fallback, nil
+	}
+	if *value < 1 || *value > 999 {
+		return 0, fmt.Errorf("优先级需在 1~999 之间，数字越小越优先")
+	}
+	return *value, nil
 }
 
 func validateProviderInput(req *providerInput, creating bool) error {
