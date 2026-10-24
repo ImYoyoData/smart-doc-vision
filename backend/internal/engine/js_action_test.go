@@ -216,3 +216,45 @@ func TestMySQLDSNAllowsNativePassword(t *testing.T) {
 		t.Fatalf("DSN must enable native password auth for MySQL 5.7: %s", dsn)
 	}
 }
+
+func TestJSActionCryptoHelpers(t *testing.T) {
+	run := newTestScriptRun()
+	status, errType, errMsg, output := run.run(`
+const aesCfg = { key: '1234567890123456', iv: '1234567890123456', mode: 'CBC' }
+const encrypted = ctx.crypto.aesEncrypt({ data: 'hello-世界', key: aesCfg.key, iv: aesCfg.iv })
+const decrypted = ctx.crypto.aesDecrypt({ data: encrypted, key: aesCfg.key, iv: aesCfg.iv })
+const desEncrypted = ctx.crypto.desEncrypt({ data: 'abc', key: '12345678', mode: 'ECB', encoding: 'hex' })
+const desDecrypted = ctx.crypto.desDecrypt({ data: desEncrypted, key: '12345678', mode: 'ECB', encoding: 'hex' })
+;({
+  md5: ctx.crypto.md5('abc'),
+  sha1: ctx.crypto.sha1('abc'),
+  hmacMd5: ctx.crypto.hmacMd5('k', 'v'),
+  hmacSha1: ctx.crypto.hmacSha1('k', 'v'),
+  decrypted,
+  desDecrypted,
+  desLen: desEncrypted.length
+})
+`, 8<<20)
+	if status != model.ScriptSuccess {
+		t.Fatalf("status=%s type=%s msg=%s", status, errType, errMsg)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(output, &payload); err != nil {
+		t.Fatalf("decode output: %v (%s)", err, string(output))
+	}
+	if payload["md5"] != "900150983cd24fb0d6963f7d28e17f72" {
+		t.Fatalf("unexpected md5: %v", payload["md5"])
+	}
+	if payload["sha1"] != "a9993e364706816aba3e25717850c26c9cd0d89d" {
+		t.Fatalf("unexpected sha1: %v", payload["sha1"])
+	}
+	if payload["hmacMd5"] == "" || payload["hmacSha1"] == "" {
+		t.Fatalf("hmac output missing: %+v", payload)
+	}
+	if payload["decrypted"] != "hello-世界" {
+		t.Fatalf("aes roundtrip = %v", payload["decrypted"])
+	}
+	if payload["desDecrypted"] != "abc" {
+		t.Fatalf("des roundtrip = %v", payload["desDecrypted"])
+	}
+}

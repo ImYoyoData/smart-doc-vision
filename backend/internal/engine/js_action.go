@@ -1,9 +1,15 @@
 package engine
 
 import (
+	"bytes"
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/des"
 	"crypto/hmac"
+	"crypto/md5"
 	"crypto/rand"
+	"crypto/sha1"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
@@ -11,6 +17,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"log"
 	"net"
@@ -289,8 +296,16 @@ func (r *scriptRun) contextMap() map[string]any {
 			"base64Encode": moejs.NativeFunc(r.nativeBase64Encode),
 			"base64Decode": moejs.NativeFunc(r.nativeBase64Decode),
 			"hexEncode":    moejs.NativeFunc(r.nativeHexEncode),
+			"md5":          moejs.NativeFunc(r.nativeMD5),
+			"sha1":         moejs.NativeFunc(r.nativeSHA1),
 			"sha256":       moejs.NativeFunc(r.nativeSHA256),
+			"hmacMd5":      moejs.NativeFunc(r.nativeHMACMD5),
+			"hmacSha1":     moejs.NativeFunc(r.nativeHMACSHA1),
 			"hmacSha256":   moejs.NativeFunc(r.nativeHMACSHA256),
+			"aesEncrypt":   moejs.NativeFunc(r.nativeAESEncrypt),
+			"aesDecrypt":   moejs.NativeFunc(r.nativeAESDecrypt),
+			"desEncrypt":   moejs.NativeFunc(r.nativeDESEncrypt),
+			"desDecrypt":   moejs.NativeFunc(r.nativeDESDecrypt),
 			"randomBytes":  moejs.NativeFunc(r.nativeRandomBytes),
 			"uuid":         moejs.NativeFunc(r.nativeUUID),
 		},
@@ -813,6 +828,233 @@ func (r *scriptRun) nativeHMACSHA256(realm *moejs.Realm, _ moejs.Value, args []m
 	mac := hmac.New(sha256.New, []byte(key))
 	_, _ = mac.Write([]byte(value))
 	return moejs.String(hex.EncodeToString(mac.Sum(nil))), nil
+}
+
+func (r *scriptRun) nativeMD5(realm *moejs.Realm, _ moejs.Value, args []moejs.Value) (moejs.Value, error) {
+	value, err := r.argString(realm, args, 0)
+	if err != nil {
+		return moejs.Undefined(), err
+	}
+	sum := md5.Sum([]byte(value))
+	return moejs.String(hex.EncodeToString(sum[:])), nil
+}
+
+func (r *scriptRun) nativeSHA1(realm *moejs.Realm, _ moejs.Value, args []moejs.Value) (moejs.Value, error) {
+	value, err := r.argString(realm, args, 0)
+	if err != nil {
+		return moejs.Undefined(), err
+	}
+	sum := sha1.Sum([]byte(value))
+	return moejs.String(hex.EncodeToString(sum[:])), nil
+}
+
+func (r *scriptRun) nativeHMACMD5(realm *moejs.Realm, _ moejs.Value, args []moejs.Value) (moejs.Value, error) {
+	return r.hmacHex(realm, args, md5.New)
+}
+
+func (r *scriptRun) nativeHMACSHA1(realm *moejs.Realm, _ moejs.Value, args []moejs.Value) (moejs.Value, error) {
+	return r.hmacHex(realm, args, sha1.New)
+}
+
+func (r *scriptRun) hmacHex(realm *moejs.Realm, args []moejs.Value, hash func() hash.Hash) (moejs.Value, error) {
+	key, err := r.argString(realm, args, 0)
+	if err != nil {
+		return moejs.Undefined(), err
+	}
+	value, err := r.argString(realm, args, 1)
+	if err != nil {
+		return moejs.Undefined(), err
+	}
+	mac := hmac.New(hash, []byte(key))
+	_, _ = mac.Write([]byte(value))
+	return moejs.String(hex.EncodeToString(mac.Sum(nil))), nil
+}
+
+func (r *scriptRun) nativeAESEncrypt(realm *moejs.Realm, _ moejs.Value, args []moejs.Value) (moejs.Value, error) {
+	return r.symmetricCipher(realm, args, "AES", true)
+}
+
+func (r *scriptRun) nativeAESDecrypt(realm *moejs.Realm, _ moejs.Value, args []moejs.Value) (moejs.Value, error) {
+	return r.symmetricCipher(realm, args, "AES", false)
+}
+
+func (r *scriptRun) nativeDESEncrypt(realm *moejs.Realm, _ moejs.Value, args []moejs.Value) (moejs.Value, error) {
+	return r.symmetricCipher(realm, args, "DES", true)
+}
+
+func (r *scriptRun) nativeDESDecrypt(realm *moejs.Realm, _ moejs.Value, args []moejs.Value) (moejs.Value, error) {
+	return r.symmetricCipher(realm, args, "DES", false)
+}
+
+type symmetricCipherOptions struct {
+	data     []byte
+	key      []byte
+	iv       []byte
+	mode     string
+	padding  string
+	encoding string
+}
+
+// nativeAES*/nativeDES* share one option shape so third-party integrations can
+// express the common combinations (CBC/ECB, PKCS7/no padding, base64/hex) in a
+// single call.
+func (r *scriptRun) symmetricCipher(realm *moejs.Realm, args []moejs.Value, algorithm string, encrypt bool) (moejs.Value, error) {
+	options, err := r.argMap(realm, args, 0)
+	if err != nil {
+		return moejs.Undefined(), err
+	}
+	raw := stringOption(options, "data", "")
+	if raw == "" {
+		return moejs.Undefined(), fmt.Errorf("%s 需要 data", algorithm)
+	}
+	keyText := stringOption(options, "key", "")
+	if keyText == "" {
+		return moejs.Undefined(), fmt.Errorf("%s 需要 key", algorithm)
+	}
+	mode := strings.ToUpper(stringOption(options, "mode", "CBC"))
+	if mode != "CBC" && mode != "ECB" {
+		return moejs.Undefined(), fmt.Errorf("mode 仅支持 CBC 或 ECB")
+	}
+	padding := strings.ToUpper(stringOption(options, "padding", "PKCS7"))
+	if padding != "PKCS7" && padding != "NONE" {
+		return moejs.Undefined(), fmt.Errorf("padding 仅支持 PKCS7 或 NONE")
+	}
+	encoding := strings.ToLower(stringOption(options, "encoding", "base64"))
+	if encoding != "base64" && encoding != "hex" {
+		return moejs.Undefined(), fmt.Errorf("encoding 仅支持 base64 或 hex")
+	}
+	key, err := decodeCipherMaterial(keyText, strings.ToLower(stringOption(options, "keyEncoding", "utf8")))
+	if err != nil {
+		return moejs.Undefined(), fmt.Errorf("key 解码失败: %w", err)
+	}
+	var iv []byte
+	if mode == "CBC" {
+		ivText := stringOption(options, "iv", "")
+		if ivText == "" {
+			return moejs.Undefined(), fmt.Errorf("CBC 模式需要 iv")
+		}
+		iv, err = decodeCipherMaterial(ivText, strings.ToLower(stringOption(options, "ivEncoding", "utf8")))
+		if err != nil {
+			return moejs.Undefined(), fmt.Errorf("iv 解码失败: %w", err)
+		}
+	}
+
+	var block cipher.Block
+	if algorithm == "AES" {
+		block, err = aes.NewCipher(key)
+	} else {
+		block, err = des.NewCipher(key)
+	}
+	if err != nil {
+		return moejs.Undefined(), fmt.Errorf("%s 密钥长度不合法: %w", algorithm, err)
+	}
+	blockSize := block.BlockSize()
+	if mode == "CBC" && len(iv) != blockSize {
+		return moejs.Undefined(), fmt.Errorf("CBC 模式的 iv 必须为 %d 字节", blockSize)
+	}
+
+	if encrypt {
+		data := pkcs7Pad([]byte(raw), blockSize, padding)
+		var out []byte
+		if mode == "ECB" {
+			out, err = ecbCrypt(block, data, true)
+		} else {
+			out = make([]byte, len(data))
+			cipher.NewCBCEncrypter(block, iv).CryptBlocks(out, data)
+		}
+		if err != nil {
+			return moejs.Undefined(), err
+		}
+		if err := realm.ChargeMemory(len(out)); err != nil {
+			return moejs.Undefined(), err
+		}
+		if encoding == "hex" {
+			return moejs.String(hex.EncodeToString(out)), nil
+		}
+		return moejs.String(base64.StdEncoding.EncodeToString(out)), nil
+	}
+
+	ciphertext, err := decodeCipherMaterial(raw, encoding)
+	if err != nil {
+		return moejs.Undefined(), fmt.Errorf("密文解码失败: %w", err)
+	}
+	if len(ciphertext) == 0 || len(ciphertext)%blockSize != 0 {
+		return moejs.Undefined(), fmt.Errorf("密文长度必须是 %d 的整数倍", blockSize)
+	}
+	var plain []byte
+	if mode == "ECB" {
+		plain, err = ecbCrypt(block, ciphertext, false)
+	} else {
+		plain = make([]byte, len(ciphertext))
+		cipher.NewCBCDecrypter(block, iv).CryptBlocks(plain, ciphertext)
+	}
+	if err != nil {
+		return moejs.Undefined(), err
+	}
+	plain, err = pkcs7Unpad(plain, blockSize, padding)
+	if err != nil {
+		return moejs.Undefined(), err
+	}
+	if err := realm.ChargeMemory(len(plain)); err != nil {
+		return moejs.Undefined(), err
+	}
+	return moejs.String(string(plain)), nil
+}
+
+func decodeCipherMaterial(value, encoding string) ([]byte, error) {
+	switch strings.ToLower(strings.TrimSpace(encoding)) {
+	case "", "utf8", "utf-8":
+		return []byte(value), nil
+	case "hex":
+		return hex.DecodeString(strings.TrimSpace(value))
+	case "base64":
+		return base64.StdEncoding.DecodeString(strings.TrimSpace(value))
+	default:
+		return nil, fmt.Errorf("不支持的编码 %q", encoding)
+	}
+}
+
+func pkcs7Pad(data []byte, blockSize int, padding string) []byte {
+	if padding == "NONE" {
+		return data
+	}
+	pad := blockSize - len(data)%blockSize
+	return append(data, bytes.Repeat([]byte{byte(pad)}, pad)...)
+}
+
+func pkcs7Unpad(data []byte, blockSize int, padding string) ([]byte, error) {
+	if padding == "NONE" {
+		return data, nil
+	}
+	if len(data) == 0 {
+		return nil, fmt.Errorf("明文为空，无法去除 PKCS7 填充")
+	}
+	pad := int(data[len(data)-1])
+	if pad == 0 || pad > blockSize || pad > len(data) {
+		return nil, fmt.Errorf("PKCS7 填充不合法，请确认密钥、iv 与模式")
+	}
+	for _, value := range data[len(data)-pad:] {
+		if int(value) != pad {
+			return nil, fmt.Errorf("PKCS7 填充不合法，请确认密钥、iv 与模式")
+		}
+	}
+	return data[:len(data)-pad], nil
+}
+
+func ecbCrypt(block cipher.Block, data []byte, encrypt bool) ([]byte, error) {
+	size := block.BlockSize()
+	if len(data)%size != 0 {
+		return nil, fmt.Errorf("数据长度必须是 %d 的整数倍", size)
+	}
+	out := make([]byte, len(data))
+	for offset := 0; offset < len(data); offset += size {
+		if encrypt {
+			block.Encrypt(out[offset:offset+size], data[offset:offset+size])
+		} else {
+			block.Decrypt(out[offset:offset+size], data[offset:offset+size])
+		}
+	}
+	return out, nil
 }
 
 func (r *scriptRun) nativeRandomBytes(realm *moejs.Realm, _ moejs.Value, args []moejs.Value) (moejs.Value, error) {
