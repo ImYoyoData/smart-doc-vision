@@ -41,6 +41,45 @@ func newTestScriptRun() *scriptRun {
 	}
 }
 
+func TestJSActionRunsTopLevelCodeWithGlobalContext(t *testing.T) {
+	run := newTestScriptRun()
+	status, errType, errMsg, output := run.run(`
+ctx.log('top-level', ctx.result)
+;({
+  ok: true,
+  code: ctx.audit.code,
+  result: ctx.result
+})
+`, 8<<20)
+	if status != model.ScriptSuccess {
+		t.Fatalf("status=%s type=%s msg=%s", status, errType, errMsg)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(output, &payload); err != nil {
+		t.Fatalf("decode output: %v (%s)", err, string(output))
+	}
+	if payload["ok"] != true || payload["code"] != "archive_review" || payload["result"] != model.ResultReject {
+		t.Fatalf("unexpected top-level output: %+v", payload)
+	}
+	if !strings.Contains(run.logText(), "top-level REJECT") {
+		t.Fatalf("logs missing top-level output: %q", run.logText())
+	}
+}
+
+func TestJSActionTopLevelWithoutReturnValue(t *testing.T) {
+	run := newTestScriptRun()
+	status, errType, errMsg, output := run.run(`
+const rows = [{ id: 1 }]
+ctx.log('rows', rows.length)
+`, 8<<20)
+	if status != model.ScriptSuccess {
+		t.Fatalf("status=%s type=%s msg=%s", status, errType, errMsg)
+	}
+	if len(output) != 0 {
+		t.Fatalf("expected no result, got %s", string(output))
+	}
+}
+
 func TestJSActionRunsWithContextAndLogs(t *testing.T) {
 	run := newTestScriptRun()
 	status, errType, errMsg, output := run.run(`
@@ -125,6 +164,17 @@ func TestJSActionTimeout(t *testing.T) {
 	status, errType, _, _ := run.run(`function main(ctx) { while (true) {} }`, 8<<20)
 	if status != model.ScriptTimeout || errType != model.ScriptTimeout {
 		t.Fatalf("expected timeout, got status=%s type=%s", status, errType)
+	}
+}
+
+func TestJSActionTopLevelTimeout(t *testing.T) {
+	run := newTestScriptRun()
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Millisecond)
+	defer cancel()
+	run.ctx = ctx
+	status, errType, _, _ := run.run(`while (true) {}`, 8<<20)
+	if status != model.ScriptTimeout || errType != model.ScriptTimeout {
+		t.Fatalf("expected top-level timeout, got status=%s type=%s", status, errType)
 	}
 }
 

@@ -493,7 +493,7 @@ if not hmac.compare_digest(expected, request.headers["X-SmartDoc-Signature"]):
 | http | url | method、params、headers、body、timeout_ms | params/headers 为字符串字典；body 留空发送标准结果 JSON |
 | websocket | url（ws/wss） | headers、payload、timeout_ms | headers 用于握手鉴权；payload 留空发送标准结果 JSON |
 | redis | connection_id、db、target | command（publish/set/xadd）、payload | 使用项目 Redis 连接写入指定 DB；payload 留空发送标准结果 JSON |
-| js | script | remark、timeout_ms、memory_mb | 入口 `function main(ctx)`；可用 `ctx.mysql` / `ctx.pg` / `ctx.http` / `ctx.crypto` / `ctx.secret`；不提供文件、socket、eval、定时器 |
+| js | script | remark、timeout_ms、memory_mb | 直接写顶层代码，平台注入全局 `ctx`（无需 `main`，旧脚本仍兼容）；可用 `ctx.mysql` / `ctx.pg` / `ctx.http` / `ctx.crypto` / `ctx.secret`；不提供文件、socket、eval、定时器 |
 
 每个结论可配置 `on_error`：`continue` 继续执行、`stop` 停止后续动作、`to_review` 转人工复核。模板变量：`${task_no}`、`${task_id}`、`${biz_key}`、`${source_type}`、`${project_code}`、`${project_id}`、`${audit_code}`、`${audit_id}`、`${result}`、`${summary}`、`${reasons}`、`${labels}`、`${risk_level}`、`${score}`、`${category}`、`${category_name}`、`${category_confidence}`、`${review_note}`。
 

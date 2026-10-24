@@ -140,7 +140,21 @@ func (r *scriptRun) run(source string, memoryLimit int64) (status, errType, errM
 	if err := rt.SetGlobal("console", r.consoleMap()); err != nil {
 		return model.ScriptError, model.ScriptError, err.Error(), nil
 	}
-	if _, err := rt.RunScript(script); err != nil {
+	interrupted := make(chan struct{})
+	stop := context.AfterFunc(r.ctx, func() {
+		rt.Interrupt(context.Cause(r.ctx))
+		close(interrupted)
+	})
+	defer func() {
+		if !stop() {
+			<-interrupted
+		}
+	}()
+
+	// Run the script body first. Top-level code can use the global ctx directly;
+	// defining main(ctx) remains supported for scripts that need an explicit return.
+	completion, err := rt.RunScript(script)
+	if err != nil {
 		return r.classify(rt, err)
 	}
 	global := men.ObjectValue(rt.Realm().Global)
@@ -148,26 +162,20 @@ func (r *scriptRun) run(source string, memoryLimit int64) (status, errType, errM
 	if err != nil {
 		return model.ScriptError, model.ScriptError, err.Error(), nil
 	}
-	ctxValue, err := rt.Get(global, "ctx")
-	if err != nil {
-		return model.ScriptError, model.ScriptError, err.Error(), nil
+	value := completion
+	if men.IsCallable(mainValue) {
+		ctxValue, err := rt.Get(global, "ctx")
+		if err != nil {
+			return model.ScriptError, model.ScriptError, err.Error(), nil
+		}
+		var callErr error
+		value, callErr = rt.CallFunction(mainValue, moejs.Undefined(), ctxValue)
+		if callErr != nil {
+			return r.classify(rt, callErr)
+		}
 	}
-
-	interrupted := make(chan struct{})
-	stop := context.AfterFunc(r.ctx, func() {
-		rt.Interrupt(context.Cause(r.ctx))
-		close(interrupted)
-	})
-	value, callErr := rt.CallFunction(mainValue, moejs.Undefined(), ctxValue)
-	if !stop() {
-		<-interrupted
-	}
-	rt.ClearInterrupt()
 	stats := rt.Stats()
 	r.memoryBytes = stats.RequestAllocatedBytes
-	if callErr != nil {
-		return r.classify(rt, callErr)
-	}
 	output, err := rt.AppendJSON(nil, value)
 	if err != nil {
 		return model.ScriptError, model.ScriptError, fmt.Sprintf("返回值序列化失败: %v", err), nil

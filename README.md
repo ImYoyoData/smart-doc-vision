@@ -374,7 +374,7 @@ AI 对接助手按触发方式拆分：每个方式都有独立的专用提示�
 | HTTP | method、url、params、headers、body、timeout_ms | `params` 与 `headers` 每行一个 `key: value`；body 留空时发送标准结果 JSON |
 | WebSocket | url、headers、payload、timeout_ms | 仅支持 `ws://` / `wss://`，headers 用于握手鉴权，payload 留空时发送标准结果 JSON |
 | Redis | connection_id、db、command、target、payload | 必须选择项目 Redis 连接；db 0~255；command 支持 `publish` / `set` / `xadd` |
-| JS 脚本 | remark、script、timeout_ms、memory_mb | 入口 `function main(ctx)`；可用 `ctx.mysql` / `ctx.pg` / `ctx.http` / `ctx.crypto` / `ctx.secret`，执行日志按审核配置查看 |
+| JS 脚本 | remark、script、timeout_ms、memory_mb | 直接写顶层代码，平台注入全局 `ctx`（无需 `main`）；可用 `ctx.mysql` / `ctx.pg` / `ctx.http` / `ctx.crypto` / `ctx.secret`，执行日志按审核配置查看 |
 
 动作支持模板变量：`${task_no}`、`${task_id}`、`${biz_key}`、`${source_type}`、`${project_code}`、`${audit_code}`、`${result}`、`${summary}`、`${reasons}`、`${labels}`、`${risk_level}`、`${score}`、`${category}`、`${category_name}`、`${category_confidence}`、`${review_note}`。`on_error` 可选 `continue` / `stop` / `to_review`，执行结果写入任务详情的 `routes` 字段。后台已提供结构化编辑器，也可切换「高级 JSON」直接编辑；编辑器右上角的「变量说明」可查看每个变量的含义与取值形式。
 
@@ -390,21 +390,22 @@ AI 对接助手按触发方式拆分：每个方式都有独立的专用提示�
 
 #### JS 脚本动作
 
-JS 脚本动作使用纯 Go 的 moejs 运行时，入口固定为：
+JS 脚本动作使用纯 Go 的 moejs 运行时。脚本直接写顶层代码，平台已注入全局 `ctx`，不需要定义主函数：
 
 ```js
-function main(ctx) {
-  ctx.log('审核结果', ctx.result)
-  const db = ctx.mysql.connect({
-    host: '10.0.0.12', port: 3306,
-    user: 'svc_audit', password: ctx.secret('BILLING_DB_PASSWORD'),
-    database: 'billing'
-  })
-  db.exec('UPDATE orders SET audit_result = ? WHERE biz_key = ?', [ctx.result, ctx.task.biz_key])
-  db.close()
-  return { ok: true }
-}
+ctx.log('审核结果', ctx.result)
+const db = ctx.mysql.connect({
+  host: '10.0.0.12', port: 3306,
+  user: 'svc_audit', password: ctx.secret('BILLING_DB_PASSWORD'),
+  database: 'billing'
+})
+db.exec('UPDATE orders SET audit_result = ? WHERE biz_key = ?', [ctx.result, ctx.task.biz_key])
+db.close()
+;({ ok: true })
 ```
+
+- 平台记录脚本的完成值，最后一行可放对象/数组表达式，建议在行首加分号，避免被自动分号插入解析成上一行的函数调用。
+- 旧脚本仍兼容 `function main(ctx) { ... }`；定义后平台会调用并记录其返回值。
 
 - 脚本只能使用宿主注入的 `ctx` API，不提供文件读写、进程、socket、`eval`、`import`、定时器。
 - 支持 MySQL / PostgreSQL 独立连接（脚本结束自动关闭）、HTTP/HTTPS 请求（不支持 socket 长连接）、Base64/Hex/SHA-256/HMAC/随机数/UUID。
@@ -412,7 +413,7 @@ function main(ctx) {
 - 每次执行记录开始时间、耗时、状态（成功/脚本错误/超时/OOM/宿主错误）、完整日志和返回值，可在审核配置的「脚本日志」查看。
 - 凭据建议使用项目密钥 `ctx.secret('NAME')`，不要写明文密码。
 - 原 `mysql` 结果动作已移除；数据库写入请使用 JS 脚本的 `ctx.mysql` / `ctx.pg`。
-- 编辑器提供语法高亮、`ctx` API 补全和右侧 AI 脚本助手；AI 只生成/修改脚本，必须人工点击「应用到编辑器」并保存后才生效。
+- 编辑器提供语法高亮、`ctx` API 补全和右侧 AI 脚本助手。AI 是可读写编辑器的多轮 Agent：会按需读取/替换/插入/删除行、联网搜索和读取网页；不确定时会先提问。修改会直接写入编辑器，可用 Ctrl+Z 撤销，保存后才会落库；查询/解释类请求不会改动脚本。
 
 ### MySQL 说明
 

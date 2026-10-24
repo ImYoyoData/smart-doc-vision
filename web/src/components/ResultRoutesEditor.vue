@@ -506,7 +506,7 @@ function actionTitle(action: RouteAction, index: number): string {
               <span class="js-script-label">脚本</span>
               <span v-if="action.script" class="js-script-lines">{{ scriptLineCount(action.script) }} 行</span>
               <span v-else class="js-script-empty">尚未编写脚本</span>
-              <n-button size="small" type="primary" secondary title="入口 function main(ctx)，最多 64KB" @click="openScriptEditor(action)">编辑脚本</n-button>
+              <n-button size="small" type="primary" secondary title="直接编写顶层代码，全局 ctx 可用，最多 64KB" @click="openScriptEditor(action)">编辑脚本</n-button>
             </div>
           </div>
         </div>
