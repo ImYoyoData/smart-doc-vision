@@ -43,6 +43,17 @@ watch(() => props.show, (visible) => {
   }
 })
 
+const NAME_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+
+function generateSecretName() {
+  const bytes = new Uint8Array(10)
+  crypto.getRandomValues(bytes)
+  let suffix = ''
+  for (const byte of bytes) suffix += NAME_ALPHABET[byte % NAME_ALPHABET.length]
+  name.value = `SECRET_${suffix}`
+  error.value = ''
+}
+
 function generateSecretValue() {
   const bytes = new Uint8Array(32)
   crypto.getRandomValues(bytes)
@@ -121,8 +132,15 @@ function remove(secret: ProjectSecret) {
 
         <div class="secret-form">
           <div class="field">
-            <label>密钥名称</label>
+            <div class="field-head">
+              <label>密钥名称</label>
+              <n-button text type="primary" size="tiny" @click="generateSecretName">
+                <template #icon><n-icon :component="RefreshOutline" /></template>
+                随机生成
+              </n-button>
+            </div>
             <n-input v-model:value="name" placeholder="例如 BILLING_DB_PASSWORD" maxlength="64" />
+            <div class="form-hint">点击「随机生成」填充 SECRET_ 开头的随机名称。</div>
           </div>
           <div class="field">
             <div class="field-head">
