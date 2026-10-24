@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
-import { NButton, NInput, NModal, useDialog, useMessage } from 'naive-ui'
-import { AddOutline, TrashOutline } from '@vicons/ionicons5'
+import { NButton, NIcon, NInput, NModal, useDialog, useMessage } from 'naive-ui'
+import { AddOutline, RefreshOutline, TrashOutline } from '@vicons/ionicons5'
 import { projectApi } from '@/api'
 import type { ProjectSecret } from '@/api/types'
 
@@ -42,6 +42,15 @@ watch(() => props.show, (visible) => {
     void load()
   }
 })
+
+function generateSecretValue() {
+  const bytes = new Uint8Array(32)
+  crypto.getRandomValues(bytes)
+  let binary = ''
+  for (const byte of bytes) binary += String.fromCharCode(byte)
+  value.value = btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+  error.value = ''
+}
 
 async function save() {
   const secretName = name.value.trim()
@@ -116,8 +125,15 @@ function remove(secret: ProjectSecret) {
             <n-input v-model:value="name" placeholder="例如 BILLING_DB_PASSWORD" maxlength="64" />
           </div>
           <div class="field">
-            <label>密钥值</label>
+            <div class="field-head">
+              <label>密钥值</label>
+              <n-button text type="primary" size="tiny" @click="generateSecretValue">
+                <template #icon><n-icon :component="RefreshOutline" /></template>
+                随机生成
+              </n-button>
+            </div>
             <n-input v-model:value="value" type="password" show-password-on="click" placeholder="输入或更新密钥值" />
+            <div class="form-hint">点击「随机生成」填充 32 字节安全随机值（Base64URL，43 个字符）。</div>
           </div>
           <n-button type="primary" :loading="saving" @click="save">
             <template #icon><AddOutline /></template>
@@ -198,6 +214,25 @@ function remove(secret: ProjectSecret) {
   color: var(--text);
   font-size: 11.5px;
   font-weight: 550;
+}
+
+.field-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.field-head label {
+  margin-bottom: 0;
+}
+
+.form-hint {
+  margin-top: 5px;
+  color: var(--muted-light);
+  font-size: 9.5px;
+  line-height: 1.5;
 }
 
 .modal-error {
