@@ -119,6 +119,16 @@ function providerUnavailable(provider: Provider) {
   return provider.status === 'ACTIVE' && !providerAvailable(provider)
 }
 
+function providerRank(provider: Provider) {
+  if (provider.status === 'ACTIVE' && providerAvailable(provider)) return 0
+  if (provider.status === 'ACTIVE') return 1
+  return 2
+}
+
+const sortedProviders = computed(() =>
+  [...providers.value].sort((a, b) => providerRank(a) - providerRank(b)),
+)
+
 const statusFilters = computed(() => {
   const list = providers.value
   return [
@@ -136,7 +146,7 @@ const statusFilters = computed(() => {
   ]
 })
 
-const filteredProviders = computed(() => providers.value.filter((provider) => {
+const filteredProviders = computed(() => sortedProviders.value.filter((provider) => {
   if (kindFilter.value === 'general' && provider.kind === 'JEV') return false
   if (kindFilter.value === 'JEV' && provider.kind !== 'JEV') return false
   if (statusFilter.value === 'active') return provider.status === 'ACTIVE'
@@ -691,12 +701,6 @@ onMounted(load)
             </n-button>
           </div>
         </article>
-
-        <button class="provider-add-card" type="button" @click="openCreate">
-          <span class="add-circle"><AddOutline /></span>
-          <strong>接入新的模型</strong>
-          <span>OpenAI / Anthropic / JEV System One</span>
-        </button>
       </div>
 
       <EmptyState
@@ -1399,59 +1403,6 @@ onMounted(load)
 .provider-actions .delete-btn {
   margin-left: auto;
   color: var(--muted-light);
-}
-
-.provider-add-card {
-  display: flex;
-  min-height: 250px;
-  align-items: center;
-  justify-content: center;
-  flex-direction: column;
-  gap: 6px;
-  border: 1px dashed #d5ddea;
-  border-radius: 17px;
-  background: rgba(255, 255, 255, 0.55);
-  color: var(--muted);
-  cursor: pointer;
-  transition: all 0.18s ease;
-}
-
-.provider-add-card:hover {
-  border-color: #aac4f8;
-  background: #f9fbff;
-  color: var(--brand);
-}
-
-.add-circle {
-  display: flex;
-  width: 40px;
-  height: 40px;
-  align-items: center;
-  justify-content: center;
-  margin-bottom: 4px;
-  border-radius: 50%;
-  background: #f1f5fb;
-  color: var(--muted);
-}
-
-.provider-add-card:hover .add-circle {
-  background: var(--brand-soft);
-  color: var(--brand);
-}
-
-.add-circle :deep(svg) {
-  width: 18px;
-  height: 18px;
-}
-
-.provider-add-card strong {
-  font-size: 12.5px;
-  font-weight: 550;
-}
-
-.provider-add-card > span:last-child {
-  color: var(--muted-light);
-  font-size: 10px;
 }
 
 .modal-head {
