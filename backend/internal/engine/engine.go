@@ -415,15 +415,14 @@ func (e *Engine) process(taskID uint64) {
 		"finished_at":   finished,
 		"updated_at":    time.Now(),
 	}
-	if err := e.db.Model(&model.Task{}).Where("id = ?", task.ID).Updates(updates).Error; err != nil {
-		log.Printf("update task %d: %v", task.ID, err)
-		return
-	}
 	message := fmt.Sprintf("审核完成，结论 %s（规则：%s）", finalResult, emptyDash(ruleResult.MatchedRule))
 	if reviewErr != nil {
 		message = fmt.Sprintf("模型异常，按兜底策略给出 %s", finalResult)
 	}
-	e.event(task, model.TaskProcessing, status, message, duration)
+	if err := e.updateTaskAndEvent(task, updates, model.TaskProcessing, status, message, duration); err != nil {
+		log.Printf("update task %d: %v", task.ID, err)
+		return
+	}
 	e.writeAudit(task, "TASK_COMPLETE", map[string]any{
 		"result": finalResult, "status": status, "provider": verdict.Provider, "model": verdict.Model,
 	})
@@ -449,6 +448,26 @@ func (e *Engine) fail(task model.Task, err error) {
 	}).Error
 	e.event(task, model.TaskProcessing, model.TaskFailed, msg, duration)
 	e.writeAudit(task, "TASK_FAILED", map[string]any{"error": msg})
+}
+
+// updateTaskAndEvent commits the status transition and its timeline event in
+// one transaction so API readers never observe a terminal status without the
+// matching event.
+func (e *Engine) updateTaskAndEvent(task model.Task, updates map[string]any, from, to, message string, cost int64) error {
+	ev := model.TaskEvent{
+		TaskID: task.ID, ProjectID: task.ProjectID,
+		FromStatus: from, ToStatus: to,
+		Message: truncate(message, 500), CostMS: cost,
+	}
+	return e.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&model.Task{}).Where("id = ?", task.ID).Updates(updates).Error; err != nil {
+			return err
+		}
+		if err := tx.Create(&ev).Error; err != nil {
+			log.Printf("write task event: %v", err)
+		}
+		return nil
+	})
 }
 
 func (e *Engine) event(task model.Task, from, to, message string, cost int64) {
