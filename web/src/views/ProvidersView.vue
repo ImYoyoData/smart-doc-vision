@@ -5,6 +5,7 @@ import {
   NInput,
   NInputNumber,
   NModal,
+  NPopover,
   NSelect,
   NSwitch,
   useDialog,
@@ -16,6 +17,7 @@ import {
   CloudOutline,
   CloseCircleOutline,
   FlashOutline,
+  HelpCircleOutline,
   ImagesOutline,
   LinkOutline,
   RefreshOutline,
@@ -96,6 +98,57 @@ function providerBreakerLabel(provider: Provider) {
   if (remaining <= 0) return '等待恢复探测'
   const minutes = Math.ceil(remaining / 60000)
   return minutes <= 1 ? '即将重试' : `${minutes} 分钟后重试`
+}
+
+type ProviderStatusFilter = 'all' | 'active' | 'available' | 'unavailable' | 'disabled'
+type ProviderKindFilter = 'all' | 'general' | 'JEV'
+
+const statusFilter = ref<ProviderStatusFilter>('all')
+const kindFilter = ref<ProviderKindFilter>('all')
+const kindFilterOptions = [
+  { label: '全部类型', value: 'all' },
+  { label: '通用大模型', value: 'general' },
+  { label: 'JEV 决策模型', value: 'JEV' },
+]
+
+function providerAvailable(provider: Provider) {
+  return provider.status === 'ACTIVE' && provider.last_test_ok && !providerBreakerOpen(provider)
+}
+
+function providerUnavailable(provider: Provider) {
+  return provider.status === 'ACTIVE' && !providerAvailable(provider)
+}
+
+const statusFilters = computed(() => {
+  const list = providers.value
+  return [
+    { key: 'all' as const, label: '全部', count: list.length, tone: 'all' },
+    { key: 'active' as const, label: '已启用', count: list.filter((provider) => provider.status === 'ACTIVE').length, tone: 'enabled' },
+    { key: 'available' as const, label: '可用', count: list.filter(providerAvailable).length, tone: 'available' },
+    {
+      key: 'unavailable' as const,
+      label: '不可用',
+      count: list.filter(providerUnavailable).length,
+      tone: 'unavailable',
+      hint: '已启用但测试失败、尚未测试或熔断中',
+    },
+    { key: 'disabled' as const, label: '已停用', count: list.filter((provider) => provider.status !== 'ACTIVE').length, tone: 'disabled' },
+  ]
+})
+
+const filteredProviders = computed(() => providers.value.filter((provider) => {
+  if (kindFilter.value === 'general' && provider.kind === 'JEV') return false
+  if (kindFilter.value === 'JEV' && provider.kind !== 'JEV') return false
+  if (statusFilter.value === 'active') return provider.status === 'ACTIVE'
+  if (statusFilter.value === 'available') return providerAvailable(provider)
+  if (statusFilter.value === 'unavailable') return providerUnavailable(provider)
+  if (statusFilter.value === 'disabled') return provider.status !== 'ACTIVE'
+  return true
+}))
+
+function resetProviderFilters() {
+  statusFilter.value = 'all'
+  kindFilter.value = 'all'
 }
 
 watch(() => form.supportsThinking, (value) => {
@@ -449,7 +502,10 @@ function formatTime(value?: string | null) {
   return value.replace('T', ' ').slice(0, 19)
 }
 
-watch(() => workspace.currentProjectId, load)
+watch(() => workspace.currentProjectId, () => {
+  resetProviderFilters()
+  void load()
+})
 onMounted(load)
 </script>
 
@@ -464,6 +520,30 @@ onMounted(load)
         <n-button quaternary circle :loading="loading" @click="load">
           <template #icon><RefreshOutline /></template>
         </n-button>
+        <n-popover trigger="click" placement="bottom-end" :width="440" :show-arrow="false">
+          <template #trigger>
+            <n-button quaternary>
+              <template #icon><HelpCircleOutline /></template>
+              类型说明
+            </n-button>
+          </template>
+          <div class="mode-help">
+            <div class="mode-card generic">
+              <span class="mode-icon"><CloudOutline /></span>
+              <div>
+                <div class="mode-title">通用大模型 <span>OpenAI 兼容 · Anthropic</span></div>
+                <p>统一的大模型分类，协议只是不同的 API 接入方式；按模型能力决定是否支持图片理解与思考。</p>
+              </div>
+            </div>
+            <div class="mode-card jev">
+              <span class="mode-icon"><SparklesOutline /></span>
+              <div>
+                <div class="mode-title">JEV 决策模型 <span>TypeSafe System One</span></div>
+                <p>结构化裁决引擎，原生支持文本 + 图片，输出 Choice / Score / Noul 与置信度，不生成自由文本。</p>
+              </div>
+            </div>
+          </div>
+        </n-popover>
         <n-button type="primary" @click="openCreate">
           <template #icon><AddOutline /></template>
           新增模型接入
@@ -471,33 +551,46 @@ onMounted(load)
       </template>
     </PageHeader>
 
-    <section class="mode-banner">
-      <div class="mode-card generic">
-        <span class="mode-icon"><CloudOutline /></span>
-        <div>
-          <div class="mode-title">通用大模型 <span>OpenAI 兼容 · Anthropic</span></div>
-          <p>统一的大模型分类，协议只是不同的 API 接入方式；按模型能力决定是否支持图片理解与思考。</p>
-        </div>
-        <span class="mode-badge">CHAT · MESSAGES</span>
-      </div>
-      <div class="mode-card jev">
-        <span class="mode-icon"><SparklesOutline /></span>
-        <div>
-          <div class="mode-title">JEV 决策模型 <span>TypeSafe System One</span></div>
-          <p>结构化裁决引擎，原生支持文本 + 图片，输出 Choice / Score / Noul 与置信度，不生成自由文本。</p>
-        </div>
-        <span class="mode-badge">/v1/systemone</span>
-      </div>
-    </section>
-
     <div v-if="!workspace.currentProjectId" class="panel">
       <EmptyState title="请选择项目" description="模型接入按项目隔离，先在左上角选择一个项目。" action="前往项目空间" @action="$router.push({ name: 'projects' })" />
     </div>
 
     <template v-else>
-      <div class="provider-grid fade-list">
+      <div v-if="providers.length" class="provider-summary">
+        <div class="summary-chips">
+          <span class="summary-title">状态概览</span>
+          <button
+            v-for="filter in statusFilters"
+            :key="filter.key"
+            type="button"
+            class="summary-chip"
+            :class="[filter.tone, { 'is-selected': statusFilter === filter.key }]"
+            :title="filter.hint"
+            :aria-pressed="statusFilter === filter.key"
+            @click="statusFilter = filter.key"
+          >
+            <span class="summary-dot"></span>
+            <span>{{ filter.label }}</span>
+            <strong>{{ filter.count }}</strong>
+          </button>
+        </div>
+        <div class="summary-actions">
+          <n-button
+            v-if="statusFilter !== 'all' || kindFilter !== 'all'"
+            text
+            size="tiny"
+            type="primary"
+            @click="resetProviderFilters"
+          >
+            重置筛选
+          </n-button>
+          <n-select v-model:value="kindFilter" :options="kindFilterOptions" size="small" class="summary-kind-select" />
+        </div>
+      </div>
+
+      <div v-if="filteredProviders.length" class="provider-grid fade-list">
         <article
-          v-for="provider in providers"
+          v-for="provider in filteredProviders"
           :key="provider.id"
           class="provider-card"
           :class="provider.kind === 'JEV' ? 'jev' : provider.kind === 'ANTHROPIC' ? 'anthropic' : 'generic'"
@@ -511,6 +604,7 @@ onMounted(load)
               <div class="provider-name-row">
                 <h3>{{ provider.name }}</h3>
                 <StatusTag :status="provider.kind" type="kind" />
+                <StatusTag :status="provider.status" type="provider" />
                 <span v-if="providerBreakerOpen(provider)" class="provider-breaker" :title="provider.breaker_reason">
                   熔断中 · {{ providerBreakerLabel(provider) }}
                 </span>
@@ -604,6 +698,14 @@ onMounted(load)
           <span>OpenAI / Anthropic / JEV System One</span>
         </button>
       </div>
+
+      <EmptyState
+        v-else-if="!loading && providers.length > 0"
+        title="没有符合条件的模型接入"
+        description="调整状态或类型筛选后再试，或清除筛选查看全部模型。"
+        action="清除筛选"
+        @action="resetProviderFilters"
+      />
 
       <EmptyState
         v-if="!loading && providers.length === 0"
@@ -854,21 +956,23 @@ onMounted(load)
 </template>
 
 <style scoped>
-.mode-banner {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-  margin-bottom: 18px;
+.mode-help {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
-.mode-card.anthropic {
-  border-color: #dff3ec;
-  background: linear-gradient(120deg, #f7fffc, #fff);
+.mode-help .mode-card {
+  padding: 12px 14px;
+  box-shadow: none;
 }
 
-.mode-card.anthropic .mode-icon {
-  background: #e8f8f2;
-  color: #0f766e;
+.mode-help .mode-title {
+  font-size: 12px;
+}
+
+.mode-help .mode-card p {
+  font-size: 10px;
 }
 
 .provider-modal {
@@ -937,15 +1041,97 @@ onMounted(load)
   line-height: 1.65;
 }
 
-.mode-badge {
+.provider-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.summary-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.summary-title {
+  margin-right: 2px;
+  color: var(--muted-light);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.summary-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
+  transition: border-color 0.16s ease, background 0.16s ease, color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.summary-chip strong {
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.summary-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #cbd5e1;
+}
+
+.summary-chip.enabled .summary-dot {
+  background: var(--brand);
+}
+
+.summary-chip.available .summary-dot {
+  background: var(--green);
+}
+
+.summary-chip.unavailable .summary-dot {
+  background: var(--red);
+}
+
+.summary-chip.disabled .summary-dot {
+  background: var(--muted-light);
+}
+
+.summary-chip:hover {
+  border-color: #c7d9fb;
+  background: #f8fbff;
+}
+
+.summary-chip.is-selected {
+  border-color: var(--brand);
+  background: var(--brand-soft);
+  color: var(--brand-strong);
+  box-shadow: 0 0 0 3px rgba(43, 108, 246, 0.08);
+}
+
+.summary-chip.is-selected strong {
+  color: var(--brand-strong);
+}
+
+.summary-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   margin-left: auto;
-  padding: 2px 7px;
-  border-radius: 6px;
-  background: #f8fafc;
-  color: #94a3b8;
-  font-family: var(--mono);
-  font-size: 8px;
-  white-space: nowrap;
+}
+
+.summary-kind-select {
+  width: 150px;
 }
 
 .provider-grid {
@@ -1018,6 +1204,7 @@ onMounted(load)
 
 .provider-name-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
 }
@@ -1639,15 +1826,8 @@ onMounted(load)
   flex-shrink: 0;
 }
 
-@media (max-width: 1400px) {
-  .mode-badge {
-    display: none;
-  }
-}
-
 @media (max-width: 1100px) {
-  .provider-grid,
-  .mode-banner {
+  .provider-grid {
     grid-template-columns: 1fr;
   }
 }
@@ -1657,6 +1837,21 @@ onMounted(load)
   .config-grid,
   .kind-selector {
     grid-template-columns: 1fr;
+  }
+
+  .provider-summary {
+    align-items: stretch;
+  }
+
+  .summary-actions {
+    width: 100%;
+    margin-left: 0;
+    justify-content: space-between;
+  }
+
+  .summary-kind-select {
+    width: auto;
+    flex: 1;
   }
 
   .provider-modal {
