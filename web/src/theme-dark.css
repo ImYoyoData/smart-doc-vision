@@ -908,3 +908,75 @@ html[data-theme='dark'] .export-summary {
 html[data-theme='dark'] .export-summary span {
   color: var(--muted) !important;
 }
+
+/* Result routes editor (inside the audit edit modal) */
+html[data-theme='dark'] .routes-editor {
+  background: var(--surface-2) !important;
+  border-color: var(--border) !important;
+}
+
+html[data-theme='dark'] :is(.toolbar-note code, .routes-footer code) {
+  background: var(--surface-strong) !important;
+  color: var(--text) !important;
+}
+
+html[data-theme='dark'] .vars-trigger {
+  color: var(--text) !important;
+}
+
+html[data-theme='dark'] .vars-trigger:hover {
+  border-color: var(--brand-border) !important;
+  background: var(--brand-soft) !important;
+  color: var(--brand-strong) !important;
+}
+
+html[data-theme='dark'] .routes-editor .field label {
+  color: var(--text) !important;
+}
+
+html[data-theme='dark'] .routes-error {
+  color: var(--red) !important;
+}
+
+html[data-theme='dark'] .js-script-row {
+  background: var(--surface-soft) !important;
+  border-color: var(--border) !important;
+}
+
+html[data-theme='dark'] .js-script-preview {
+  color: var(--text) !important;
+}
+
+/* Teleported variable reference popover */
+html[data-theme='dark'] .vars-panel {
+  color: var(--text) !important;
+}
+
+html[data-theme='dark'] :is(.vars-intro, .vars-foot) {
+  color: var(--muted) !important;
+}
+
+html[data-theme='dark'] .vars-foot {
+  border-top-color: var(--border) !important;
+}
+
+html[data-theme='dark'] .vars-group-title {
+  color: var(--ink) !important;
+}
+
+html[data-theme='dark'] .vars-item {
+  border-top-color: var(--border) !important;
+}
+
+html[data-theme='dark'] .vars-item-desc {
+  color: var(--text) !important;
+}
+
+html[data-theme='dark'] .vars-item-form {
+  color: var(--muted) !important;
+}
+
+html[data-theme='dark'] .vars-panel code {
+  background: var(--surface-strong) !important;
+  color: var(--text) !important;
+}
