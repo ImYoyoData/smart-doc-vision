@@ -40,6 +40,8 @@ const workspace = useWorkspaceStore()
 const router = useRouter()
 const connections = ref<RedisConnection[]>([])
 const loadingConnections = ref(false)
+const projectJsMemoryMB = computed(() => workspace.currentProject?.js_max_memory_mb ?? 64)
+const projectJsTimeoutMS = computed(() => workspace.currentProject?.js_timeout_ms ?? 5000)
 
 const connectionOptions = computed(() => connections.value.map((connection) => {
   const unavailable = connection.status !== 'ACTIVE' || !connection.last_test_ok || connection.health !== 'OK'
@@ -283,8 +285,8 @@ function openScriptEditor(action: RouteAction) {
 function scriptPreview(script?: string) {
   const text = (script || '').trim()
   if (!text) return ''
-  const lines = text.split(/\r?\n/).slice(0, 3).join('\n')
-  return lines.length > 220 ? `${lines.slice(0, 220)}…` : lines
+  const firstLine = text.split(/\r?\n/).find((line) => line.trim()) || ''
+  return firstLine.length > 160 ? `${firstLine.slice(0, 160)}…` : firstLine
 }
 
 function toggleAdvanced(value: boolean) {
@@ -389,7 +391,7 @@ function actionTitle(action: RouteAction, index: number): string {
           暂无动作。该结论只落库，不向外部发送通知。
         </div>
 
-        <div v-for="(action, index) in draft[item.key].actions" :key="index" class="action-card">
+        <div v-for="(action, index) in draft[item.key].actions" :key="index" class="action-card" :class="{ 'js-action-card': action.type === 'js' }">
           <div class="action-head">
             <div class="action-title">
               <n-tag size="small" :bordered="false" type="info">{{ action.type.toUpperCase() }}</n-tag>
@@ -483,26 +485,29 @@ function actionTitle(action: RouteAction, index: number): string {
             </div>
           </div>
 
-          <div v-else-if="action.type === 'js'" class="action-grid">
-            <div class="field">
-              <label>备注 <span>显示在动作列表和脚本日志中</span></label>
-              <n-input v-model:value="action.remark" size="small" maxlength="128" placeholder="例如 写回账单系统" />
-            </div>
-            <div class="field">
-              <label>脚本 <span>入口 function main(ctx)，最多 64KB</span></label>
-              <div class="script-preview-box">
-                <pre v-if="action.script" class="script-preview">{{ scriptPreview(action.script) }}</pre>
-                <span v-else class="muted">尚未编写脚本</span>
-                <n-button size="small" type="primary" secondary @click="openScriptEditor(action)">编辑脚本</n-button>
+          <div v-else-if="action.type === 'js'" class="action-grid js-action-grid">
+            <div class="js-action-toolbar">
+              <n-input
+                v-model:value="action.remark"
+                size="small"
+                maxlength="128"
+                placeholder="脚本备注（可选，显示在日志中）"
+                class="js-remark-input"
+              />
+              <div class="field-inline js-limits">
+                <span>超时</span>
+                <n-input-number v-model:value="action.timeout_ms" size="small" :min="500" :max="60000" :step="500" style="width: 110px" />
+                <span class="muted">毫秒（项目上限 {{ projectJsTimeoutMS }}）</span>
+                <span>内存</span>
+                <n-input-number v-model:value="action.memory_mb" size="small" :min="0" :max="512" :step="8" style="width: 90px" />
+                <span class="muted">MB（0 或超限按项目上限 {{ projectJsMemoryMB }}）</span>
               </div>
             </div>
-            <div class="field-inline">
-              <span>超时</span>
-              <n-input-number v-model:value="action.timeout_ms" size="small" :min="500" :max="60000" :step="500" style="width: 130px" />
-              <span class="muted">毫秒</span>
-              <span>内存</span>
-              <n-input-number v-model:value="action.memory_mb" size="small" :min="0" :max="512" :step="8" style="width: 110px" />
-              <span class="muted">MB（0 表示使用项目上限）</span>
+            <div class="js-script-row">
+              <span class="js-script-label">脚本</span>
+              <pre v-if="action.script" class="js-script-preview">{{ scriptPreview(action.script) }}</pre>
+              <span v-else class="js-script-empty">尚未编写脚本</span>
+              <n-button size="small" type="primary" secondary title="入口 function main(ctx)，最多 64KB" @click="openScriptEditor(action)">编辑脚本</n-button>
             </div>
           </div>
         </div>
@@ -611,6 +616,12 @@ function actionTitle(action: RouteAction, index: number): string {
   padding: 10px 12px;
   margin-bottom: 10px;
 }
+.action-card.js-action-card {
+  padding: 8px 10px;
+}
+.js-action-card .action-head {
+  margin-bottom: 6px;
+}
 .action-head {
   display: flex;
   align-items: center;
@@ -683,6 +694,62 @@ function actionTitle(action: RouteAction, index: number): string {
     align-items: stretch;
   }
 }
+.js-action-grid {
+  gap: 6px;
+}
+.js-action-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.js-remark-input {
+  flex: 1 1 220px;
+  min-width: 180px;
+}
+.js-limits {
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 12px;
+}
+.js-limits .muted {
+  font-size: 11px;
+}
+.js-script-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: #f8fafd;
+}
+.js-script-label {
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+.js-script-preview {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: #33415c;
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.js-script-empty {
+  flex: 1;
+  color: var(--muted-light);
+  font-size: 10.5px;
+}
+.js-script-row :deep(.n-button) {
+  flex-shrink: 0;
+}
 </style>
 
 <!-- popover 内容会被 teleport 到 body，scoped 样式命中不到，故用唯一前缀类名单独声明。 -->
@@ -742,29 +809,5 @@ function actionTitle(action: RouteAction, index: number): string {
   border-radius: 4px;
   background: #eef2f8;
   font-size: 11px;
-}
-.script-preview-box {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 8px 10px;
-  border: 1px solid #e6ecf5;
-  border-radius: 8px;
-  background: #f8fafd;
-}
-.script-preview-box .script-preview {
-  flex: 1;
-  margin: 0;
-  overflow: hidden;
-  color: #33415c;
-  font-family: var(--mono);
-  font-size: 10px;
-  line-height: 1.6;
-  white-space: pre-wrap;
-}
-.script-preview-box .muted {
-  flex: 1;
-  color: var(--muted-light);
-  font-size: 10px;
 }
 </style>
