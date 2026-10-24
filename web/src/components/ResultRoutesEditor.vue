@@ -282,11 +282,10 @@ function openScriptEditor(action: RouteAction) {
   scriptEditorShow.value = true
 }
 
-function scriptPreview(script?: string) {
+function scriptLineCount(script?: string) {
   const text = (script || '').trim()
-  if (!text) return ''
-  const firstLine = text.split(/\r?\n/).find((line) => line.trim()) || ''
-  return firstLine.length > 160 ? `${firstLine.slice(0, 160)}…` : firstLine
+  if (!text) return 0
+  return text.split(/\r?\n/).length
 }
 
 function toggleAdvanced(value: boolean) {
@@ -505,7 +504,7 @@ function actionTitle(action: RouteAction, index: number): string {
             </div>
             <div class="js-script-row">
               <span class="js-script-label">脚本</span>
-              <pre v-if="action.script" class="js-script-preview">{{ scriptPreview(action.script) }}</pre>
+              <span v-if="action.script" class="js-script-lines">{{ scriptLineCount(action.script) }} 行</span>
               <span v-else class="js-script-empty">尚未编写脚本</span>
               <n-button size="small" type="primary" secondary title="入口 function main(ctx)，最多 64KB" @click="openScriptEditor(action)">编辑脚本</n-button>
             </div>
@@ -730,17 +729,11 @@ function actionTitle(action: RouteAction, index: number): string {
   color: var(--muted);
   font-size: 11px;
 }
-.js-script-preview {
+.js-script-lines {
   flex: 1;
-  min-width: 0;
-  margin: 0;
-  overflow: hidden;
-  color: #33415c;
+  color: var(--muted);
   font-family: var(--mono);
-  font-size: 10px;
-  line-height: 1.5;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-size: 10.5px;
 }
 .js-script-empty {
   flex: 1;

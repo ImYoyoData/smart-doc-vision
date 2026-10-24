@@ -976,8 +976,8 @@ html[data-theme='dark'] .js-script-row {
   border-color: var(--border) !important;
 }
 
-html[data-theme='dark'] .js-script-preview {
-  color: var(--text) !important;
+html[data-theme='dark'] .js-script-lines {
+  color: var(--muted) !important;
 }
 
 /* Teleported variable reference popover */
