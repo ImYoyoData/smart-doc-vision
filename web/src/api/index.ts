@@ -19,7 +19,9 @@ import type {
   Project,
   Provider,
   ProviderModel,
+  ProjectSecret,
   RecycleItem,
+  ScriptExecution,
   ReviewSummary,
   RoleDefinition,
   RuleTemplate,
@@ -65,6 +67,11 @@ export const projectApi = {
   setStatus: (id: number, status: string, reason?: string) => patch<Project>(`/projects/${id}/status`, { status, reason }),
   remove: (id: number) => del<{ deleted: boolean }>(`/projects/${id}`),
   restore: (id: number) => post<unknown>(`/projects/${id}/restore`),
+  secrets: (id: number) => get<{ items: ProjectSecret[]; total: number }>(`/projects/${id}/secrets`),
+  setSecret: (id: number, name: string, value: string) =>
+    put<{ name: string; updated: boolean }>(`/projects/${id}/secrets/${encodeURIComponent(name)}`, { value }),
+  deleteSecret: (id: number, name: string) =>
+    del<{ deleted: boolean }>(`/projects/${id}/secrets/${encodeURIComponent(name)}`),
 }
 
 export const credentialApi = {
@@ -115,6 +122,15 @@ export const auditApi = {
     requestBlob({ method: 'GET', url: `/audits/${id}/export`, params }),
   updateTrigger: (id: number, payload: TriggerUpdate) => put<TriggerSource>(`/trigger-sources/${id}`, payload),
   testTrigger: (id: number) => post<Record<string, unknown>>(`/trigger-sources/${id}/test`),
+  scriptExecutions: (id: number, params?: Record<string, unknown>) =>
+    get<Paged<ScriptExecution>>(`/audits/${id}/script-executions`, params),
+  scriptExecution: (id: number) => get<ScriptExecution>(`/script-executions/${id}`),
+  clearScriptExecutions: (id: number) => del<unknown>(`/audits/${id}/script-executions`),
+}
+
+export const scriptApi = {
+  assistantStream: (payload: Record<string, unknown>, handlers: SSEHandlers) =>
+    postSSE('/scripts/assistant/stream', payload, handlers),
 }
 
 export const taskApi = {

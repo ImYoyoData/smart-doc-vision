@@ -776,9 +776,9 @@ type routeActionInput struct {
 	Command   string            `json:"command"`
 	Target    string            `json:"target"`
 	Payload   string            `json:"payload"`
-	DSNEnv    string            `json:"dsn_env"`
-	Query     string            `json:"query"`
-	Args      []any             `json:"args"`
+	Remark    string            `json:"remark"`
+	Script    string            `json:"script"`
+	MemoryMB  int               `json:"memory_mb"`
 }
 
 type resultRouteInput struct {
@@ -804,8 +804,12 @@ func validateRoutesJSON(raw []byte) error {
 		}
 		for index, action := range route.Actions {
 			label := fmt.Sprintf("%s 的第 %d 个动作", result, index+1)
-			if action.TimeoutMS < 0 || action.TimeoutMS > 30000 {
-				return fmt.Errorf("%s timeout_ms 需在 0~30000 之间", label)
+			maxTimeout := 30000
+			if strings.EqualFold(strings.TrimSpace(action.Type), "js") {
+				maxTimeout = 60000
+			}
+			if action.TimeoutMS < 0 || action.TimeoutMS > maxTimeout {
+				return fmt.Errorf("%s timeout_ms 需在 0~%d 之间", label, maxTimeout)
 			}
 			switch strings.ToLower(strings.TrimSpace(action.Type)) {
 			case "http":
@@ -835,15 +839,12 @@ func validateRoutesJSON(raw []byte) error {
 				default:
 					return fmt.Errorf("%s的 command 仅支持 publish/set/xadd", label)
 				}
-			case "mysql":
-				if strings.TrimSpace(action.DSNEnv) == "" {
-					return fmt.Errorf("%s缺少 dsn_env", label)
-				}
-				if strings.TrimSpace(action.Query) == "" {
-					return fmt.Errorf("%s缺少 query", label)
+			case "js":
+				if err := validateJSActionInput(label, action); err != nil {
+					return err
 				}
 			default:
-				return fmt.Errorf("%s的类型 %q 不合法，仅支持 http/websocket/redis/mysql", label, action.Type)
+				return fmt.Errorf("%s的类型 %q 不合法，仅支持 http/websocket/redis/js", label, action.Type)
 			}
 		}
 	}

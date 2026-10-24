@@ -541,7 +541,7 @@ if not hmac.compare_digest(expected, request.headers["X-SmartDoc-Signature"]):
 | http | url | method、params、headers、body、timeout_ms | params/headers 为字符串字典；body 留空发送标准结果 JSON |
 | websocket | url（ws/wss） | headers、payload、timeout_ms | headers 用于握手鉴权；payload 留空发送标准结果 JSON |
 | redis | target | command（publish/set/xadd）、payload | 写入平台 Redis DB 3；payload 留空发送标准结果 JSON |
-| mysql | dsn_env、query | args | DSN 从服务端环境变量读取；query 使用 `?` 占位符 |
+| js | script | remark、timeout_ms、memory_mb | 入口 `function main(ctx)`；可用 `ctx.mysql` / `ctx.pg` / `ctx.http` / `ctx.crypto` / `ctx.secret`；不提供文件、socket、eval、定时器 |
 
 每个结论可配置 `on_error`：`continue` 继续执行、`stop` 停止后续动作、`to_review` 转人工复核。模板变量：`${task_no}`、`${task_id}`、`${biz_key}`、`${source_type}`、`${project_code}`、`${project_id}`、`${audit_code}`、`${audit_id}`、`${result}`、`${summary}`、`${reasons}`、`${labels}`、`${risk_level}`、`${score}`、`${category}`、`${category_name}`、`${category_confidence}`、`${review_note}`。
 

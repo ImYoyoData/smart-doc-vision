@@ -64,6 +64,9 @@ type Engine struct {
 	rrIndex    int
 	pendingN   int
 	wake       chan struct{}
+
+	scriptMu    sync.Mutex
+	scriptSlots map[uint64]chan struct{}
 }
 
 func New(db *gorm.DB, cache *redis.Client, cipher *security.Cipher, cfg config.Config) *Engine {

@@ -1,0 +1,188 @@
+<script setup lang="ts">
+import { ref, watch } from 'vue'
+import { NButton, NInput, NModal, useDialog, useMessage } from 'naive-ui'
+import { AddOutline, TrashOutline } from '@vicons/ionicons5'
+import { projectApi } from '@/api'
+import type { ProjectSecret } from '@/api/types'
+
+const props = defineProps<{
+  show: boolean
+  projectId: number
+  projectName: string
+}>()
+const emit = defineEmits<{ (e: 'update:show', value: boolean): void }>()
+
+const message = useMessage()
+const dialog = useDialog()
+const loading = ref(false)
+const saving = ref(false)
+const error = ref('')
+const items = ref<ProjectSecret[]>([])
+const name = ref('')
+const value = ref('')
+
+async function load() {
+  if (!props.projectId) return
+  loading.value = true
+  error.value = ''
+  try {
+    const data = await projectApi.secrets(props.projectId)
+    items.value = data.items
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : '加载项目密钥失败'
+  } finally {
+    loading.value = false
+  }
+}
+
+watch(() => props.show, (visible) => {
+  if (visible) {
+    name.value = ''
+    value.value = ''
+    void load()
+  }
+})
+
+async function save() {
+  const secretName = name.value.trim()
+  if (!/^[A-Za-z][A-Za-z0-9_]{1,63}$/.test(secretName)) {
+    error.value = '密钥名称需以字母开头，仅含字母、数字、下划线，长度 2~64'
+    return
+  }
+  if (!value.value.trim()) {
+    error.value = '请填写密钥值'
+    return
+  }
+  saving.value = true
+  error.value = ''
+  try {
+    await projectApi.setSecret(props.projectId, secretName, value.value.trim())
+    message.success(`密钥 ${secretName} 已保存`)
+    name.value = ''
+    value.value = ''
+    await load()
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : '保存密钥失败'
+  } finally {
+    saving.value = false
+  }
+}
+
+function remove(secret: ProjectSecret) {
+  dialog.warning({
+    title: '删除项目密钥',
+    content: `确认删除密钥「${secret.name}」？引用它的脚本会在下次执行时报错。`,
+    positiveText: '删除',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        await projectApi.deleteSecret(props.projectId, secret.name)
+        message.success('密钥已删除')
+        await load()
+      } catch (err) {
+        error.value = err instanceof Error ? err.message : '删除密钥失败'
+      }
+    },
+  })
+}
+</script>
+
+<template>
+  <n-modal :show="show" :mask-closable="!saving" @update:show="(visible: boolean) => emit('update:show', visible)">
+    <div class="secrets-modal">
+      <div class="modal-head">
+        <div>
+          <div class="modal-kicker">PROJECT SECRETS</div>
+          <h2>项目密钥 · {{ projectName }}</h2>
+          <p>脚本通过 <code>ctx.secret('NAME')</code> 读取；值加密存储，接口只返回名称。</p>
+        </div>
+      </div>
+      <div class="modal-body">
+        <div class="secret-list">
+          <div v-if="loading" class="secret-empty">正在加载…</div>
+          <div v-else-if="!items.length" class="secret-empty">还没有项目密钥。</div>
+          <div v-for="secret in items" :key="secret.id" class="secret-row">
+            <code>{{ secret.name }}</code>
+            <span>{{ new Date(secret.updated_at).toLocaleString() }}</span>
+            <n-button quaternary size="tiny" type="error" @click="remove(secret)">
+              <template #icon><TrashOutline /></template>
+            </n-button>
+          </div>
+        </div>
+
+        <div class="secret-form">
+          <div class="field">
+            <label>密钥名称</label>
+            <n-input v-model:value="name" placeholder="例如 BILLING_DB_PASSWORD" maxlength="64" />
+          </div>
+          <div class="field">
+            <label>密钥值</label>
+            <n-input v-model:value="value" type="password" show-password-on="click" placeholder="输入或更新密钥值" />
+          </div>
+          <n-button type="primary" :loading="saving" @click="save">
+            <template #icon><AddOutline /></template>
+            保存/更新密钥
+          </n-button>
+        </div>
+        <div v-if="error" class="modal-error">{{ error }}</div>
+      </div>
+      <div class="modal-footer">
+        <n-button @click="emit('update:show', false)">关闭</n-button>
+      </div>
+    </div>
+  </n-modal>
+</template>
+
+<style scoped>
+.secrets-modal {
+  width: min(620px, calc(100vw - 24px));
+  overflow: hidden;
+  border-radius: 16px;
+  background: #fff;
+}
+
+.secret-list {
+  max-height: 240px;
+  overflow-y: auto;
+  margin-bottom: 16px;
+  border: 1px solid #e8eef7;
+  border-radius: 9px;
+}
+
+.secret-empty {
+  padding: 18px;
+  color: var(--muted-light);
+  font-size: 10px;
+  text-align: center;
+}
+
+.secret-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-bottom: 1px solid #f1f4f9;
+}
+
+.secret-row:last-child {
+  border-bottom: 0;
+}
+
+.secret-row code {
+  flex: 1;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.secret-row span {
+  color: var(--muted-light);
+  font-size: 9px;
+}
+
+.secret-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+</style>

@@ -365,7 +365,7 @@ AI 对接助手按触发方式拆分：每个方式都有独立的专用提示�
 | HTTP | method、url、params、headers、body、timeout_ms | `params` 与 `headers` 每行一个 `key: value`；body 留空时发送标准结果 JSON |
 | WebSocket | url、headers、payload、timeout_ms | 仅支持 `ws://` / `wss://`，headers 用于握手鉴权，payload 留空时发送标准结果 JSON |
 | Redis | command、target、payload | command 支持 `publish` / `set` / `xadd` |
-| MySQL | dsn_env、query、args | DSN 从服务端环境变量读取，SQL 使用 `?` 占位符，args 每行一个 |
+| JS 脚本 | remark、script、timeout_ms、memory_mb | 入口 `function main(ctx)`；可用 `ctx.mysql` / `ctx.pg` / `ctx.http` / `ctx.crypto` / `ctx.secret`，执行日志按审核配置查看 |
 
 动作支持模板变量：`${task_no}`、`${task_id}`、`${biz_key}`、`${source_type}`、`${project_code}`、`${audit_code}`、`${result}`、`${summary}`、`${reasons}`、`${labels}`、`${risk_level}`、`${score}`、`${category}`、`${category_name}`、`${category_confidence}`、`${review_note}`。`on_error` 可选 `continue` / `stop` / `to_review`，执行结果写入任务详情的 `routes` 字段。后台已提供结构化编辑器，也可切换「高级 JSON」直接编辑；编辑器右上角的「变量说明」可查看每个变量的含义与取值形式。
 
@@ -378,6 +378,32 @@ AI 对接助手按触发方式拆分：每个方式都有独立的专用提示�
 - 替换结果是字符串：`${task_id}`、`${project_id}` 等数字变量写进 JSON 时也会变成字符串，需要数值类型的业务方应改用标准结果 JSON。
 
 > HTTP / WebSocket 结果动作默认启用 SSRF 防护，禁止访问内网与回环地址。本地联调需要回调到 `127.0.0.1` 时，仅在测试环境设置 `MEDIA_ALLOW_PRIVATE=true` 后重启后端。
+
+#### JS 脚本动作
+
+JS 脚本动作使用纯 Go 的 moejs 运行时，入口固定为：
+
+```js
+function main(ctx) {
+  ctx.log('审核结果', ctx.result)
+  const db = ctx.mysql.connect({
+    host: '10.0.0.12', port: 3306,
+    user: 'svc_audit', password: ctx.secret('BILLING_DB_PASSWORD'),
+    database: 'billing'
+  })
+  db.exec('UPDATE orders SET audit_result = ? WHERE biz_key = ?', [ctx.result, ctx.task.biz_key])
+  db.close()
+  return { ok: true }
+}
+```
+
+- 脚本只能使用宿主注入的 `ctx` API，不提供文件读写、进程、socket、`eval`、`import`、定时器。
+- 支持 MySQL / PostgreSQL 独立连接（脚本结束自动关闭）、HTTP/HTTPS 请求（不支持 socket 长连接）、Base64/Hex/SHA-256/HMAC/随机数/UUID。
+- 项目设置页可配置单次最大内存、时长、日志、返回值、HTTP 请求数/响应体、DB 行数和项目并发脚本数。
+- 每次执行记录开始时间、耗时、状态（成功/脚本错误/超时/OOM/宿主错误）、完整日志和返回值，可在审核配置的「脚本日志」查看。
+- 凭据建议使用项目密钥 `ctx.secret('NAME')`，不要写明文密码。
+- 原 `mysql` 结果动作已移除；数据库写入请使用 JS 脚本的 `ctx.mysql` / `ctx.pg`。
+- 编辑器提供语法高亮、`ctx` API 补全和右侧 AI 脚本助手；AI 只生成/修改脚本，必须人工点击「应用到编辑器」并保存后才生效。
 
 ### MySQL 说明
 

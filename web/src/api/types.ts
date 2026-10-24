@@ -79,12 +79,47 @@ export interface Project {
   max_tasks_per_day: number
   max_concurrent_tasks: number
   openapi_rate_limit: number
+  js_max_memory_mb: number
+  js_timeout_ms: number
+  js_max_log_bytes: number
+  js_max_result_bytes: number
+  js_max_http_requests: number
+  js_max_http_response_bytes: number
+  js_max_db_rows: number
+  js_max_concurrency: number
   deleted_at?: string | null
   created_at: string
   updated_at: string
   audit_count: number
   provider_count: number
   today_tasks: number
+}
+
+export interface ProjectSecret {
+  id: number
+  name: string
+  created_at: string
+  updated_at: string
+}
+
+export interface ScriptExecution {
+  id: number
+  project_id: number
+  audit_id: number
+  task_id: number
+  task_no: string
+  action_index: number
+  remark: string
+  script_hash: string
+  started_at: string
+  duration_ms: number
+  status: 'SUCCESS' | 'SCRIPT_ERROR' | 'TIMEOUT' | 'OOM' | 'HOST_ERROR' | string
+  error_type: string
+  error_message: string
+  log_text: string
+  memory_bytes: number
+  result_json: unknown
+  created_at: string
 }
 
 export interface ProviderConfig {

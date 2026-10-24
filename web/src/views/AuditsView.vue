@@ -43,6 +43,7 @@ import TaskSubmitModal from '@/components/TaskSubmitModal.vue'
 import AuditIntegrationDrawer from '@/components/AuditIntegrationDrawer.vue'
 import ResultRoutesEditor from '@/components/ResultRoutesEditor.vue'
 import TriggerManageModal from '@/components/TriggerManageModal.vue'
+import ScriptLogsModal from '@/components/ScriptLogsModal.vue'
 import { auditApi, metaApi, providerApi } from '@/api'
 import { copyText } from '@/utils/clipboard'
 import type { Audit, AuditAssistantConfig, AuditAssistantMessage, AuditAssistantResult, AuditAssistantStep, AuditCategory, Provider, RuleTemplate, TriggerSource } from '@/api/types'
@@ -92,6 +93,8 @@ const assistantChanges = ref<string[]>([])
 const assistantSaved = ref(false)
 const assistantPickShow = ref(false)
 const assistantPickId = ref<number | null>(null)
+const scriptLogsShow = ref(false)
+const scriptLogsAudit = ref<Audit | null>(null)
 const assistantChat = ref<HTMLElement | null>(null)
 const assistantImages = ref<AssistantImage[]>([])
 let assistantAbort: AbortController | null = null
@@ -691,6 +694,7 @@ function auditMoreOptions(audit: Audit) {
     options.push(
       { type: 'divider', key: 'd1' },
       { label: '编辑配置', key: 'edit' },
+      { label: '脚本日志', key: 'script-logs' },
       { label: audit.status === 'ACTIVE' ? '暂停审核' : '启用审核', key: 'status' },
       { label: '复制配置', key: 'clone' },
       { type: 'divider', key: 'd2' },
@@ -713,6 +717,10 @@ function handleAuditMore(key: string, audit: Audit) {
       break
     case 'edit':
       openEdit(audit)
+      break
+    case 'script-logs':
+      scriptLogsAudit.value = audit
+      scriptLogsShow.value = true
       break
     case 'status':
       toggleStatus(audit)
@@ -1701,7 +1709,7 @@ onMounted(async () => {
               </div>
               <div class="field routes-field">
                 <label>结果动作回调 <span>按最终结论向业务系统推送结果</span></label>
-                <ResultRoutesEditor v-model="form.routesText" />
+                <ResultRoutesEditor v-model="form.routesText" :audit-id="editing?.id || 0" />
               </div>
             </div>
           </div>
@@ -2070,6 +2078,11 @@ onMounted(async () => {
       v-model:show="triggerModalShow"
       :trigger="activeTrigger"
       @updated="reloadDetail"
+    />
+    <ScriptLogsModal
+      v-model:show="scriptLogsShow"
+      :audit-id="scriptLogsAudit?.id || 0"
+      :audit-name="scriptLogsAudit?.name || ''"
     />
   </div>
 </template>

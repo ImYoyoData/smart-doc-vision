@@ -48,8 +48,13 @@ func Open(cfg config.Config) (*gorm.DB, error) {
 		&model.TaskEvent{},
 		&model.AuditLog{},
 		&model.Role{},
+		&model.ProjectSecret{},
+		&model.ScriptExecution{},
 	); err != nil {
 		return nil, fmt.Errorf("migrate: %w", err)
+	}
+	if err := cleanupLegacyMySQLActions(db); err != nil {
+		log.Printf("cleanup legacy mysql actions: %v", err)
 	}
 	return db, nil
 }

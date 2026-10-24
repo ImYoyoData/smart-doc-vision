@@ -2,6 +2,7 @@
 import { ref, watch } from 'vue'
 import { NButton, NIcon, NInput, NInputNumber, NPopover, NSelect, NSwitch, NTabPane, NTabs, NTag } from 'naive-ui'
 import { AddOutline, ArrowDownOutline, ArrowUpOutline, HelpCircleOutline, TrashOutline } from '@vicons/ionicons5'
+import ScriptEditorModal from '@/components/ScriptEditorModal.vue'
 
 interface RouteAction {
   type: string
@@ -14,9 +15,9 @@ interface RouteAction {
   command?: string
   target?: string
   payload?: string
-  dsn_env?: string
-  query?: string
-  args?: unknown[]
+  remark?: string
+  script?: string
+  memory_mb?: number
 }
 
 interface RouteConfig {
@@ -27,7 +28,7 @@ interface RouteConfig {
 
 type RouteMap = Record<string, RouteConfig>
 
-const props = defineProps<{ modelValue: string }>()
+const props = defineProps<{ modelValue: string; auditId?: number }>()
 const emit = defineEmits<{ (e: 'update:modelValue', value: string): void }>()
 
 const results = [
@@ -39,7 +40,7 @@ const actionTypes = [
   { label: 'HTTP 回调', value: 'http' },
   { label: 'WebSocket 回调', value: 'websocket' },
   { label: 'Redis 写入', value: 'redis' },
-  { label: 'MySQL 更新', value: 'mysql' },
+  { label: 'JS 脚本', value: 'js' },
 ]
 const methodOptions = ['POST', 'PUT', 'PATCH', 'GET', 'DELETE'].map((value) => ({ label: value, value }))
 const redisCommands = [
@@ -126,10 +127,11 @@ function normalizeAction(input: any): RouteAction {
     action.command = input?.command || 'publish'
     action.target = input?.target || ''
     action.payload = input?.payload || ''
-  } else if (action.type === 'mysql') {
-    action.dsn_env = input?.dsn_env || 'CALLBACK_DSN'
-    action.query = input?.query || ''
-    action.args = Array.isArray(input?.args) ? input.args : []
+  } else if (action.type === 'js') {
+    action.remark = input?.remark || ''
+    action.script = input?.script || ''
+    action.timeout_ms = Number(input?.timeout_ms) || 5000
+    action.memory_mb = Number(input?.memory_mb) || 0
   }
   return action
 }
@@ -179,7 +181,7 @@ watch(draft, commit, { deep: true })
 function newAction(type: string): RouteAction {
   if (type === 'websocket') return { type, url: '', headers: {}, payload: '', timeout_ms: 10000 }
   if (type === 'redis') return { type, command: 'publish', target: '', payload: '' }
-  if (type === 'mysql') return { type, dsn_env: 'CALLBACK_DSN', query: '', args: [] }
+  if (type === 'js') return { type, remark: '', script: '', timeout_ms: 5000, memory_mb: 0 }
   return { type: 'http', method: 'POST', url: '', headers: {}, params: {}, body: '', timeout_ms: 10000 }
 }
 
@@ -216,15 +218,19 @@ function setKV(action: RouteAction, field: 'headers' | 'params', text: string) {
   action[field] = map
 }
 
-function argsText(action: RouteAction): string {
-  return (action.args || []).map((value) => String(value)).join('\n')
+const scriptEditorShow = ref(false)
+const scriptEditorAction = ref<RouteAction | null>(null)
+
+function openScriptEditor(action: RouteAction) {
+  scriptEditorAction.value = action
+  scriptEditorShow.value = true
 }
 
-function setArgs(action: RouteAction, text: string) {
-  action.args = text
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
+function scriptPreview(script?: string) {
+  const text = (script || '').trim()
+  if (!text) return ''
+  const lines = text.split(/\r?\n/).slice(0, 3).join('\n')
+  return lines.length > 220 ? `${lines.slice(0, 220)}…` : lines
 }
 
 function toggleAdvanced(value: boolean) {
@@ -249,7 +255,8 @@ function actionTitle(action: RouteAction, index: number): string {
   if (action.type === 'http') return `${index + 1}. ${label} · ${action.method || 'POST'} ${action.url || '未填写地址'}`
   if (action.type === 'websocket') return `${index + 1}. ${label} · ${action.url || '未填写地址'}`
   if (action.type === 'redis') return `${index + 1}. ${label} · ${(action.command || 'publish').toUpperCase()} ${action.target || '未填写目标'}`
-  return `${index + 1}. ${label} · ${action.dsn_env || '未填写 DSN 环境变量'}`
+  if (action.type === 'js') return `${index + 1}. ${label} · ${action.remark || '未填写备注'}`
+  return `${index + 1}. ${label}`
 }
 </script>
 
@@ -404,18 +411,26 @@ function actionTitle(action: RouteAction, index: number): string {
             </div>
           </div>
 
-          <div v-else class="action-grid">
+          <div v-else-if="action.type === 'js'" class="action-grid">
             <div class="field">
-              <label>DSN 环境变量 <span>例如 CALLBACK_DSN，避免把连接串写进配置</span></label>
-              <n-input v-model:value="action.dsn_env" size="small" placeholder="CALLBACK_DSN" />
+              <label>备注 <span>显示在动作列表和脚本日志中</span></label>
+              <n-input v-model:value="action.remark" size="small" maxlength="128" placeholder="例如 写回账单系统" />
             </div>
             <div class="field">
-              <label>SQL 语句 <span>建议使用参数占位符 ?</span></label>
-              <n-input v-model:value="action.query" type="textarea" :autosize="{ minRows: 2, maxRows: 5 }" size="small" class="code-input" placeholder="UPDATE orders SET audit_result = ?, audit_note = ? WHERE order_no = ?" />
+              <label>脚本 <span>入口 function main(ctx)，最多 64KB</span></label>
+              <div class="script-preview-box">
+                <pre v-if="action.script" class="script-preview">{{ scriptPreview(action.script) }}</pre>
+                <span v-else class="muted">尚未编写脚本</span>
+                <n-button size="small" type="primary" secondary @click="openScriptEditor(action)">编辑脚本</n-button>
+              </div>
             </div>
-            <div class="field">
-              <label>SQL 参数 <span>每行一个，支持模板变量</span></label>
-              <n-input :value="argsText(action)" type="textarea" :autosize="{ minRows: 2, maxRows: 5 }" size="small" class="code-input" placeholder="${result}&#10;${summary}&#10;${biz_key}" @update:value="(v) => setArgs(action, v)" />
+            <div class="field-inline">
+              <span>超时</span>
+              <n-input-number v-model:value="action.timeout_ms" size="small" :min="500" :max="60000" :step="500" style="width: 130px" />
+              <span class="muted">毫秒</span>
+              <span>内存</span>
+              <n-input-number v-model:value="action.memory_mb" size="small" :min="0" :max="512" :step="8" style="width: 110px" />
+              <span class="muted">MB（0 表示使用项目上限）</span>
             </div>
           </div>
         </div>
@@ -426,6 +441,16 @@ function actionTitle(action: RouteAction, index: number): string {
       <n-icon :component="AddOutline" />
       <span>HTTP 动作受 SSRF 防护；本地联调时可设置 <code>MEDIA_ALLOW_PRIVATE=true</code>。</span>
     </div>
+
+    <ScriptEditorModal
+      v-if="scriptEditorAction"
+      v-model:show="scriptEditorShow"
+      :script="scriptEditorAction.script || ''"
+      :remark="scriptEditorAction.remark || ''"
+      :audit-id="props.auditId || 0"
+      @update:script="(value: string) => { if (scriptEditorAction) scriptEditorAction.script = value }"
+      @update:remark="(value: string) => { if (scriptEditorAction) scriptEditorAction.remark = value }"
+    />
   </div>
 </template>
 
@@ -645,5 +670,29 @@ function actionTitle(action: RouteAction, index: number): string {
   border-radius: 4px;
   background: #eef2f8;
   font-size: 11px;
+}
+.script-preview-box {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid #e6ecf5;
+  border-radius: 8px;
+  background: #f8fafd;
+}
+.script-preview-box .script-preview {
+  flex: 1;
+  margin: 0;
+  overflow: hidden;
+  color: #33415c;
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+.script-preview-box .muted {
+  flex: 1;
+  color: var(--muted-light);
+  font-size: 10px;
 }
 </style>
