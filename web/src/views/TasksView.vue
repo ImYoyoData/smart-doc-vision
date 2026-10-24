@@ -177,7 +177,6 @@ function deleteSavedView() {
   message.success('视图已删除')
 }
 
-const pageCount = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
 const auditOptions = computed(() => audits.value.map((a) => ({ label: a.name, value: a.id })))
 
 const statusOptions = [
@@ -549,7 +548,6 @@ onBeforeUnmount(() => {
         <n-pagination
           v-model:page="page"
           v-model:page-size="pageSize"
-          :page-count="pageCount"
           :page-sizes="[20, 50, 100]"
           show-size-picker
           :item-count="total"
