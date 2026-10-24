@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { NButton, NIcon, NInput, NModal, NSelect, NSpin, NTooltip, useThemeVars } from 'naive-ui'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { NButton, NIcon, NInput, NInputNumber, NModal, NSelect, NSpin, NTabPane, NTabs, NTooltip, useThemeVars } from 'naive-ui'
 import { EditorView, basicSetup } from 'codemirror'
 import { Compartment } from '@codemirror/state'
 import { javascript, javascriptLanguage } from '@codemirror/lang-javascript'
@@ -16,14 +16,16 @@ import {
   CodeSlashOutline,
   CreateOutline,
   DocumentTextOutline,
+  PlayOutline,
   SaveOutline,
   SendOutline,
+  SettingsOutline,
   SparklesOutline,
   TerminalOutline,
   WarningOutline,
 } from '@vicons/ionicons5'
 import { providerApi, scriptApi } from '@/api'
-import type { Provider } from '@/api/types'
+import type { Provider, ScriptSimulationResult } from '@/api/types'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 const props = defineProps<{
@@ -31,6 +33,7 @@ const props = defineProps<{
   script: string
   remark: string
   auditId: number
+  state?: string
 }>()
 const emit = defineEmits<{
   (e: 'update:show', value: boolean): void
@@ -102,6 +105,70 @@ const aiSuggestions = [
   '审核不通过时调用 HTTP 接口通知业务方',
   '把最终审核结果推送到 Redis Stream',
 ]
+
+type SimulationState = 'PASS' | 'REJECT' | 'REVIEW'
+const simulationStateOptions = [
+  { label: 'PASS · 审核通过', value: 'PASS' },
+  { label: 'REJECT · 审核不通过', value: 'REJECT' },
+  { label: 'REVIEW · 转人工复核', value: 'REVIEW' },
+]
+const riskLevelOptions = [
+  { label: 'low · 低风险', value: 'low' },
+  { label: 'medium · 中风险', value: 'medium' },
+  { label: 'high · 高风险', value: 'high' },
+]
+const simConfigShow = ref(false)
+const simRunning = ref(false)
+const simShow = ref(false)
+const simTab = ref('logs')
+const simResult = ref<ScriptSimulationResult | null>(null)
+const simError = ref('')
+const simConfig = reactive({
+  state: 'REVIEW' as SimulationState,
+  taskNo: 'SIM-001',
+  bizKey: 'SIM-BIZ-001',
+  sourceType: 'OPENAPI',
+  status: 'SUCCESS',
+  reviewNote: '',
+  inputText: '模拟审核输入文本，仅用于沙盒运行。',
+  summary: '模拟运行：待议复核',
+  riskLevel: 'medium',
+  score: 0.55,
+  reasonsText: '模拟运行存在不确定项',
+  labelsText: '模拟运行',
+  category: '',
+  categoryName: '',
+  categoryConfidence: 0,
+  extraJson: '',
+})
+
+const simStatusLabel = computed(() => {
+  if (!simResult.value) return ''
+  switch (simResult.value.status) {
+    case 'SUCCESS': return '运行成功'
+    case 'SCRIPT_TIMEOUT': return '执行超时'
+    case 'SCRIPT_OOM': return '内存超限'
+    case 'SCRIPT_HOST_ERROR': return '宿主错误'
+    case 'SCRIPT_ERROR': return '脚本错误'
+    default: return simResult.value.status
+  }
+})
+const simStatusTone = computed(() => {
+  if (!simResult.value) return ''
+  if (simResult.value.status === 'SUCCESS') return 'ok'
+  if (simResult.value.status === 'SCRIPT_TIMEOUT') return 'warn'
+  return 'error'
+})
+const simOutputText = computed(() => {
+  const output = simResult.value?.output
+  if (output === undefined || output === null) return ''
+  return typeof output === 'string' ? output : JSON.stringify(output, null, 2)
+})
+const simVariablesText = computed(() => JSON.stringify(simResult.value?.variables || {}, null, 2))
+const simMemoryText = computed(() => {
+  const bytes = simResult.value?.memory_bytes || 0
+  return bytes > 0 ? `${(bytes / 1048576).toFixed(2)} MB` : '—'
+})
 
 const dirty = computed(() => props.script !== initialScript.value || props.remark !== initialRemark.value)
 const scriptDirty = computed(() => props.script !== initialScript.value)
@@ -309,6 +376,10 @@ watch(() => props.show, (value) => {
   if (value) {
     initialScript.value = props.script
     initialRemark.value = props.remark
+    applySimulationState(props.state || 'REVIEW')
+    simShow.value = false
+    simResult.value = null
+    simError.value = ''
     nextTick(() => {
       createEditor()
       setEditorValue(props.script)
@@ -425,6 +496,114 @@ async function openAi() {
   await loadProviders(true)
 }
 
+function applySimulationState(state: string) {
+  const value = (['PASS', 'REJECT', 'REVIEW'].includes(state) ? state : 'REVIEW') as SimulationState
+  simConfig.state = value
+  if (value === 'PASS') {
+    simConfig.summary = '模拟运行：审核通过'
+    simConfig.riskLevel = 'low'
+    simConfig.score = 0.06
+    simConfig.reasonsText = '模拟运行未命中风险规则'
+  } else if (value === 'REJECT') {
+    simConfig.summary = '模拟运行：审核不通过'
+    simConfig.riskLevel = 'high'
+    simConfig.score = 0.92
+    simConfig.reasonsText = '模拟运行命中高风险规则'
+  } else {
+    simConfig.summary = '模拟运行：待议复核'
+    simConfig.riskLevel = 'medium'
+    simConfig.score = 0.55
+    simConfig.reasonsText = '模拟运行存在不确定项'
+  }
+}
+
+function openSimulationConfig() {
+  simError.value = ''
+  simConfigShow.value = true
+}
+
+function splitSimulationLines(value: string) {
+  return value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
+}
+
+function splitSimulationLabels(value: string) {
+  return value.split(/[,，\n]/).map((item) => item.trim()).filter(Boolean)
+}
+
+async function runSimulation() {
+  if (simRunning.value || aiBusy.value) return
+  simError.value = ''
+  let extra: Record<string, unknown> = {}
+  if (simConfig.extraJson.trim()) {
+    try {
+      const parsed = JSON.parse(simConfig.extraJson)
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error('扩展上下文必须是 JSON 对象')
+      }
+      extra = parsed as Record<string, unknown>
+    } catch (error) {
+      simError.value = error instanceof Error ? error.message : '扩展上下文 JSON 解析失败'
+      simConfigShow.value = true
+      return
+    }
+  }
+  const script = editorView?.state.doc.toString() ?? props.script
+  if (!script.trim()) {
+    simError.value = '脚本为空，请先编写代码'
+    simConfigShow.value = true
+    return
+  }
+  const detail: Record<string, unknown> = {
+    summary: simConfig.summary,
+    risk_level: simConfig.riskLevel,
+    score: Number(simConfig.score) || 0,
+    reasons: splitSimulationLines(simConfig.reasonsText),
+    labels: splitSimulationLabels(simConfig.labelsText),
+    category: simConfig.category.trim(),
+    category_name: simConfig.categoryName.trim(),
+    category_confidence: Number(simConfig.categoryConfidence) || 0,
+    ...extra,
+  }
+  simRunning.value = true
+  setEditorEditable(false)
+  try {
+    const result = await scriptApi.simulate({
+      project_id: workspace.currentProjectId,
+      audit_id: props.auditId || 0,
+      script,
+      state: simConfig.state,
+      task: {
+        task_no: simConfig.taskNo.trim(),
+        biz_key: simConfig.bizKey.trim(),
+        source_type: simConfig.sourceType.trim(),
+        status: simConfig.status.trim(),
+        review_note: simConfig.reviewNote.trim(),
+      },
+      input: {
+        text: simConfig.inputText,
+        ext: { simulated: true },
+      },
+      detail,
+    })
+    simResult.value = result
+    simShow.value = true
+    simTab.value = 'logs'
+    simConfigShow.value = false
+  } catch (error) {
+    simError.value = normalizeAiError(error, '模拟运行失败')
+    simConfigShow.value = true
+  } finally {
+    simRunning.value = false
+    setEditorEditable(!aiBusy.value)
+  }
+}
+
+function simLogClass(line: string) {
+  if (line.includes('[ERROR]')) return 'error'
+  if (line.includes('[WARN]') || line.includes('[SIM]') || line.includes('[SECRET]')) return 'warn'
+  return ''
+}
+
 function normalizeAiError(error: unknown, fallback = '脚本助手请求失败') {
   if (!(error instanceof Error)) return fallback
   if (/failed to fetch|networkerror|load failed|network request failed/i.test(error.message)) {
@@ -443,7 +622,7 @@ function retryAi() {
 
 async function sendAi() {
   const text = aiInput.value.trim()
-  if (!text || aiBusy.value) return
+  if (!text || aiBusy.value || simRunning.value) return
   if (!aiProviderId.value || !aiProviders.value.some((provider) => provider.id === aiProviderId.value)) {
     await loadProviders(true)
   }
@@ -599,6 +778,18 @@ function handleAiKeydown(event: KeyboardEvent) {
           </n-input>
         </div>
         <div class="script-editor-actions">
+          <n-button size="small" type="success" secondary :loading="simRunning" :disabled="aiBusy" @click="runSimulation">
+            <template #icon><n-icon :component="PlayOutline" /></template>
+            运行
+          </n-button>
+          <n-tooltip trigger="hover">
+            <template #trigger>
+              <n-button size="small" quaternary circle :disabled="simRunning" title="运行配置" @click="openSimulationConfig">
+                <template #icon><n-icon :component="SettingsOutline" /></template>
+              </n-button>
+            </template>
+            配置模拟上下文
+          </n-tooltip>
           <n-button size="small" secondary @click="apiShow = true">
             <template #icon><n-icon :component="DocumentTextOutline" /></template>
             API 文档
@@ -777,12 +968,157 @@ function handleAiKeydown(event: KeyboardEvent) {
         </Transition>
       </div>
 
+      <div v-if="simShow" class="script-sim-result">
+        <div class="script-sim-result-head">
+          <div class="script-sim-result-title">
+            <n-icon :component="TerminalOutline" />
+            <strong>模拟运行结果</strong>
+            <span class="script-sim-status" :class="simStatusTone">{{ simStatusLabel }}</span>
+            <span class="script-sim-meta">{{ simResult?.duration_ms ?? 0 }} ms · {{ simMemoryText }}</span>
+            <span v-if="simResult?.error_message" class="script-sim-error">{{ simResult.error_message }}</span>
+          </div>
+          <div class="script-sim-result-actions">
+            <n-button size="tiny" secondary :loading="simRunning" :disabled="aiBusy" @click="runSimulation">重新运行</n-button>
+            <n-button size="tiny" quaternary @click="simShow = false">收起</n-button>
+          </div>
+        </div>
+        <n-tabs v-model:value="simTab" type="line" size="small" class="script-sim-tabs">
+          <n-tab-pane name="logs" tab="临时日志">
+            <div class="script-sim-logs">
+              <div
+                v-for="(line, index) in simResult?.logs || []"
+                :key="index"
+                class="script-sim-log-line"
+                :class="simLogClass(line)"
+              >{{ line }}</div>
+            </div>
+          </n-tab-pane>
+          <n-tab-pane name="output" tab="返回值">
+            <pre class="script-sim-code">{{ simOutputText || '脚本没有返回值（完成值为空）' }}</pre>
+          </n-tab-pane>
+          <n-tab-pane name="variables" tab="临时变量">
+            <pre class="script-sim-code">{{ simVariablesText }}</pre>
+          </n-tab-pane>
+        </n-tabs>
+      </div>
+
       <div class="script-editor-foot">
         <span class="script-editor-foot-note">
           <n-icon :component="TerminalOutline" />
-          脚本执行日志可在审核配置的「脚本日志」中查看
+          模拟运行不落执行日志；真实执行日志在审核配置的「脚本日志」中查看
         </span>
         <span class="script-editor-foot-meta">JS · 受限沙箱</span>
+      </div>
+    </div>
+  </n-modal>
+
+  <n-modal v-model:show="simConfigShow" :mask-closable="!simRunning">
+    <div class="script-sim-config-modal" :class="{ 'script-theme-light': !isDark }">
+      <div class="script-sim-config-head">
+        <div>
+          <div class="script-api-kicker">SANDBOX RUN</div>
+          <h3>模拟运行配置</h3>
+          <p>使用当前脚本和模拟上下文执行。数据库、HTTP 与项目密钥会被替换为占位值，不会产生真实副作用。</p>
+        </div>
+        <span class="script-sim-state-badge">{{ simConfig.state }}</span>
+      </div>
+      <div class="script-sim-config-body">
+        <div class="sim-grid sim-grid-3">
+          <div class="sim-field">
+            <label>结果状态</label>
+            <n-select :value="simConfig.state" :options="simulationStateOptions" @update:value="applySimulationState" />
+          </div>
+          <div class="sim-field">
+            <label>任务号</label>
+            <n-input v-model:value="simConfig.taskNo" />
+          </div>
+          <div class="sim-field">
+            <label>业务主键</label>
+            <n-input v-model:value="simConfig.bizKey" />
+          </div>
+        </div>
+        <div class="sim-grid sim-grid-3">
+          <div class="sim-field">
+            <label>来源类型</label>
+            <n-input v-model:value="simConfig.sourceType" />
+          </div>
+          <div class="sim-field">
+            <label>任务状态</label>
+            <n-input v-model:value="simConfig.status" />
+          </div>
+          <div class="sim-field">
+            <label>复核备注</label>
+            <n-input v-model:value="simConfig.reviewNote" />
+          </div>
+        </div>
+        <div class="sim-field">
+          <label>输入文本</label>
+          <n-input
+            v-model:value="simConfig.inputText"
+            type="textarea"
+            :autosize="{ minRows: 2, maxRows: 4 }"
+            placeholder="模拟任务的多文本输入"
+          />
+        </div>
+        <div class="sim-section-title">审核结论上下文 <span>ctx.detail / ctx.variables()</span></div>
+        <div class="sim-grid sim-grid-2">
+          <div class="sim-field">
+            <label>摘要 summary</label>
+            <n-input v-model:value="simConfig.summary" />
+          </div>
+          <div class="sim-inline">
+            <div class="sim-field">
+              <label>风险等级</label>
+              <n-select v-model:value="simConfig.riskLevel" :options="riskLevelOptions" />
+            </div>
+            <div class="sim-field">
+              <label>风险分 score</label>
+              <n-input-number v-model:value="simConfig.score" :min="0" :max="1" :step="0.01" />
+            </div>
+          </div>
+        </div>
+        <div class="sim-grid sim-grid-2">
+          <div class="sim-field">
+            <label>原因 reasons（每行一条）</label>
+            <n-input v-model:value="simConfig.reasonsText" type="textarea" :autosize="{ minRows: 2, maxRows: 4 }" />
+          </div>
+          <div class="sim-field">
+            <label>标签 labels（逗号或换行分隔）</label>
+            <n-input v-model:value="simConfig.labelsText" type="textarea" :autosize="{ minRows: 2, maxRows: 4 }" />
+          </div>
+        </div>
+        <div class="sim-grid sim-grid-3">
+          <div class="sim-field">
+            <label>分类 code</label>
+            <n-input v-model:value="simConfig.category" />
+          </div>
+          <div class="sim-field">
+            <label>分类名称</label>
+            <n-input v-model:value="simConfig.categoryName" />
+          </div>
+          <div class="sim-field">
+            <label>分类置信度</label>
+            <n-input-number v-model:value="simConfig.categoryConfidence" :min="0" :max="1" :step="0.01" />
+          </div>
+        </div>
+        <div class="sim-field">
+          <label>扩展 ctx.detail JSON（可选）</label>
+          <n-input
+            v-model:value="simConfig.extraJson"
+            type="textarea"
+            :autosize="{ minRows: 3, maxRows: 6 }"
+            placeholder='{"channel":"simulator","order_no":"A-001"}'
+            class="sim-json-input"
+          />
+        </div>
+        <div v-if="simError" class="sim-config-error">{{ simError }}</div>
+      </div>
+      <div class="script-sim-config-foot">
+        <span>数据库 / HTTP / 密钥均为模拟，不会写入业务系统。</span>
+        <div>
+          <n-button :disabled="simRunning" @click="simConfigShow = false">关闭</n-button>
+          <n-button type="primary" :loading="simRunning" @click="runSimulation">立即运行</n-button>
+        </div>
       </div>
     </div>
   </n-modal>
@@ -2362,6 +2698,394 @@ function handleAiKeydown(event: KeyboardEvent) {
 .script-editor-foot-meta {
   color: var(--muted-light);
   font-family: var(--mono);
+}
+
+/* Sandbox simulation */
+.script-sim-result {
+  display: flex;
+  height: 245px;
+  flex-shrink: 0;
+  flex-direction: column;
+  border-top: 1px solid #24324a;
+  background: #0b1425;
+}
+
+.script-sim-result-head {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 12px;
+  border-bottom: 1px solid #1f2d44;
+}
+
+.script-sim-result-title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  color: #e2e8f0;
+  font-size: 10px;
+}
+
+.script-sim-result-title :deep(svg) {
+  width: 14px;
+  height: 14px;
+  color: #7dd3fc;
+}
+
+.script-sim-status {
+  flex-shrink: 0;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(74, 222, 128, 0.12);
+  color: #4ade80;
+  font-size: 9px;
+}
+
+.script-sim-status.warn {
+  background: rgba(251, 191, 36, 0.14);
+  color: #fbbf24;
+}
+
+.script-sim-status.error {
+  background: rgba(248, 113, 113, 0.14);
+  color: #f87171;
+}
+
+.script-sim-meta {
+  flex-shrink: 0;
+  color: #7c8ba1;
+  font-family: var(--mono);
+  font-size: 9px;
+}
+
+.script-sim-error {
+  overflow: hidden;
+  color: #f87171;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.script-sim-result-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+}
+
+.script-sim-tabs {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  padding: 0 12px;
+}
+
+.script-sim-tabs :deep(.n-tabs-nav) {
+  padding-top: 5px;
+}
+
+.script-sim-tabs :deep(.n-tabs-pane-wrapper) {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+}
+
+.script-sim-logs {
+  padding: 3px 0 8px;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  line-height: 1.65;
+}
+
+.script-sim-log-line {
+  color: #94a3b8;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.script-sim-log-line.warn {
+  color: #fbbf24;
+}
+
+.script-sim-log-line.error {
+  color: #f87171;
+}
+
+.script-sim-code {
+  margin: 0;
+  padding: 4px 0 8px;
+  color: #cbd5e1;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.script-theme-light .script-sim-result {
+  border-top-color: var(--border);
+  background: var(--card);
+}
+
+.script-theme-light .script-sim-result-head {
+  border-bottom-color: var(--border);
+}
+
+.script-theme-light .script-sim-result-title {
+  color: var(--ink);
+}
+
+.script-theme-light .script-sim-meta {
+  color: var(--muted-light);
+}
+
+.script-theme-light .script-sim-log-line,
+.script-theme-light .script-sim-code {
+  color: var(--text);
+}
+
+.script-theme-light .script-sim-log-line.warn {
+  color: #b45309;
+}
+
+.script-theme-light .script-sim-log-line.error,
+.script-theme-light .script-sim-error {
+  color: var(--red);
+}
+
+.script-theme-light .script-sim-status {
+  background: var(--green-soft);
+  color: var(--green);
+}
+
+.script-theme-light .script-sim-status.warn {
+  background: var(--amber-soft);
+  color: #b45309;
+}
+
+.script-theme-light .script-sim-status.error {
+  background: var(--red-soft);
+  color: var(--red);
+}
+
+/* Sandbox config modal */
+.script-sim-config-modal {
+  display: flex;
+  width: min(760px, calc(100vw - 32px));
+  max-height: calc(100vh - 44px);
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 16px;
+  background: #0f172a;
+  color: #e2e8f0;
+  box-shadow: 0 30px 80px -20px rgba(2, 8, 23, 0.72);
+}
+
+.script-sim-config-head {
+  display: flex;
+  flex-shrink: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 18px 20px 14px;
+  border-bottom: 1px solid #1f2d44;
+  background: linear-gradient(180deg, #142036, #111c30);
+}
+
+.script-sim-config-head h3 {
+  margin: 4px 0 4px;
+  color: #f8fafc;
+  font-size: 18px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.script-sim-config-head p {
+  max-width: 560px;
+  margin: 0;
+  color: #94a3b8;
+  font-size: 10px;
+  line-height: 1.55;
+}
+
+.script-sim-state-badge {
+  flex-shrink: 0;
+  padding: 4px 10px;
+  border: 1px solid #3b82f6;
+  border-radius: 999px;
+  background: rgba(59, 130, 246, 0.14);
+  color: #93c5fd;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+}
+
+.script-sim-config-body {
+  overflow-y: auto;
+  padding: 14px 20px 16px;
+}
+
+.sim-grid {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.sim-grid-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.sim-grid-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.sim-inline {
+  display: flex;
+  gap: 10px;
+}
+
+.sim-inline .sim-field {
+  flex: 1;
+  min-width: 0;
+}
+
+.sim-field {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sim-field label {
+  color: #94a3b8;
+  font-size: 10px;
+}
+
+.sim-section-title {
+  margin: 14px 0 9px;
+  padding-top: 10px;
+  border-top: 1px dashed #24324a;
+  color: #7dd3fc;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.sim-section-title span {
+  margin-left: 6px;
+  color: #64748b;
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 400;
+}
+
+.sim-json-input :deep(textarea) {
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.sim-config-error {
+  margin-top: 10px;
+  padding: 7px 9px;
+  border: 1px solid rgba(248, 113, 113, 0.3);
+  border-radius: 7px;
+  background: rgba(248, 113, 113, 0.08);
+  color: #fca5a5;
+  font-size: 10px;
+}
+
+.script-sim-config-foot {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 20px;
+  border-top: 1px solid #1f2d44;
+  background: #0b1425;
+}
+
+.script-sim-config-foot > span {
+  color: #64748b;
+  font-size: 9px;
+}
+
+.script-sim-config-foot > div {
+  display: flex;
+  gap: 8px;
+}
+
+.script-sim-config-modal.script-theme-light {
+  background: #fff;
+  color: var(--text);
+}
+
+.script-sim-config-modal.script-theme-light .script-sim-config-head {
+  border-bottom-color: var(--border);
+  background: linear-gradient(130deg, #f8fbff, #fff);
+}
+
+.script-sim-config-modal.script-theme-light .script-sim-config-head h3 {
+  color: var(--ink);
+}
+
+.script-sim-config-modal.script-theme-light .script-sim-config-head p,
+.script-sim-config-modal.script-theme-light .sim-field label {
+  color: var(--muted);
+}
+
+.script-sim-config-modal.script-theme-light .script-sim-state-badge {
+  border-color: var(--brand-border);
+  background: var(--brand-soft);
+  color: var(--brand-strong);
+}
+
+.script-sim-config-modal.script-theme-light .sim-section-title {
+  border-top-color: var(--border);
+  color: var(--brand);
+}
+
+.script-sim-config-modal.script-theme-light .sim-config-error {
+  border-color: rgba(220, 38, 38, 0.18);
+  background: var(--red-soft);
+  color: var(--red);
+}
+
+.script-sim-config-modal.script-theme-light .script-sim-config-foot {
+  border-top-color: var(--border);
+  background: var(--surface-soft);
+}
+
+.script-sim-config-modal.script-theme-light .script-sim-config-foot > span {
+  color: var(--muted-light);
+}
+
+@media (max-width: 640px) {
+  .sim-grid-2,
+  .sim-grid-3 {
+    grid-template-columns: 1fr;
+  }
+
+  .sim-inline {
+    flex-direction: column;
+  }
+
+  .script-sim-result {
+    height: 220px;
+  }
+
+  .script-sim-meta,
+  .script-sim-error {
+    display: none;
+  }
+
+  .script-sim-config-modal {
+    width: calc(100vw - 16px);
+    max-height: calc(100vh - 16px);
+  }
 }
 
 .script-editor-modal .script-ai-panel {

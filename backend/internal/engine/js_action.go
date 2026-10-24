@@ -46,6 +46,7 @@ type scriptRun struct {
 	secretNames  []string
 	hostErr      error
 	memoryBytes  int64
+	simulate     bool
 }
 
 // executeJSAction runs one JS result action with project-level resource limits.
@@ -275,7 +276,7 @@ func (r *scriptRun) contextMap() map[string]any {
 	data := map[string]any{
 		"task": task, "audit": audit, "project": project,
 		"result": r.render.FinalResult, "detail": r.render.Detail,
-		"payload": routePayload(r.render),
+		"payload": routePayload(r.render), "simulation": r.simulate,
 		"variables": moejs.NativeFunc(func(realm *moejs.Realm, _ moejs.Value, _ []moejs.Value) (moejs.Value, error) {
 			return realm.FromGo(r.variables())
 		}),
@@ -384,6 +385,10 @@ func (r *scriptRun) nativeSecret(realm *moejs.Realm, _ moejs.Value, args []moejs
 	if err != nil {
 		return moejs.Undefined(), err
 	}
+	if r.simulate {
+		r.logf("SIM", "模拟运行：ctx.secret(%q) 返回占位值，不读取真实密钥", name)
+		return moejs.String("simulated-secret"), nil
+	}
 	if value, ok := r.secrets[name]; ok {
 		return moejs.String(value), nil
 	}
@@ -413,6 +418,11 @@ func (r *scriptRun) nativeMySQLConnect(realm *moejs.Realm, _ moejs.Value, args [
 	if err != nil {
 		return moejs.Undefined(), err
 	}
+	if r.simulate {
+		r.logf("SIM", "模拟运行：不连接 MySQL %v:%v/%v，query 返回空结果、exec 返回 0 行",
+			options["host"], options["port"], options["database"])
+		return r.simulatedDatabase(realm)
+	}
 	dsn, err := r.mysqlDSN(options)
 	if err != nil {
 		r.hostErr = err
@@ -434,6 +444,11 @@ func (r *scriptRun) nativePGConnect(realm *moejs.Realm, _ moejs.Value, args []mo
 	options, err := r.argMap(realm, args, 0)
 	if err != nil {
 		return moejs.Undefined(), err
+	}
+	if r.simulate {
+		r.logf("SIM", "模拟运行：不连接 PostgreSQL %v:%v/%v，query 返回空结果、exec 返回 0 行",
+			options["host"], options["port"], options["database"])
+		return r.simulatedDatabase(realm)
 	}
 	dsn, err := r.pgDSN(options)
 	if err != nil {
@@ -672,6 +687,14 @@ func (r *scriptRun) nativeHTTPRequest(realm *moejs.Realm, _ moejs.Value, args []
 	}
 	method := strings.ToUpper(stringOption(options, "method", http.MethodGet))
 	body := stringOption(options, "body", "")
+	if r.simulate {
+		r.logf("SIM", "模拟运行：拦截 HTTP %s %s，返回 200 和 {\"simulated\":true}", method, target)
+		return realm.FromGo(map[string]any{
+			"status": 200, "ok": true,
+			"body": `{"simulated":true}`, "body_base64": "", "bytes": 17,
+			"headers": map[string]string{"content-type": "application/json"},
+		})
+	}
 	timeoutMS := intOption(options, "timeout_ms", 10000)
 	if timeoutMS <= 0 || timeoutMS > 30000 {
 		timeoutMS = 10000

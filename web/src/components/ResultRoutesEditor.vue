@@ -524,6 +524,7 @@ function actionTitle(action: RouteAction, index: number): string {
       :script="scriptEditorAction.script || ''"
       :remark="scriptEditorAction.remark || ''"
       :audit-id="props.auditId || 0"
+      :state="active"
       @update:script="(value: string) => { if (scriptEditorAction) scriptEditorAction.script = value }"
       @update:remark="(value: string) => { if (scriptEditorAction) scriptEditorAction.remark = value }"
     />

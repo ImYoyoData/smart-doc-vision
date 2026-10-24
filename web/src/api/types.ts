@@ -102,6 +102,19 @@ export interface ProjectSecret {
   updated_at: string
 }
 
+export interface ScriptSimulationResult {
+  status: string
+  error_type?: string
+  error_message?: string
+  duration_ms: number
+  logs: string[]
+  output?: unknown
+  variables: Record<string, unknown>
+  memory_bytes: number
+  timeout_ms: number
+  memory_mb: number
+}
+
 export interface ScriptExecution {
   id: number
   project_id: number

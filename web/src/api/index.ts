@@ -24,6 +24,7 @@ import type {
   RecycleItem,
   RedisConnection,
   ScriptExecution,
+  ScriptSimulationResult,
   ReviewSummary,
   RoleDefinition,
   RuleTemplate,
@@ -151,6 +152,7 @@ export const auditApi = {
 export const scriptApi = {
   assistantStream: (payload: Record<string, unknown>, handlers: SSEHandlers) =>
     postSSE('/scripts/assistant/stream', payload, handlers),
+  simulate: (payload: Record<string, unknown>) => post<ScriptSimulationResult>('/scripts/simulate', payload),
 }
 
 export const taskApi = {
