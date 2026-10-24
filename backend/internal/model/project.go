@@ -10,18 +10,18 @@ type Project struct {
 	Status           string `gorm:"size:16;not null;default:ACTIVE;index" json:"status"`
 	Description      string `gorm:"size:255" json:"description"`
 	OwnerID          uint64 `gorm:"index" json:"owner_id"`
-	AppKey           string `gorm:"size:48;uniqueIndex" json:"-"`
+	AppKey           string `gorm:"size:48" json:"-"`
 	AppSecretEnc     string `gorm:"type:text" json:"-"`
 	RetentionDays    int    `gorm:"not null;default:30" json:"retention_days"`
 	MaxTasksPerDay   int    `gorm:"not null;default:0" json:"max_tasks_per_day"`
 	MaxConcurrent    int    `gorm:"not null;default:2" json:"max_concurrent_tasks"`
-	OpenAPIRateLimit int    `gorm:"not null;default:120" json:"openapi_rate_limit"`
+	OpenAPIRateLimit int    `gorm:"not null" json:"openapi_rate_limit"`
 
 	JSMaxMemoryMB          int `gorm:"not null;default:64" json:"js_max_memory_mb"`
 	JSTimeoutMS            int `gorm:"not null;default:5000" json:"js_timeout_ms"`
 	JSMaxLogBytes          int `gorm:"not null;default:32768" json:"js_max_log_bytes"`
 	JSMaxResultBytes       int `gorm:"not null;default:65536" json:"js_max_result_bytes"`
-	JSMaxHTTPRequests      int `gorm:"not null;default:20" json:"js_max_http_requests"`
+	JSMaxHTTPRequests      int `gorm:"not null" json:"js_max_http_requests"`
 	JSMaxHTTPResponseBytes int `gorm:"not null;default:2097152" json:"js_max_http_response_bytes"`
 	JSMaxDBRows            int `gorm:"not null;default:1000" json:"js_max_db_rows"`
 	JSMaxConcurrency       int `gorm:"not null;default:2" json:"js_max_concurrency"`

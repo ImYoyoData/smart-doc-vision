@@ -55,10 +55,23 @@ func Open(cfg config.Config) (*gorm.DB, error) {
 	); err != nil {
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
+	// AppKey moved to api_credentials; the legacy project column must not keep
+	// a unique index or a second project with an empty AppKey cannot be created.
+	if err := dropLegacyProjectAppKeyIndex(migrateDB); err != nil {
+		log.Printf("drop legacy project app_key index: %v", err)
+	}
 	if err := cleanupLegacyData(db); err != nil {
 		log.Printf("cleanup legacy data: %v", err)
 	}
 	return db, nil
+}
+
+func dropLegacyProjectAppKeyIndex(db *gorm.DB) error {
+	migrator := db.Migrator()
+	if !migrator.HasIndex(&model.Project{}, "idx_projects_app_key") {
+		return nil
+	}
+	return migrator.DropIndex(&model.Project{}, "idx_projects_app_key")
 }
 
 func ping(db *sql.DB) error {
