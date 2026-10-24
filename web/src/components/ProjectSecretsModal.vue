@@ -135,9 +135,87 @@ function remove(secret: ProjectSecret) {
 
 <style scoped>
 .secrets-modal {
-  width: min(620px, calc(100vw - 24px));
+  width: min(620px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
   overflow: hidden;
   border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 30px 80px -20px rgba(15, 23, 42, 0.35);
+}
+
+.modal-head {
+  padding: 20px 22px 16px;
+  border-bottom: 1px solid #f0f3f8;
+  background: linear-gradient(130deg, #f8fbff, #fff);
+}
+
+.modal-kicker {
+  color: var(--brand);
+  font-family: var(--mono);
+  font-size: 8.5px;
+  font-weight: 650;
+  letter-spacing: 0.12em;
+}
+
+.modal-head h2 {
+  margin: 4px 0 3px;
+  color: var(--ink);
+  font-size: 19px;
+  font-weight: 650;
+  line-height: 1.35;
+  letter-spacing: -0.02em;
+}
+
+.modal-head p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10.5px;
+  line-height: 1.6;
+}
+
+.modal-head code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: #eef4ff;
+  color: var(--brand);
+  font-family: var(--mono);
+  font-size: 9.5px;
+}
+
+.modal-body {
+  max-height: min(70vh, 600px);
+  overflow-y: auto;
+  padding: 18px 22px;
+}
+
+.field {
+  margin-bottom: 14px;
+}
+
+.field label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--text);
+  font-size: 11.5px;
+  font-weight: 550;
+}
+
+.modal-error {
+  margin-top: 12px;
+  padding: 9px 11px;
+  border: 1px solid #fecaca;
+  border-radius: 9px;
+  background: #fff7f7;
+  color: #b91c1c;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding: 12px 22px;
+  border-top: 1px solid #f0f3f8;
   background: #fff;
 }
 
@@ -184,5 +262,29 @@ function remove(secret: ProjectSecret) {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+@media (max-width: 640px) {
+  .secrets-modal {
+    width: calc(100vw - 16px);
+    max-height: calc(100vh - 16px);
+  }
+
+  .modal-head {
+    padding: 16px 16px 13px;
+  }
+
+  .modal-head h2 {
+    font-size: 16px;
+  }
+
+  .modal-body {
+    max-height: calc(100vh - 210px);
+    padding: 14px 16px;
+  }
+
+  .modal-footer {
+    padding: 10px 16px;
+  }
 }
 </style>

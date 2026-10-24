@@ -1,12 +1,18 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { NButton, NInput, NModal, NSelect, NSpin } from 'naive-ui'
+import { NButton, NIcon, NInput, NModal, NSelect, NSpin, NTooltip } from 'naive-ui'
 import { EditorView, basicSetup } from 'codemirror'
 import { javascript, javascriptLanguage } from '@codemirror/lang-javascript'
 import { autocompletion, type CompletionContext, type CompletionResult } from '@codemirror/autocomplete'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
+import {
+  CloseOutline,
+  CodeSlashOutline,
+  DocumentTextOutline,
+  SparklesOutline,
+} from '@vicons/ionicons5'
 import { providerApi, scriptApi } from '@/api'
 import type { Provider } from '@/api/types'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -44,6 +50,85 @@ const aiError = ref('')
 const aiStatus = ref('')
 const aiProviderId = ref<number | null>(null)
 const aiProviders = ref<Provider[]>([])
+const apiShow = ref(false)
+
+interface ApiDocItem {
+  name: string
+  detail: string
+  fields?: string
+}
+
+interface ApiDocGroup {
+  title: string
+  items: ApiDocItem[]
+}
+
+const apiDocGroups: ApiDocGroup[] = [
+  {
+    title: '任务与审核',
+    items: [
+      { name: 'ctx.task', detail: '当前任务', fields: 'task_no / biz_key / source_type / input / status' },
+      { name: 'ctx.audit', detail: '当前审核配置', fields: 'code / name / categories / decision_mode' },
+      { name: 'ctx.audit.category(code)', detail: '按分类 code 取分类对象，不存在返回 null' },
+      { name: 'ctx.result', detail: '最终结论：PASS / REJECT / REVIEW' },
+      { name: 'ctx.detail', detail: '摘要、风险等级、风险分、分类等结论字段' },
+      { name: 'ctx.payload', detail: '平台标准结果 JSON，可直接回传' },
+      { name: 'ctx.variables()', detail: '模板变量对象，保留数字和数组的真实类型' },
+      { name: 'ctx.get(path)', detail: '按路径读取上下文，例如 audit.code' },
+    ],
+  },
+  {
+    title: '数据库',
+    items: [
+      { name: 'ctx.mysql.connect(options)', detail: 'MySQL 连接；最多同时打开 2 个连接', fields: 'host / port / user / password / database / tls' },
+      { name: 'ctx.pg.connect(options)', detail: 'PostgreSQL 连接；脚本结束自动关闭', fields: 'host / port / user / password / database / sslmode' },
+      { name: 'db.query(sql, params?)', detail: '执行查询，返回行对象数组；受项目 DB 行数上限约束' },
+      { name: 'db.exec(sql, params?)', detail: '执行写入，返回 { rows_affected, last_insert_id }' },
+      { name: 'db.begin()', detail: '开启事务，返回 { query, exec, commit, rollback }' },
+      { name: 'db.close()', detail: '立即关闭连接；脚本结束时也会统一释放' },
+    ],
+  },
+  {
+    title: 'HTTP 与加密',
+    items: [
+      { name: 'ctx.http.request(options)', detail: '仅支持 HTTP/HTTPS，不支持 socket', fields: 'url / method / headers / body / timeout_ms' },
+      { name: 'HTTP 返回值', detail: '返回 { status, ok, body, body_base64, headers, bytes }' },
+      { name: 'ctx.crypto.base64Encode(value)', detail: 'Base64 编码字符串' },
+      { name: 'ctx.crypto.base64Decode(value)', detail: 'Base64 解码为 ArrayBuffer' },
+      { name: 'ctx.crypto.hexEncode(value)', detail: '十六进制编码' },
+      { name: 'ctx.crypto.sha256(value)', detail: 'SHA-256 小写十六进制' },
+      { name: 'ctx.crypto.hmacSha256(key, value)', detail: 'HMAC-SHA256 小写十六进制' },
+      { name: 'ctx.crypto.randomBytes(size)', detail: '安全随机字节，返回 ArrayBuffer' },
+      { name: 'ctx.crypto.uuid()', detail: '随机 UUID v4' },
+    ],
+  },
+  {
+    title: '日志、密钥与返回值',
+    items: [
+      { name: 'ctx.log(...args)', detail: '写入当前脚本执行日志' },
+      { name: 'console.log / info / warn / error', detail: '同样写入执行日志，并标注日志级别' },
+      { name: 'ctx.secret(name)', detail: '读取当前项目密钥；推荐用它保存数据库密码和 Token' },
+      { name: 'return value', detail: '返回值写入脚本执行记录；需可 JSON 序列化' },
+      { name: '运行限制', detail: '不能读写文件、下载文件、使用 socket、eval 或定时器；超时、OOM 会按失败记录' },
+    ],
+  },
+]
+
+const apiExample = `function main(ctx) {
+  const db = ctx.mysql.connect({
+    host: '127.0.0.1',
+    port: 3306,
+    user: ctx.secret('DB_USER'),
+    password: ctx.secret('DB_PASSWORD'),
+    database: 'biz'
+  })
+  const rows = db.query(
+    'select id from orders where task_no = ?',
+    [ctx.task.task_no]
+  )
+  ctx.log('matched rows', rows.length)
+  return { matched: rows.length, result: ctx.result }
+}`
 
 const aiProviderOptions = computed(() =>
   aiProviders.value.map((provider) => ({
@@ -58,6 +143,7 @@ const ctxCompletions = [
   { label: 'ctx.task.task_no', type: 'property', detail: '任务号' },
   { label: 'ctx.task.biz_key', type: 'property', detail: '业务主键' },
   { label: 'ctx.task.input', type: 'property', detail: 'text/image 输入与 ext' },
+  { label: 'ctx.project', type: 'property', detail: '当前项目', info: 'id / code / name' },
   { label: 'ctx.audit', type: 'property', detail: '当前审核配置' },
   { label: 'ctx.audit.code', type: 'property', detail: '审核编码' },
   { label: 'ctx.audit.name', type: 'property', detail: '审核名称' },
@@ -76,10 +162,14 @@ const ctxCompletions = [
   { label: 'ctx.http.request(options)', type: 'method', detail: 'HTTP/HTTPS 请求，不支持 socket' },
   { label: 'ctx.crypto.base64Encode(value)', type: 'method', detail: 'Base64 编码' },
   { label: 'ctx.crypto.base64Decode(value)', type: 'method', detail: 'Base64 解码为 ArrayBuffer' },
+  { label: 'ctx.crypto.hexEncode(value)', type: 'method', detail: '十六进制编码' },
   { label: 'ctx.crypto.sha256(value)', type: 'method', detail: 'SHA-256 十六进制' },
   { label: 'ctx.crypto.hmacSha256(key, value)', type: 'method', detail: 'HMAC-SHA256' },
   { label: 'ctx.crypto.randomBytes(size)', type: 'method', detail: '安全随机字节' },
   { label: 'ctx.crypto.uuid()', type: 'method', detail: '随机 UUID' },
+  { label: 'console.log', type: 'method', detail: '写入执行日志' },
+  { label: 'console.warn', type: 'method', detail: '写入警告日志' },
+  { label: 'console.error', type: 'method', detail: '写入错误日志' },
 ]
 
 function completionSource(context: CompletionContext): CompletionResult | null {
@@ -124,6 +214,8 @@ watch(() => props.show, (value) => {
       setEditorValue(props.script)
       editorView?.focus()
     })
+  } else {
+    apiShow.value = false
   }
 })
 
@@ -137,7 +229,16 @@ onBeforeUnmount(() => {
 })
 
 function close() {
+  apiShow.value = false
   emit('update:show', false)
+}
+
+function toggleAi() {
+  if (aiOpen.value) {
+    aiOpen.value = false
+    return
+  }
+  void openAi()
 }
 
 function renderMarkdown(content: string) {
@@ -230,9 +331,16 @@ function handleAiKeydown(event: KeyboardEvent) {
     <div class="script-editor-modal">
       <div class="script-editor-head">
         <div class="script-editor-title">
-          <div class="script-editor-kicker">JS RESULT ACTION</div>
-          <strong>编辑脚本</strong>
-          <span>入口 function main(ctx)，脚本结束自动关闭数据库连接</span>
+          <span class="script-editor-mark">
+            <n-icon :component="CodeSlashOutline" />
+          </span>
+          <div class="script-editor-heading">
+            <div class="script-editor-kicker">JS RESULT ACTION</div>
+            <div class="script-editor-heading-row">
+              <strong>编辑脚本</strong>
+              <span>入口 function main(ctx) · 结束自动释放连接</span>
+            </div>
+          </div>
         </div>
         <div class="script-editor-remark">
           <span>备注</span>
@@ -245,9 +353,33 @@ function handleAiKeydown(event: KeyboardEvent) {
           />
         </div>
         <div class="script-editor-actions">
-          <n-button size="small" secondary @click="openAi">AI 助手</n-button>
-          <n-button size="small" @click="close">取消</n-button>
+          <n-button size="small" quaternary @click="apiShow = true">
+            <template #icon><n-icon :component="DocumentTextOutline" /></template>
+            API 文档
+          </n-button>
+          <n-tooltip trigger="hover">
+            <template #trigger>
+              <n-button
+                circle
+                :quaternary="!aiOpen"
+                :type="aiOpen ? 'primary' : 'default'"
+                @click="toggleAi"
+              >
+                <template #icon><n-icon :component="SparklesOutline" /></template>
+              </n-button>
+            </template>
+            {{ aiOpen ? '收起 AI 脚本助手' : '打开 AI 脚本助手' }}
+          </n-tooltip>
           <n-button size="small" type="primary" @click="close">保存脚本</n-button>
+          <span class="script-editor-divider" />
+          <n-tooltip trigger="hover">
+            <template #trigger>
+              <n-button circle quaternary @click="close">
+                <template #icon><n-icon :component="CloseOutline" /></template>
+              </n-button>
+            </template>
+            关闭
+          </n-tooltip>
         </div>
       </div>
 
@@ -314,6 +446,39 @@ function handleAiKeydown(event: KeyboardEvent) {
       </div>
     </div>
   </n-modal>
+
+  <n-modal v-model:show="apiShow" :mask-closable="true">
+    <div class="script-api-modal">
+      <div class="script-api-head">
+        <div>
+          <div class="script-api-kicker">SCRIPT API REFERENCE</div>
+          <h3>脚本 API 文档</h3>
+          <p>脚本运行在受限沙箱中，支持数据库、HTTP 和加密编码；不支持文件读写、socket、eval 与定时器。</p>
+        </div>
+        <n-button circle quaternary @click="apiShow = false">
+          <template #icon><n-icon :component="CloseOutline" /></template>
+        </n-button>
+      </div>
+      <div class="script-api-body">
+        <section v-for="group in apiDocGroups" :key="group.title" class="script-api-group">
+          <h4>{{ group.title }}</h4>
+          <div v-for="item in group.items" :key="item.name" class="script-api-item">
+            <code>{{ item.name }}</code>
+            <p>{{ item.detail }}</p>
+            <span v-if="item.fields">{{ item.fields }}</span>
+          </div>
+        </section>
+        <section class="script-api-example">
+          <h4>完整示例</h4>
+          <pre>{{ apiExample }}</pre>
+        </section>
+      </div>
+      <div class="script-api-foot">
+        <span>具体限制值以项目设置的「JS 脚本动作限制」为准。</span>
+        <n-button size="small" type="primary" @click="apiShow = false">知道了</n-button>
+      </div>
+    </div>
+  </n-modal>
 </template>
 
 <style scoped>
@@ -329,39 +494,79 @@ function handleAiKeydown(event: KeyboardEvent) {
 
 .script-editor-head {
   display: flex;
+  min-height: 68px;
   align-items: center;
   gap: 18px;
-  padding: 12px 18px;
+  padding: 10px 16px 10px 18px;
   border-bottom: 1px solid #24324a;
-  background: #111c30;
+  background: linear-gradient(180deg, #142036, #111c30);
 }
 
 .script-editor-title {
   display: flex;
+  min-width: 300px;
+  align-items: center;
+  gap: 10px;
+}
+
+.script-editor-mark {
+  display: flex;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #29405f;
+  border-radius: 10px;
+  background: #0d1829;
+  color: #8fb4ec;
+}
+
+.script-editor-mark :deep(svg) {
+  width: 18px;
+  height: 18px;
+}
+
+.script-editor-heading {
+  display: flex;
+  min-width: 0;
   flex-direction: column;
-  min-width: 240px;
   gap: 2px;
 }
 
 .script-editor-kicker {
   color: #7ea2d6;
-  font-size: 9px;
+  font-family: var(--mono);
+  font-size: 8px;
+  font-weight: 650;
   letter-spacing: 0.14em;
 }
 
-.script-editor-title strong {
-  color: #f8fafc;
-  font-size: 16px;
+.script-editor-heading-row {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 10px;
 }
 
-.script-editor-title span {
-  color: #94a3b8;
-  font-size: 10px;
+.script-editor-heading-row strong {
+  flex-shrink: 0;
+  color: #f8fafc;
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.script-editor-heading-row span {
+  overflow: hidden;
+  color: #8fa4c4;
+  font-size: 9.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .script-editor-remark {
   display: flex;
-  max-width: 420px;
+  max-width: 400px;
   flex: 1;
   align-items: center;
   gap: 8px;
@@ -369,14 +574,34 @@ function handleAiKeydown(event: KeyboardEvent) {
 
 .script-editor-remark > span {
   flex-shrink: 0;
-  color: #94a3b8;
-  font-size: 10px;
+  color: #8fa4c4;
+  font-size: 9.5px;
 }
 
 .script-editor-actions {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
+  margin-left: auto;
+}
+
+.script-editor-actions :deep(.n-button:not(.n-button--primary-type)) {
+  --n-text-color: #c5d3e8 !important;
+  --n-text-color-hover: #fff !important;
+  --n-text-color-pressed: #fff !important;
+  --n-text-color-focus: #fff !important;
+  --n-color: rgba(255, 255, 255, 0.04) !important;
+  --n-color-hover: rgba(255, 255, 255, 0.1) !important;
+  --n-color-pressed: rgba(255, 255, 255, 0.14) !important;
+  --n-color-focus: rgba(255, 255, 255, 0.1) !important;
+}
+
+.script-editor-divider {
+  width: 1px;
+  height: 20px;
+  margin: 0 2px;
+  background: #2a3a55;
 }
 
 .script-editor-body {
@@ -420,6 +645,13 @@ function handleAiKeydown(event: KeyboardEvent) {
 .script-ai-head strong {
   color: #f8fafc;
   font-size: 12px;
+}
+
+.script-ai-head :deep(.n-button) {
+  --n-text-color: #94a3b8 !important;
+  --n-text-color-hover: #fff !important;
+  --n-text-color-focus: #fff !important;
+  --n-text-color-pressed: #fff !important;
 }
 
 .script-ai-warning {
@@ -572,6 +804,21 @@ function handleAiKeydown(event: KeyboardEvent) {
   border-top: 1px solid #1f2d44;
 }
 
+.script-ai-composer :deep(.n-input),
+.script-ai-composer :deep(.n-select) {
+  --n-color: #0b1425 !important;
+  --n-color-focus: #0b1425 !important;
+  --n-color-disabled: #0b1425 !important;
+  --n-text-color: #e2e8f0 !important;
+  --n-text-color-disabled: #64748b !important;
+  --n-placeholder-color: #64748b !important;
+  --n-border: 1px solid #24324a !important;
+  --n-border-hover: 1px solid #3d557a !important;
+  --n-border-focus: 1px solid #52709c !important;
+  --n-border-disabled: 1px solid #1f2d44 !important;
+  --n-box-shadow-focus: none !important;
+}
+
 .script-ai-composer-foot {
   display: flex;
   align-items: center;
@@ -580,9 +827,154 @@ function handleAiKeydown(event: KeyboardEvent) {
   margin-top: 7px;
 }
 
+.script-api-modal {
+  display: flex;
+  width: min(900px, calc(100vw - 32px));
+  max-height: calc(100vh - 40px);
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 30px 80px -20px rgba(15, 23, 42, 0.35);
+}
+
+.script-api-head {
+  display: flex;
+  flex-shrink: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 20px 24px 16px;
+  border-bottom: 1px solid #f0f3f8;
+  background: linear-gradient(130deg, #f8fbff, #fff);
+}
+
+.script-api-kicker {
+  color: var(--brand);
+  font-family: var(--mono);
+  font-size: 8.5px;
+  font-weight: 650;
+  letter-spacing: 0.12em;
+}
+
+.script-api-head h3 {
+  margin: 4px 0 3px;
+  color: var(--ink);
+  font-size: 19px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+.script-api-head p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10.5px;
+  line-height: 1.6;
+}
+
+.script-api-body {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 16px;
+  overflow-y: auto;
+  padding: 18px 24px;
+}
+
+.script-api-group,
+.script-api-example {
+  padding: 14px 15px;
+  border: 1px solid #edf1f7;
+  border-radius: 12px;
+  background: #fbfcfe;
+}
+
+.script-api-group h4,
+.script-api-example h4 {
+  margin: 0 0 7px;
+  color: #334155;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.script-api-item {
+  padding: 7px 0;
+  border-top: 1px dashed #e8eef7;
+}
+
+.script-api-item:first-of-type {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.script-api-item code {
+  display: inline-block;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: #eef4ff;
+  color: #1d4ed8;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  word-break: break-all;
+}
+
+.script-api-item p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.script-api-item span {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted-light);
+  font-family: var(--mono);
+  font-size: 8.8px;
+  line-height: 1.6;
+  word-break: break-all;
+}
+
+.script-api-example {
+  grid-column: 1 / -1;
+}
+
+.script-api-example pre {
+  max-height: 260px;
+  margin: 0;
+  overflow: auto;
+  padding: 12px 13px;
+  border-radius: 8px;
+  background: #0f172a;
+  color: #cbd5e1;
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+
+.script-api-foot {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 24px;
+  border-top: 1px solid #f0f3f8;
+  background: #fff;
+}
+
+.script-api-foot span {
+  color: var(--muted-light);
+  font-size: 9.5px;
+}
+
 @media (max-width: 900px) {
   .script-editor-head {
     flex-wrap: wrap;
+  }
+
+  .script-editor-title {
+    flex: 1;
   }
 
   .script-editor-remark {
@@ -593,6 +985,58 @@ function handleAiKeydown(event: KeyboardEvent) {
 
   .script-ai-panel {
     width: min(390px, 70vw);
+  }
+
+  .script-api-body {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .script-editor-head {
+    gap: 10px;
+    padding: 10px 12px;
+  }
+
+  .script-editor-title {
+    min-width: 0;
+  }
+
+  .script-editor-mark {
+    display: none;
+  }
+
+  .script-editor-heading-row span {
+    display: none;
+  }
+
+  .script-editor-actions {
+    gap: 4px;
+  }
+
+  .script-api-modal {
+    width: calc(100vw - 16px);
+    max-height: calc(100vh - 16px);
+  }
+
+  .script-api-head {
+    padding: 16px 16px 13px;
+  }
+
+  .script-api-head h3 {
+    font-size: 16px;
+  }
+
+  .script-api-body {
+    padding: 14px 16px;
+  }
+
+  .script-api-foot {
+    padding: 10px 16px;
+  }
+
+  .script-api-foot span {
+    display: none;
   }
 }
 </style>

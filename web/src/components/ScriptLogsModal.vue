@@ -211,12 +211,48 @@ watch(status, () => {
 <style scoped>
 .script-logs-modal {
   display: flex;
-  width: min(1080px, calc(100vw - 24px));
-  max-height: min(780px, calc(100vh - 24px));
+  width: min(1080px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
   flex-direction: column;
   overflow: hidden;
   border-radius: 16px;
   background: #fff;
+  box-shadow: 0 30px 80px -20px rgba(15, 23, 42, 0.35);
+}
+
+.modal-head {
+  display: flex;
+  flex-shrink: 0;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 20px 22px 16px;
+  border-bottom: 1px solid #f0f3f8;
+  background: linear-gradient(130deg, #f8fbff, #fff);
+}
+
+.modal-kicker {
+  color: var(--brand);
+  font-family: var(--mono);
+  font-size: 8.5px;
+  font-weight: 650;
+  letter-spacing: 0.12em;
+}
+
+.modal-head h2 {
+  margin: 4px 0 3px;
+  color: var(--ink);
+  font-size: 19px;
+  font-weight: 650;
+  line-height: 1.35;
+  letter-spacing: -0.02em;
+}
+
+.modal-head p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10.5px;
+  line-height: 1.6;
 }
 
 .script-logs-body {
@@ -261,12 +297,15 @@ watch(status, () => {
 
 .script-log-item {
   display: flex;
+  width: 100%;
   flex-direction: column;
   gap: 5px;
   padding: 10px 12px;
   border: 0;
   border-bottom: 1px solid #f1f4f9;
   background: #fff;
+  color: inherit;
+  font: inherit;
   text-align: left;
   cursor: pointer;
 }
@@ -411,7 +450,45 @@ watch(status, () => {
   white-space: pre-wrap;
 }
 
+.modal-error {
+  flex-shrink: 0;
+  margin: 0 16px 12px;
+  padding: 9px 11px;
+  border: 1px solid #fecaca;
+  border-radius: 9px;
+  background: #fff7f7;
+  color: #b91c1c;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.modal-footer {
+  display: flex;
+  flex-shrink: 0;
+  justify-content: flex-end;
+  padding: 12px 20px;
+  border-top: 1px solid #f0f3f8;
+  background: #fff;
+}
+
 @media (max-width: 760px) {
+  .script-logs-modal {
+    width: calc(100vw - 16px);
+    max-height: calc(100vh - 16px);
+  }
+
+  .modal-head {
+    padding: 16px 16px 13px;
+  }
+
+  .modal-head h2 {
+    font-size: 16px;
+  }
+
+  .modal-footer {
+    padding: 10px 16px;
+  }
+
   .script-logs-body {
     flex-direction: column;
   }

@@ -872,7 +872,11 @@ onMounted(load)
 }
 
 .project-modal {
+  display: flex;
   width: min(540px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  flex-direction: column;
+  overflow: hidden;
   border-radius: 18px;
   background: #fff;
   box-shadow: 0 30px 80px -20px rgba(15, 23, 42, 0.35);
@@ -880,6 +884,7 @@ onMounted(load)
 
 .modal-head {
   display: flex;
+  flex-shrink: 0;
   align-items: flex-start;
   justify-content: space-between;
   gap: 18px;
@@ -930,6 +935,8 @@ onMounted(load)
 }
 
 .modal-body {
+  min-height: 0;
+  overflow-y: auto;
   padding: 20px 26px;
 }
 
@@ -994,6 +1001,7 @@ onMounted(load)
 
 .modal-footer {
   display: flex;
+  flex-shrink: 0;
   justify-content: flex-end;
   gap: 8px;
   padding: 15px 26px;
