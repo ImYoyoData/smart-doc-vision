@@ -51,6 +51,11 @@ const aiStatus = ref('')
 const aiProviderId = ref<number | null>(null)
 const aiProviders = ref<Provider[]>([])
 const apiShow = ref(false)
+const aiSuggestions = [
+  '审核通过后把结果写回业务数据库',
+  '审核不通过时调用 HTTP 接口通知业务方',
+  '把最终审核结果推送到 Redis Stream',
+]
 
 interface ApiDocItem {
   name: string
@@ -211,6 +216,7 @@ watch(() => props.script, (value) => setEditorValue(value))
 watch(() => props.show, (value) => {
   if (value) {
     nextTick(() => {
+      createEditor()
       setEditorValue(props.script)
       editorView?.focus()
     })
@@ -357,19 +363,15 @@ function handleAiKeydown(event: KeyboardEvent) {
             <template #icon><n-icon :component="DocumentTextOutline" /></template>
             API 文档
           </n-button>
-          <n-tooltip trigger="hover">
-            <template #trigger>
-              <n-button
-                circle
-                :quaternary="!aiOpen"
-                :type="aiOpen ? 'primary' : 'default'"
-                @click="toggleAi"
-              >
-                <template #icon><n-icon :component="SparklesOutline" /></template>
-              </n-button>
-            </template>
-            {{ aiOpen ? '收起 AI 脚本助手' : '打开 AI 脚本助手' }}
-          </n-tooltip>
+          <n-button
+            size="small"
+            :type="aiOpen ? 'primary' : 'default'"
+            :secondary="!aiOpen"
+            @click="toggleAi"
+          >
+            <template #icon><n-icon :component="SparklesOutline" /></template>
+            AI 脚本助手
+          </n-button>
           <n-button size="small" type="primary" @click="close">保存脚本</n-button>
           <span class="script-editor-divider" />
           <n-tooltip trigger="hover">
@@ -386,63 +388,96 @@ function handleAiKeydown(event: KeyboardEvent) {
       <div class="script-editor-body">
         <div ref="editorHost" class="script-editor-host" />
 
-        <aside v-if="aiOpen" class="script-ai-panel">
-          <div class="script-ai-head">
-            <strong>AI 脚本助手</strong>
-            <n-button quaternary size="tiny" @click="aiOpen = false">收起</n-button>
-          </div>
-          <div class="script-ai-warning">
-            AI 会读取当前脚本。请使用 <code>ctx.secret()</code>，不要在脚本里写明文密码。
-          </div>
-          <div class="script-ai-messages">
-            <div v-if="!aiMessages.length" class="script-ai-empty">
-              描述你想要的脚本，例如“审核结果为 REJECT 时更新订单表并回调业务系统”。
-            </div>
-            <div v-for="(message, index) in aiMessages" :key="index" class="script-ai-message" :class="message.role">
-              <span class="script-ai-avatar">{{ message.role === 'user' ? '我' : 'AI' }}</span>
-              <div class="script-ai-bubble">
-                <div class="script-ai-markdown" v-html="renderMarkdown(message.content)" />
-                <div v-if="message.script" class="script-ai-code">
-                  <div class="script-ai-code-head">
-                    <span>生成脚本</span>
-                    <n-button size="tiny" type="primary" secondary @click="applyAiScript(message)">应用到编辑器</n-button>
-                  </div>
-                  <pre>{{ message.script.slice(0, 1200) }}{{ message.script.length > 1200 ? '\n…' : '' }}</pre>
-                  <span v-if="message.scriptError" class="script-ai-error">语法错误：{{ message.scriptError }}</span>
-                  <span v-else-if="message.scriptValid" class="script-ai-ok">语法检查通过</span>
+        <Transition name="script-ai-slide">
+          <aside v-if="aiOpen" class="script-ai-panel">
+            <div class="script-ai-head">
+              <div class="script-ai-title">
+                <span class="script-ai-title-icon">
+                  <n-icon :component="SparklesOutline" />
+                </span>
+                <div>
+                  <strong>AI 脚本助手</strong>
+                  <small>读取当前脚本 · 生成后手动应用</small>
                 </div>
               </div>
+              <n-button quaternary size="tiny" @click="aiOpen = false">收起</n-button>
             </div>
-            <div v-if="aiBusy" class="script-ai-status">
-              <n-spin :size="12" />
-              <span>{{ aiStatus || 'AI 正在生成脚本…' }}</span>
+            <div class="script-ai-warning">
+              AI 会读取当前脚本。请使用 <code>ctx.secret()</code>，不要在脚本里写明文密码。
             </div>
-          </div>
-          <div class="script-ai-composer">
-            <n-input
-              v-model:value="aiInput"
-              type="textarea"
-              :autosize="{ minRows: 2, maxRows: 4 }"
-              :disabled="aiBusy"
-              placeholder="描述脚本需求，Enter 发送，Shift+Enter 换行"
-              :input-props="{ onKeydown: handleAiKeydown }"
-            />
-            <div class="script-ai-composer-foot">
-              <n-select
-                v-model:value="aiProviderId"
-                size="tiny"
-                :options="aiProviderOptions"
-                :disabled="aiBusy || !aiProviderOptions.length"
-                placeholder="选择通用大模型"
-                style="max-width: 220px"
+            <div class="script-ai-messages">
+              <div v-if="!aiMessages.length" class="script-ai-empty">
+                <p>描述你想要的脚本，AI 会结合当前审核配置生成实现。</p>
+                <div class="script-ai-suggestions">
+                  <button
+                    v-for="suggestion in aiSuggestions"
+                    :key="suggestion"
+                    type="button"
+                    @click="aiInput = suggestion"
+                  >
+                    {{ suggestion }}
+                  </button>
+                </div>
+              </div>
+              <div v-for="(message, index) in aiMessages" :key="index" class="script-ai-message" :class="message.role">
+                <span class="script-ai-avatar">{{ message.role === 'user' ? '我' : 'AI' }}</span>
+                <div class="script-ai-bubble">
+                  <div class="script-ai-markdown" v-html="renderMarkdown(message.content)" />
+                  <div v-if="message.script" class="script-ai-code">
+                    <div class="script-ai-code-head">
+                      <span>生成脚本</span>
+                      <n-button size="tiny" type="primary" secondary @click="applyAiScript(message)">应用到编辑器</n-button>
+                    </div>
+                    <pre>{{ message.script.slice(0, 1200) }}{{ message.script.length > 1200 ? '\n…' : '' }}</pre>
+                    <span v-if="message.scriptError" class="script-ai-error">语法错误：{{ message.scriptError }}</span>
+                    <span v-else-if="message.scriptValid" class="script-ai-ok">语法检查通过</span>
+                  </div>
+                </div>
+              </div>
+              <div v-if="aiBusy" class="script-ai-status">
+                <n-spin :size="12" />
+                <span>{{ aiStatus || 'AI 正在生成脚本…' }}</span>
+              </div>
+            </div>
+            <div class="script-ai-composer">
+              <n-input
+                v-model:value="aiInput"
+                type="textarea"
+                :autosize="{ minRows: 2, maxRows: 4 }"
+                :disabled="aiBusy"
+                placeholder="描述脚本需求，Enter 发送，Shift+Enter 换行"
+                :input-props="{ onKeydown: handleAiKeydown }"
               />
-              <n-button size="tiny" type="primary" :loading="aiBusy" :disabled="!aiInput.trim() || !aiProviderId" @click="sendAi">
-                发送
-              </n-button>
+              <div class="script-ai-composer-foot">
+                <n-select
+                  v-model:value="aiProviderId"
+                  size="tiny"
+                  :options="aiProviderOptions"
+                  :disabled="aiBusy || !aiProviderOptions.length"
+                  placeholder="选择通用大模型"
+                  style="max-width: 220px"
+                />
+                <n-button size="tiny" type="primary" :loading="aiBusy" :disabled="!aiInput.trim() || !aiProviderId" @click="sendAi">
+                  发送
+                </n-button>
+              </div>
+              <div v-if="aiError" class="script-ai-error">{{ aiError }}</div>
             </div>
-            <div v-if="aiError" class="script-ai-error">{{ aiError }}</div>
-          </div>
-        </aside>
+          </aside>
+        </Transition>
+
+        <Transition name="script-ai-fade">
+          <button
+            v-if="!aiOpen"
+            type="button"
+            class="script-ai-tab"
+            aria-label="打开 AI 脚本助手"
+            @click="openAi"
+          >
+            <n-icon :component="SparklesOutline" />
+            <span>AI 脚本助手</span>
+          </button>
+        </Transition>
       </div>
     </div>
   </n-modal>
@@ -605,6 +640,7 @@ function handleAiKeydown(event: KeyboardEvent) {
 }
 
 .script-editor-body {
+  position: relative;
   display: flex;
   min-height: 0;
   flex: 1;
@@ -626,20 +662,132 @@ function handleAiKeydown(event: KeyboardEvent) {
 }
 
 .script-ai-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
   display: flex;
-  width: 390px;
-  flex-shrink: 0;
+  width: min(410px, 92vw);
   flex-direction: column;
-  border-left: 1px solid #24324a;
-  background: #0b1425;
+  border-left: 1px solid #2b3f5f;
+  background: linear-gradient(180deg, #0c1627, #0a1220);
+  box-shadow: -24px 0 50px rgba(2, 8, 23, 0.55);
 }
 
 .script-ai-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 10px;
   padding: 10px 12px;
   border-bottom: 1px solid #1f2d44;
+}
+
+.script-ai-title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.script-ai-title-icon {
+  display: flex;
+  width: 27px;
+  height: 27px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #2f4f7f;
+  border-radius: 8px;
+  background: linear-gradient(145deg, #1c3f6d, #12294a);
+  color: #bfdbfe;
+}
+
+.script-ai-title-icon :deep(svg) {
+  width: 15px;
+  height: 15px;
+}
+
+.script-ai-title > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.script-ai-title small {
+  overflow: hidden;
+  color: #7d8faa;
+  font-size: 8.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.script-ai-tab {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  z-index: 18;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 9px;
+  transform: translateY(-50%);
+  border: 1px solid #33517a;
+  border-right: 0;
+  border-radius: 12px 0 0 12px;
+  background: linear-gradient(180deg, #1b3f6e, #102744);
+  box-shadow: -10px 12px 30px rgba(2, 8, 23, 0.45), inset 0 0 0 1px rgba(147, 197, 253, 0.08);
+  color: #dbeafe;
+  cursor: pointer;
+  transition: background 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+}
+
+.script-ai-tab:hover {
+  transform: translateY(-50%) translateX(-3px);
+  background: linear-gradient(180deg, #24528c, #15325a);
+  box-shadow: -12px 16px 36px rgba(2, 8, 23, 0.55), 0 0 24px rgba(96, 165, 250, 0.18);
+}
+
+.script-ai-tab:focus-visible {
+  outline: 2px solid #93c5fd;
+  outline-offset: 2px;
+}
+
+.script-ai-tab :deep(svg) {
+  width: 17px;
+  height: 17px;
+  flex-shrink: 0;
+}
+
+.script-ai-tab span {
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.16em;
+  writing-mode: vertical-rl;
+}
+
+.script-ai-slide-enter-active,
+.script-ai-slide-leave-active {
+  transition: transform 0.24s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.18s ease;
+}
+
+.script-ai-slide-enter-from,
+.script-ai-slide-leave-to {
+  transform: translateX(100%);
+  opacity: 0;
+}
+
+.script-ai-fade-enter-active,
+.script-ai-fade-leave-active {
+  transition: opacity 0.16s ease, transform 0.16s ease;
+}
+
+.script-ai-fade-enter-from,
+.script-ai-fade-leave-to {
+  transform: translateY(-50%) translateX(8px);
+  opacity: 0;
 }
 
 .script-ai-head strong {
@@ -684,6 +832,35 @@ function handleAiKeydown(event: KeyboardEvent) {
   color: #64748b;
   font-size: 10px;
   line-height: 1.7;
+}
+
+.script-ai-empty p {
+  margin: 0 0 9px;
+}
+
+.script-ai-suggestions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.script-ai-suggestions button {
+  padding: 7px 9px;
+  border: 1px solid #243a5c;
+  border-radius: 8px;
+  background: #0f1d33;
+  color: #a9bfdc;
+  cursor: pointer;
+  font-size: 9.5px;
+  line-height: 1.4;
+  text-align: left;
+  transition: border-color 0.16s ease, background 0.16s ease, color 0.16s ease;
+}
+
+.script-ai-suggestions button:hover {
+  border-color: #3b5f91;
+  background: #13253f;
+  color: #dbeafe;
 }
 
 .script-ai-message {
@@ -984,7 +1161,7 @@ function handleAiKeydown(event: KeyboardEvent) {
   }
 
   .script-ai-panel {
-    width: min(390px, 70vw);
+    width: min(410px, 88vw);
   }
 
   .script-api-body {
@@ -1014,6 +1191,15 @@ function handleAiKeydown(event: KeyboardEvent) {
     gap: 4px;
   }
 
+  .script-ai-panel {
+    width: 100%;
+    border-left: 0;
+  }
+
+  .script-ai-tab {
+    padding: 12px 8px;
+  }
+
   .script-api-modal {
     width: calc(100vw - 16px);
     max-height: calc(100vh - 16px);
@@ -1037,6 +1223,17 @@ function handleAiKeydown(event: KeyboardEvent) {
 
   .script-api-foot span {
     display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .script-ai-tab,
+  .script-ai-suggestions button,
+  .script-ai-slide-enter-active,
+  .script-ai-slide-leave-active,
+  .script-ai-fade-enter-active,
+  .script-ai-fade-leave-active {
+    transition: none;
   }
 }
 </style>
