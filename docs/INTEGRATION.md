@@ -497,6 +497,8 @@ if not hmac.compare_digest(expected, request.headers["X-SmartDoc-Signature"]):
 
 沙盒模拟运行：脚本编辑器右上角「运行」按钮使用当前脚本 + 模拟上下文执行一次，默认结论取该动作所在的 PASS / REJECT / REVIEW，齿轮按钮可配置任务号、业务主键、来源、输入文本与 `ctx.detail`（摘要 / 风险等级 / 风险分 / 原因 / 标签 / 分类 / 扩展 JSON）。模拟时 `ctx.secret` 返回占位字符串、数据库连接不建立（`query` 返回空、`exec` 返回 0 行）、`ctx.http` 直接返回 `200 {"simulated":true}`，日志会逐条标注 `[SIM]`；面板展示临时日志、返回值与临时变量，`ctx.simulation` 为 `true`，且不写入脚本执行记录。
 
+加解密与密钥：`ctx.crypto` 提供 MD5 / SHA-1 / SHA-256、HMAC-MD5 / HMAC-SHA1 / HMAC-SHA256、Base64 / Hex、AES / DES（CBC / ECB，PKCS7 或 NONE，base64 或 hex），可用于第三方接口的签名拼装与报文加解密；`keyEncoding` / `ivEncoding` 支持 hex 或 base64 密钥。凭据统一通过 `ctx.secret('NAME')` 读取，在后台「项目空间 → 项目密钥」按项目维护；脚本编辑器的「API 文档」提供图文流程和「去配置项目密钥」跳转按钮。
+
 每个结论可配置 `on_error`：`continue` 继续执行、`stop` 停止后续动作、`to_review` 转人工复核。模板变量：`${task_no}`、`${task_id}`、`${biz_key}`、`${source_type}`、`${project_code}`、`${project_id}`、`${audit_code}`、`${audit_id}`、`${result}`、`${summary}`、`${reasons}`、`${labels}`、`${risk_level}`、`${score}`、`${category}`、`${category_name}`、`${category_confidence}`、`${review_note}`。
 
 取值须知：

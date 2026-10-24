@@ -265,7 +265,18 @@ watch(
   { immediate: true },
 )
 
-onMounted(load)
+onMounted(async () => {
+  await load()
+  if (route.query.secrets === '1') {
+    const projectId = Number(route.query.project)
+    const project = workspace.projects.find((item) => item.id === projectId)
+    if (project) {
+      workspace.setCurrentProject(project.id)
+      openSecrets(project)
+    }
+    router.replace({ name: 'projects' })
+  }
+})
 </script>
 
 <template>

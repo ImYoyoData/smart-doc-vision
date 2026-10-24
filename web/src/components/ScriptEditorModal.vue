@@ -299,10 +299,34 @@ const apiDocGroups: ApiDocGroup[] = [
       { name: 'ctx.crypto.base64Encode(value)', detail: 'Base64 编码字符串' },
       { name: 'ctx.crypto.base64Decode(value)', detail: 'Base64 解码为 ArrayBuffer' },
       { name: 'ctx.crypto.hexEncode(value)', detail: '十六进制编码' },
+      { name: 'ctx.crypto.md5(value)', detail: 'MD5，小写十六进制；常用于参数签名' },
+      { name: 'ctx.crypto.sha1(value)', detail: 'SHA-1，小写十六进制' },
       { name: 'ctx.crypto.sha256(value)', detail: 'SHA-256 小写十六进制' },
+      { name: 'ctx.crypto.hmacMd5(key, value)', detail: 'HMAC-MD5，小写十六进制' },
+      { name: 'ctx.crypto.hmacSha1(key, value)', detail: 'HMAC-SHA1，小写十六进制' },
       { name: 'ctx.crypto.hmacSha256(key, value)', detail: 'HMAC-SHA256 小写十六进制' },
       { name: 'ctx.crypto.randomBytes(size)', detail: '安全随机字节，返回 ArrayBuffer' },
-      { name: 'ctx.crypto.uuid()', detail: '随机 UUID v4' },
+      { name: 'ctx.crypto.uuid()', detail: '随机 UUID v4；可作 nonce' },
+    ],
+  },
+  {
+    title: 'AES / DES',
+    items: [
+      {
+        name: 'ctx.crypto.aesEncrypt(options)',
+        detail: 'AES 加密，返回指定编码的密文字符串',
+        fields: 'data / key / iv / mode: CBC·ECB / padding: PKCS7·NONE / encoding: base64·hex / keyEncoding·ivEncoding: utf8·hex·base64',
+      },
+      {
+        name: 'ctx.crypto.aesDecrypt(options)',
+        detail: 'AES 解密，入参同 aesEncrypt；data 为密文',
+        fields: '密钥 16/24/32 字节，iv 16 字节；ECB 不需要 iv',
+      },
+      {
+        name: 'ctx.crypto.desEncrypt(options) / desDecrypt(options)',
+        detail: 'DES 加解密，入参同 AES',
+        fields: '密钥 8 字节，iv 8 字节（CBC）',
+      },
     ],
   },
   {
@@ -317,19 +341,39 @@ const apiDocGroups: ApiDocGroup[] = [
   },
 ]
 
-const apiExample = `const db = ctx.mysql.connect({
-  host: '127.0.0.1',
+const apiExample = `// 1) 查第三方业务库，密码来自项目密钥
+const db = ctx.mysql.connect({
+  host: '10.0.0.12',
   port: 3306,
-  user: ctx.secret('DB_USER'),
-  password: ctx.secret('DB_PASSWORD'),
+  user: ctx.secret('BIZ_DB_USER'),
+  password: ctx.secret('BIZ_DB_PASSWORD'),
   database: 'biz'
 })
 const rows = db.query(
-  'select id from orders where task_no = ?',
-  [ctx.task.task_no]
+  'select order_no, amount from orders where biz_key = ?',
+  [ctx.task.biz_key]
 )
-ctx.log('matched rows', rows.length)
-;({ matched: rows.length, result: ctx.result })`
+db.close()
+
+// 2) 按对方文档拼签名：参数串 + AppSecret -> HMAC-SHA256
+const ts = String(Date.now())
+const nonce = ctx.crypto.uuid()
+const signText = 'app_id=' + ctx.secret('APP_ID')
+  + '&biz_key=' + ctx.task.biz_key
+  + '&nonce=' + nonce
+  + '&ts=' + ts
+const sign = ctx.crypto.hmacSha256(ctx.secret('APP_SECRET'), signText)
+
+// 3) 回调第三方接口；不要在日志里输出密钥
+const res = ctx.http.request({
+  url: 'https://api.example.com/audit/callback',
+  method: 'POST',
+  headers: { 'X-Sign': sign, 'X-Timestamp': ts, 'X-Nonce': nonce },
+  body: { result: ctx.result, summary: ctx.detail.summary, orders: rows },
+  timeout_ms: 5000
+})
+ctx.log('callback status', res.status)
+;({ ok: res.ok, status: res.status })`
 
 const aiProviderOptions = computed(() =>
   aiProviders.value.map((provider) => ({
@@ -371,8 +415,16 @@ const ctxCompletions = [
   { label: 'ctx.crypto.base64Encode(value)', type: 'method', detail: 'Base64 编码' },
   { label: 'ctx.crypto.base64Decode(value)', type: 'method', detail: 'Base64 解码为 ArrayBuffer' },
   { label: 'ctx.crypto.hexEncode(value)', type: 'method', detail: '十六进制编码' },
+  { label: 'ctx.crypto.md5(value)', type: 'method', detail: 'MD5 十六进制' },
+  { label: 'ctx.crypto.sha1(value)', type: 'method', detail: 'SHA-1 十六进制' },
   { label: 'ctx.crypto.sha256(value)', type: 'method', detail: 'SHA-256 十六进制' },
+  { label: 'ctx.crypto.hmacMd5(key, value)', type: 'method', detail: 'HMAC-MD5' },
+  { label: 'ctx.crypto.hmacSha1(key, value)', type: 'method', detail: 'HMAC-SHA1' },
   { label: 'ctx.crypto.hmacSha256(key, value)', type: 'method', detail: 'HMAC-SHA256' },
+  { label: 'ctx.crypto.aesEncrypt(options)', type: 'method', detail: 'AES 加密（CBC/ECB）' },
+  { label: 'ctx.crypto.aesDecrypt(options)', type: 'method', detail: 'AES 解密' },
+  { label: 'ctx.crypto.desEncrypt(options)', type: 'method', detail: 'DES 加密（CBC/ECB）' },
+  { label: 'ctx.crypto.desDecrypt(options)', type: 'method', detail: 'DES 解密' },
   { label: 'ctx.crypto.randomBytes(size)', type: 'method', detail: '安全随机字节' },
   { label: 'ctx.crypto.uuid()', type: 'method', detail: '随机 UUID' },
   { label: 'console.log', type: 'method', detail: '写入执行日志' },
@@ -569,6 +621,12 @@ function applySimulationState(state: string) {
 function openSimulationConfig() {
   simError.value = ''
   simConfigShow.value = true
+}
+
+function openProjectSecrets() {
+  const projectId = workspace.currentProjectId
+  const url = projectId ? `/projects?project=${projectId}&secrets=1` : '/projects'
+  window.open(url, '_blank', 'noopener')
 }
 
 function splitSimulationLines(value: string) {
@@ -1281,6 +1339,35 @@ function handleAiKeydown(event: KeyboardEvent) {
         <section class="script-api-example">
           <h4>完整示例</h4>
           <pre>{{ apiExample }}</pre>
+        </section>
+        <section class="script-api-secret">
+          <h4>项目密钥与 ctx.secret</h4>
+          <div class="script-api-flow">
+            <div class="script-api-flow-node">
+              <span class="flow-step">1</span>
+              <strong>项目空间</strong>
+              <small>选择要运行脚本的项目</small>
+            </div>
+            <span class="flow-arrow">→</span>
+            <div class="script-api-flow-node">
+              <span class="flow-step">2</span>
+              <strong>项目密钥</strong>
+              <small>新增 NAME / VALUE</small>
+            </div>
+            <span class="flow-arrow">→</span>
+            <div class="script-api-flow-node accent">
+              <span class="flow-step">3</span>
+              <strong>脚本调用</strong>
+              <code>ctx.secret('NAME')</code>
+            </div>
+          </div>
+          <p>
+            项目密钥按项目隔离保存，不会写进脚本或执行日志。数据库密码、第三方 AppSecret、签名 Key、AES Key / IV 都应放在密钥里，脚本通过名称读取。
+          </p>
+          <div class="script-api-secret-actions">
+            <n-button size="small" type="primary" @click="openProjectSecrets">去配置项目密钥</n-button>
+            <span>在新标签页打开「{{ workspace.currentProject?.name || '项目空间' }}」的密钥面板</span>
+          </div>
         </section>
       </div>
       <div class="script-api-foot">
@@ -2122,7 +2209,8 @@ function handleAiKeydown(event: KeyboardEvent) {
 }
 
 .script-api-group,
-.script-api-example {
+.script-api-example,
+.script-api-secret {
   padding: 14px 15px;
   border: 1px solid #edf1f7;
   border-radius: 12px;
@@ -2130,7 +2218,8 @@ function handleAiKeydown(event: KeyboardEvent) {
 }
 
 .script-api-group h4,
-.script-api-example h4 {
+.script-api-example h4,
+.script-api-secret h4 {
   margin: 0 0 7px;
   color: #334155;
   font-size: 11px;
@@ -2175,8 +2264,96 @@ function handleAiKeydown(event: KeyboardEvent) {
   word-break: break-all;
 }
 
-.script-api-example {
+.script-api-example,
+.script-api-secret {
   grid-column: 1 / -1;
+}
+
+.script-api-flow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 10px;
+  margin: 4px 0 10px;
+}
+
+.script-api-flow-node {
+  position: relative;
+  display: flex;
+  min-width: 150px;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid #e2e9f5;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.script-api-flow-node.accent {
+  border-color: #bfdbfe;
+  background: #f5f9ff;
+}
+
+.flow-step {
+  display: flex;
+  width: 18px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: #e8f0ff;
+  color: #1d4ed8;
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.script-api-flow-node strong {
+  color: var(--ink);
+  font-size: 11px;
+}
+
+.script-api-flow-node small {
+  color: var(--muted);
+  font-size: 9.5px;
+}
+
+.script-api-flow-node code {
+  align-self: flex-start;
+  margin-top: 2px;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: #eef4ff;
+  color: #1d4ed8;
+  font-family: var(--mono);
+  font-size: 9.5px;
+}
+
+.flow-arrow {
+  display: flex;
+  align-items: center;
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.script-api-secret p {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.7;
+}
+
+.script-api-secret-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.script-api-secret-actions span {
+  color: var(--muted-light);
+  font-size: 9.5px;
 }
 
 .script-api-example pre {
@@ -2455,14 +2632,47 @@ function handleAiKeydown(event: KeyboardEvent) {
 }
 
 .script-api-modal.script-theme-dark .script-api-group,
-.script-api-modal.script-theme-dark .script-api-example {
+.script-api-modal.script-theme-dark .script-api-example,
+.script-api-modal.script-theme-dark .script-api-secret {
   border-color: #1f2d44;
   background: #111c30;
 }
 
 .script-api-modal.script-theme-dark .script-api-group h4,
-.script-api-modal.script-theme-dark .script-api-example h4 {
+.script-api-modal.script-theme-dark .script-api-example h4,
+.script-api-modal.script-theme-dark .script-api-secret h4 {
   color: #cbd5e1;
+}
+
+.script-api-modal.script-theme-dark .script-api-flow-node {
+  border-color: #24324a;
+  background: #0f1a2d;
+}
+
+.script-api-modal.script-theme-dark .script-api-flow-node.accent {
+  border-color: #1e40af;
+  background: #12203a;
+}
+
+.script-api-modal.script-theme-dark .script-api-flow-node strong {
+  color: #e2e8f0;
+}
+
+.script-api-modal.script-theme-dark .script-api-flow-node small {
+  color: #94a3b8;
+}
+
+.script-api-modal.script-theme-dark .script-api-flow-node code {
+  background: #17243a;
+  color: #bfdbfe;
+}
+
+.script-api-modal.script-theme-dark .script-api-secret p {
+  color: #94a3b8;
+}
+
+.script-api-modal.script-theme-dark .script-api-secret-actions span {
+  color: #64748b;
 }
 
 .script-api-modal.script-theme-dark .script-api-item {
