@@ -666,6 +666,9 @@ function handleAiKeydown(event: KeyboardEvent) {
                         size="tiny"
                         :options="aiReasoningOptions"
                         :disabled="aiBusy"
+                        :consistent-menu-width="false"
+                        :show-checkmark="false"
+                        :menu-props="{ style: { minWidth: '104px' } }"
                         class="script-ai-reasoning-select"
                         aria-label="模型推理难度"
                       />
