@@ -69,7 +69,7 @@ const activeUsers = computed(() => users.value.filter((u) => u.status === 'ACTIV
 
 const menuLabels: Record<string, string> = {
   dashboard: '仪表盘', analytics: '数据报表', reviews: '待议复核', tasks: '审核任务',
-  audits: '审核配置', providers: '模型接入', credentials: '接入凭证', projects: '项目空间',
+  audits: '审核配置', providers: '模型接入', credentials: '接入凭证', connections: '数据连接', projects: '项目空间',
   logs: '审计日志', recycle: '回收站', users: '用户与权限', monitor: '运行监控',
   help: '对接文档', profile: '个人中心',
 }

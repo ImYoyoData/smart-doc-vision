@@ -886,6 +886,38 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
 }
 
 @media (max-width: 560px) {
+  .topbar-left {
+    min-width: 0;
+  }
+
+  .topbar-right {
+    gap: 8px;
+  }
+
+  .crumbs {
+    min-width: 0;
+  }
+
+  .crumbs strong {
+    overflow: hidden;
+    max-width: 96px;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .topbar-help,
+  .theme-toggle span {
+    display: none;
+  }
+
+  .project-chip {
+    max-width: 118px;
+  }
+
+  .project-chip-name {
+    max-width: 78px;
+  }
+
   .user-copy {
     display: none;
   }
