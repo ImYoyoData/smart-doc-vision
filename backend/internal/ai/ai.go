@@ -130,8 +130,16 @@ func CollectText(input model.TaskInput) string {
 func CollectImages(input model.TaskInput) []model.MediaItem {
 	var out []model.MediaItem
 	for _, m := range input.Media {
-		if strings.EqualFold(m.Type, "image") && strings.TrimSpace(m.URL) != "" {
+		if !strings.EqualFold(m.Type, "image") {
+			continue
+		}
+		if strings.TrimSpace(m.URL) != "" {
 			out = append(out, m)
+			continue
+		}
+		// 内联 data URL 图片可以放在 content 字段；归一到 URL 让取图逻辑统一。
+		if content := strings.TrimSpace(m.Content); strings.HasPrefix(content, "data:image/") {
+			out = append(out, model.MediaItem{Type: m.Type, URL: content, Name: m.Name})
 		}
 	}
 	return out

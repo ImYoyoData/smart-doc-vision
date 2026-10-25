@@ -374,7 +374,8 @@ func normalizeMedia(req submitTaskRequest) []model.MediaItem {
 		if item.Type == "text" && item.Content == "" {
 			continue
 		}
-		if item.Type == "image" && item.URL == "" {
+		// 图片接受 url 或 content 内联 data URL，两者都缺才丢弃。
+		if item.Type == "image" && item.URL == "" && !strings.HasPrefix(item.Content, "data:image/") {
 			continue
 		}
 		out = append(out, item)
