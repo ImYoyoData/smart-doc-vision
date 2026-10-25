@@ -301,9 +301,7 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
 
       <main class="content">
         <router-view v-slot="{ Component }">
-          <transition name="view-fade" mode="out-in">
-            <component :is="Component" :key="route.name" />
-          </transition>
+          <component :is="Component" :key="route.name" />
         </router-view>
       </main>
     </div>
@@ -820,18 +818,22 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
   display: none;
 }
 
-.view-fade-enter-active,
-.view-fade-leave-active {
-  transition: opacity 0.18s ease, transform 0.18s ease;
+/* 纯 CSS 入场动画：不经过 Vue transition 的离场状态机，
+   避免 rAF 被节流（遮挡窗口/后台标签）时路由视图卡在旧页面。 */
+.content :deep(.page) {
+  animation: view-in 0.18s ease;
 }
 
-.view-fade-enter-from {
-  opacity: 0;
-  transform: translateY(4px);
-}
+@keyframes view-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
 
-.view-fade-leave-to {
-  opacity: 0;
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 @media (max-width: 960px) {
