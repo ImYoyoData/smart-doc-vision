@@ -47,12 +47,27 @@ let recognition: SpeechRecognitionLike | null = null
 let timer: ReturnType<typeof setInterval> | null = null
 let manualStop = false
 
-const transcriptView = computed(() => (finalText.value + interimText.value) || '（等待语音输入…）')
+const transcriptView = computed(() => normalizeTranscript(finalText.value + interimText.value) || '（等待语音输入…）')
 const remainLabel = computed(() => {
   const m = Math.floor(remainSec.value / 60)
   const s = remainSec.value % 60
   return `${m}:${String(s).padStart(2, '0')}`
 })
+
+// 浏览器对中文识别的每段 transcript 会按英文习惯在词间加空格，
+// 多段拼接后变成「每 个 字 都 有 空 格」。这里去掉 CJK 字符之间的
+// 空白（含中文标点），保留英文单词与数字之间的正常空格。
+const CJK_CLASS = '\\u4e00-\\u9fa5\\u3400-\\u4dbf\\u3000-\\u303f\\uff00-\\uffef'
+const CJK_BETWEEN = new RegExp(`([${CJK_CLASS}])\\s+(?=[${CJK_CLASS}])`, 'g')
+
+function normalizeTranscript(text: string): string {
+  let out = text.replace(CJK_BETWEEN, '$1')
+  // 多轮替换处理连续空格与紧邻标点的边界
+  while (CJK_BETWEEN.test(out)) {
+    out = out.replace(CJK_BETWEEN, '$1')
+  }
+  return out
+}
 
 function teardown() {
   if (timer) {
@@ -93,12 +108,12 @@ function open() {
     for (let i = event.resultIndex; i < event.results.length; i += 1) {
       const item = event.results[i]
       if (item.isFinal) {
-        finalText.value += item[0].transcript
+        finalText.value += normalizeTranscript(item[0].transcript)
       } else {
         interim += item[0].transcript
       }
     }
-    interimText.value = interim
+    interimText.value = normalizeTranscript(interim)
   }
   recognition.onerror = (event) => {
     if (event.error === 'no-speech' || event.error === 'aborted') return
@@ -142,7 +157,7 @@ function finish() {
   if (finishing.value) return
   finishing.value = true
   manualStop = true
-  const text = (finalText.value + interimText.value).trim()
+  const text = normalizeTranscript(finalText.value + interimText.value).trim()
   teardown()
   if (text) emit('transcript', text)
   show.value = false
