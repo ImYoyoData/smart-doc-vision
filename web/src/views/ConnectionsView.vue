@@ -308,7 +308,10 @@ onMounted(() => {
             <h2>{{ editing ? '编辑 Redis 连接' : '新增 Redis 连接' }}</h2>
             <p>密码加密存储；启用前请先测试连接。DB 编号在触发源中单独选择。</p>
           </div>
-          <span class="modal-icon"><LinkOutline /></span>
+          <div class="modal-head-actions">
+            <span class="modal-icon"><LinkOutline /></span>
+            <button class="modal-close" type="button" title="关闭" aria-label="关闭" @click="modalShow = false">×</button>
+          </div>
         </div>
         <div class="modal-body">
           <div class="field">

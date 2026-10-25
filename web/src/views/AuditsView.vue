@@ -1707,7 +1707,10 @@ onMounted(async () => {
             <h2>{{ editing ? '编辑审核配置' : '新建审核配置' }}</h2>
             <p>配置会立即进入版本管理，启用后可被任务中心和开放 API 使用。</p>
           </div>
-          <span class="modal-icon"><ShieldCheckmarkOutline /></span>
+          <div class="modal-head-actions">
+            <span class="modal-icon"><ShieldCheckmarkOutline /></span>
+            <button class="modal-close" type="button" title="关闭" aria-label="关闭" @click="modalShow = false">×</button>
+          </div>
         </div>
         <div class="modal-body">
           <div class="two-col">
@@ -1954,7 +1957,10 @@ onMounted(async () => {
             <h2>选择要编辑的审核配置</h2>
             <p>AI 会先读取这条配置的当前模型、分类、规则和 Prompt，再确认要改成什么。</p>
           </div>
-          <span class="modal-icon"><CreateOutline /></span>
+          <div class="modal-head-actions">
+            <span class="modal-icon"><CreateOutline /></span>
+            <button class="modal-close" type="button" title="关闭" aria-label="关闭" @click="assistantPickShow = false">×</button>
+          </div>
         </div>
         <div class="modal-body">
           <div class="field">
@@ -2137,7 +2143,10 @@ onMounted(async () => {
             <h2>复制审核配置</h2>
             <p>所有规则、路由与提示词会被复制，新配置为草稿状态。</p>
           </div>
-          <span class="modal-icon"><CopyOutline /></span>
+          <div class="modal-head-actions">
+            <span class="modal-icon"><CopyOutline /></span>
+            <button class="modal-close" type="button" title="关闭" aria-label="关闭" @click="cloneShow = false">×</button>
+          </div>
         </div>
         <div class="modal-body">
           <div class="field">
@@ -2164,7 +2173,10 @@ onMounted(async () => {
             <h2>导出审核记录</h2>
             <p>仅导出当前审核配置的任务；不选条件时导出全部记录，最多 100000 行。</p>
           </div>
-          <span class="modal-icon"><DownloadOutline /></span>
+          <div class="modal-head-actions">
+            <span class="modal-icon"><DownloadOutline /></span>
+            <button class="modal-close" type="button" title="关闭" aria-label="关闭" @click="exportShow = false">×</button>
+          </div>
         </div>
         <div class="modal-body">
           <div v-if="exportTarget" class="export-target">

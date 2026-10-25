@@ -16,6 +16,7 @@ import {
   CheckmarkCircleOutline,
   CloudOutline,
   CloseCircleOutline,
+  CloseOutline,
   FlashOutline,
   HelpCircleOutline,
   ImagesOutline,
@@ -886,7 +887,12 @@ onMounted(load)
             <h2>{{ editing ? '编辑模型接入' : '新增模型接入' }}</h2>
             <p>密钥会使用 AES-256-GCM 加密后存储，接口仅返回脱敏值。</p>
           </div>
-          <span class="modal-icon"><LinkOutline /></span>
+          <div class="modal-head-actions">
+            <span class="modal-icon"><LinkOutline /></span>
+            <n-button quaternary circle class="modal-close" title="关闭" @click="modalShow = false">
+              <template #icon><CloseOutline /></template>
+            </n-button>
+          </div>
         </div>
 
         <div class="modal-body">
@@ -1940,6 +1946,17 @@ onMounted(load)
   font-size: 11.5px;
 }
 
+.modal-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+.modal-close {
+  color: var(--muted);
+}
+
 .modal-icon {
   display: flex;
   width: 40px;
@@ -2308,16 +2325,35 @@ onMounted(load)
   }
 
   .provider-modal {
-    width: calc(100vw - 16px);
-    max-height: calc(100vh - 16px);
+    display: flex;
+    width: 100vw;
+    max-width: 100vw;
+    height: 100vh;
+    height: 100dvh;
+    max-height: 100vh;
+    max-height: 100dvh;
+    flex-direction: column;
+    overflow: hidden;
+    border-radius: 0;
   }
 
-  .modal-body {
+  .provider-modal .modal-head {
+    flex: none;
+    border-radius: 0;
+    padding-top: max(18px, env(safe-area-inset-top));
+  }
+
+  .provider-modal .modal-body {
+    flex: 1;
+    min-height: 0;
     max-height: none;
+    overflow-y: auto;
   }
 
-  .modal-footer {
+  .provider-modal .modal-footer {
+    flex: none;
     flex-wrap: wrap;
+    padding-bottom: max(14px, env(safe-area-inset-bottom));
   }
 
   .footer-buttons {

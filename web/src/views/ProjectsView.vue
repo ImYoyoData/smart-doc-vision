@@ -423,7 +423,10 @@ onMounted(async () => {
             <h2>{{ editing ? '编辑项目' : '新建项目空间' }}</h2>
             <p>项目编码创建后不可修改，并会作为配置与队列的隔离前缀。</p>
           </div>
-          <span class="modal-icon"><FolderOpenOutline /></span>
+          <div class="modal-head-actions">
+            <span class="modal-icon"><FolderOpenOutline /></span>
+            <button class="modal-close" type="button" title="关闭" aria-label="关闭" @click="modalShow = false">×</button>
+          </div>
         </div>
         <div class="modal-body">
           <div class="field">

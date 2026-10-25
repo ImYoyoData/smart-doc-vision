@@ -465,6 +465,34 @@ textarea {
   font-size: 12px;
 }
 
+.modal-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+.modal-close {
+  display: inline-flex;
+  width: 34px;
+  height: 34px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--card);
+  color: var(--muted);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.modal-close:hover {
+  border-color: var(--brand-border);
+  background: var(--brand-softer);
+  color: var(--brand-strong);
+}
+
 .pagination-row {
   display: flex;
   align-items: center;
@@ -656,5 +684,63 @@ textarea {
   .data-table td {
     padding-left: 10px;
     padding-right: 10px;
+  }
+}
+
+
+@media (max-width: 720px) {
+  .audit-modal,
+  .clone-modal,
+  .export-modal,
+  .connection-modal,
+  .cred-modal,
+  .project-modal,
+  .user-modal {
+    width: 100vw !important;
+    max-width: 100vw !important;
+    height: 100vh !important;
+    height: 100dvh !important;
+    max-height: 100vh !important;
+    max-height: 100dvh !important;
+    border-radius: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: hidden !important;
+  }
+
+  .audit-modal .modal-head,
+  .clone-modal .modal-head,
+  .export-modal .modal-head,
+  .connection-modal .modal-head,
+  .cred-modal .modal-head,
+  .project-modal .modal-head,
+  .user-modal .modal-head {
+    flex: none !important;
+    border-radius: 0 !important;
+    padding-top: max(18px, env(safe-area-inset-top)) !important;
+  }
+
+  .audit-modal .modal-body,
+  .clone-modal .modal-body,
+  .export-modal .modal-body,
+  .connection-modal .modal-body,
+  .cred-modal .modal-body,
+  .project-modal .modal-body,
+  .user-modal .modal-body {
+    flex: 1 !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow-y: auto !important;
+  }
+
+  .audit-modal .modal-footer,
+  .clone-modal .modal-footer,
+  .export-modal .modal-footer,
+  .connection-modal .modal-footer,
+  .cred-modal .modal-footer,
+  .project-modal .modal-footer,
+  .user-modal .modal-footer {
+    flex: none !important;
+    padding-bottom: max(14px, env(safe-area-inset-bottom)) !important;
   }
 }

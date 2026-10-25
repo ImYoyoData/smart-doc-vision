@@ -423,7 +423,10 @@ onMounted(load)
             <h2>{{ editing ? '编辑后台账号' : '新建后台账号' }}</h2>
             <p>账号的角色决定菜单与操作权限，项目范围决定可操作的数据。</p>
           </div>
-          <span class="modal-icon"><KeyOutline /></span>
+          <div class="modal-head-actions">
+            <span class="modal-icon"><KeyOutline /></span>
+            <button class="modal-close" type="button" title="关闭" aria-label="关闭" @click="modalShow = false">×</button>
+          </div>
         </div>
         <div class="modal-body">
           <div class="two-col">
