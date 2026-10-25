@@ -70,11 +70,18 @@ function syncModel() {
 
 function onPointerDown(event: PointerEvent) {
   if (!challenge.value || loading.value || props.disabled) return
+  // 弹窗动画期 measure 可能拿到未稳定宽度（如 modal 展开前的布局宽度），
+  // 拖动开始时布局必然已稳定，重测一次保证 maxHandleLeft 与真实轨道一致。
+  measure()
   dragging.value = true
   startX = event.clientX
   startLeft = handleLeft.value
   model.value = null
-  ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
+  try {
+    ;(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId)
+  } catch {
+    // 非真实指针（如自动化派发的合成事件）没有 active pointer，忽略即可
+  }
 }
 
 function onPointerMove(event: PointerEvent) {
@@ -105,6 +112,18 @@ function onKeydown(event: KeyboardEvent) {
   model.value = null
 }
 
+let expireTimer: ReturnType<typeof setTimeout> | null = null
+
+function scheduleExpireRefresh(seconds: number) {
+  if (expireTimer) clearTimeout(expireTimer)
+  // 后端 2 分钟过期；提前 5 秒换新，避免用户拖完提交时刚好过期
+  const ms = Math.max(5, seconds - 5) * 1000
+  expireTimer = setTimeout(() => {
+    if (!dragging.value) refresh()
+    else scheduleExpireRefresh(10)
+  }, ms)
+}
+
 async function refresh() {
   loading.value = true
   errorText.value = ''
@@ -114,6 +133,7 @@ async function refresh() {
   challenge.value = null
   try {
     challenge.value = await authApi.captcha()
+    if (challenge.value.expires_in > 0) scheduleExpireRefresh(challenge.value.expires_in)
     await nextTick()
     measure()
   } catch (error) {
@@ -133,6 +153,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   resizeObserver?.disconnect()
+  if (expireTimer) clearTimeout(expireTimer)
 })
 </script>
 
@@ -167,8 +188,8 @@ onBeforeUnmount(() => {
 
     <div class="slider-track" :class="{ aligning: dragging, ready }">
       <div class="slider-fill" :style="{ width: `${handleLeft + HANDLE_SIZE / 2}px` }"></div>
-      <span v-if="!dragging" class="slider-hint">{{ ready ? '已对齐，正在提交后端校验' : '向右拖动滑块完成拼图' }}</span>
-      <span v-else class="slider-hint">松开滑块后由后端校验</span>
+      <span v-if="!dragging" class="slider-hint">{{ ready ? '已对齐，提交时由后端校验' : '向右拖动滑块完成拼图' }}</span>
+      <span v-else class="slider-hint">松开滑块后即可提交</span>
       <div
         class="slider-handle"
         :style="{ transform: `translateX(${handleLeft}px)` }"

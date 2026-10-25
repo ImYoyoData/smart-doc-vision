@@ -195,9 +195,40 @@ export const reviewApi = {
     get<ReviewSummary>('/reviews/summary', projectId ? { project_id: projectId } : undefined),
 }
 
+export interface RecycleBatchResult {
+  type: string
+  id: number
+  name?: string
+  status: string
+  reason?: string
+}
+
 export const recycleApi = {
   list: (params?: Record<string, unknown>) => get<Paged<RecycleItem>>('/recycle-bin', params),
   purge: (type: string, id: number) => del<{ purged: boolean }>(`/recycle-bin/${type}/${id}`),
+  batchRestore: (payload: {
+    items: { type: string; id: number }[]
+    captcha_id: string
+    captcha_x: number
+  }) =>
+    post<{ restored: number; total: number; results: RecycleBatchResult[] }>(
+      '/recycle-bin/batch-restore',
+      payload,
+    ),
+  batchPurge: (payload: {
+    items: { type: string; id: number }[]
+    captcha_id: string
+    captcha_x: number
+  }) =>
+    post<{ purged: number; total: number; results: RecycleBatchResult[] }>(
+      '/recycle-bin/batch-purge',
+      payload,
+    ),
+  purgeAll: (payload: { captcha_id: string; captcha_x: number }) =>
+    post<{ purged_projects: number; purged_audits: number; failed: number }>(
+      '/recycle-bin/purge-all',
+      payload,
+    ),
 }
 
 export const metaApi = {
