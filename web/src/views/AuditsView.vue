@@ -67,7 +67,7 @@ const audits = ref<Audit[]>([])
 const providers = ref<Provider[]>([])
 const auditPage = ref(1)
 const auditTotal = ref(0)
-const auditPageSize = 100
+const auditPageSize = 50
 const loadingMore = ref(false)
 const hasMoreAudits = computed(() => audits.value.length < auditTotal.value)
 const templates = ref<RuleTemplate[]>([])
@@ -410,6 +410,7 @@ function applyRulesPreset(key: string) {
 const activeCount = ref(0)
 const classifyCount = ref(0)
 const todayCount = ref(0)
+const summaryLoaded = ref(false)
 const selectedProvider = computed(() => providers.value.find((p) => p.id === form.providerId))
 const jevProviders = computed(() => providers.value.filter((p) => p.kind === 'JEV' && p.status === 'ACTIVE'))
 const selectedTemplate = computed(() => templates.value.find((t) => t.key === form.rulesPreset))
@@ -809,6 +810,32 @@ async function runExport() {
   }
 }
 
+async function loadSummary() {
+  const projectID = workspace.currentProjectId
+  if (!projectID) {
+    activeCount.value = 0
+    classifyCount.value = 0
+    todayCount.value = 0
+    summaryLoaded.value = true
+    return
+  }
+  try {
+    const [activeData, classifyData, classifierData, analyticsData] = await Promise.all([
+      auditApi.list({ project_id: projectID, status: 'ACTIVE', page: 1, page_size: 1 }),
+      auditApi.list({ project_id: projectID, decision_mode: 'CLASSIFY', page: 1, page_size: 1 }),
+      auditApi.list({ project_id: projectID, decision_mode: 'CLASSIFY_ONLY', page: 1, page_size: 1 }),
+      analyticsApi.get({ range: 'today', project_id: projectID }).catch(() => null),
+    ])
+    if (workspace.currentProjectId !== projectID) return
+    activeCount.value = activeData.total
+    classifyCount.value = classifyData.total + classifierData.total
+    todayCount.value = analyticsData?.overview?.total ?? 0
+    summaryLoaded.value = true
+  } catch {
+    // Optional summary counters must not block the audit list.
+  }
+}
+
 async function loadMoreAudits() {
   if (!workspace.currentProjectId || loadingMore.value || !hasMoreAudits.value) return
   loadingMore.value = true
@@ -836,25 +863,21 @@ async function load() {
     activeCount.value = 0
     classifyCount.value = 0
     todayCount.value = 0
+    summaryLoaded.value = true
     return
   }
   loading.value = true
   try {
-    const [auditData, providerData, activeData, classifyData, classifierData, analyticsData] = await Promise.all([
+    const [auditData, providerData] = await Promise.all([
       auditApi.list({ project_id: workspace.currentProjectId, page: 1, page_size: auditPageSize }),
       providerApi.list({ project_id: workspace.currentProjectId }),
-      auditApi.list({ project_id: workspace.currentProjectId, status: 'ACTIVE', page: 1, page_size: 1 }),
-      auditApi.list({ project_id: workspace.currentProjectId, decision_mode: 'CLASSIFY', page: 1, page_size: 1 }),
-      auditApi.list({ project_id: workspace.currentProjectId, decision_mode: 'CLASSIFY_ONLY', page: 1, page_size: 1 }),
-      analyticsApi.get({ range: 'today', project_id: workspace.currentProjectId }).catch(() => null),
     ])
     audits.value = auditData.items
     auditTotal.value = auditData.total
     auditPage.value = 1
     providers.value = providerData.items
-    activeCount.value = activeData.total
-    classifyCount.value = classifyData.total + classifierData.total
-    todayCount.value = analyticsData?.overview?.total ?? 0
+    summaryLoaded.value = false
+    void loadSummary()
   } catch (error) {
     message.error(error instanceof Error ? error.message : '加载审核配置失败')
   } finally {
@@ -1549,17 +1572,17 @@ onMounted(async () => {
     <div class="audit-summary">
       <div>
         <span>已启用流程</span>
-        <strong>{{ activeCount }}</strong>
+        <strong :class="{ 'summary-loading': !summaryLoaded }">{{ summaryLoaded ? activeCount : '—' }}</strong>
       </div>
       <div class="summary-divider"></div>
       <div>
         <span>分类流程</span>
-        <strong>{{ classifyCount }}</strong>
+        <strong :class="{ 'summary-loading': !summaryLoaded }">{{ summaryLoaded ? classifyCount : '—' }}</strong>
       </div>
       <div class="summary-divider"></div>
       <div>
         <span>今日执行任务</span>
-        <strong>{{ todayCount }}</strong>
+        <strong :class="{ 'summary-loading': !summaryLoaded }">{{ summaryLoaded ? todayCount : '—' }}</strong>
       </div>
       <div class="summary-divider"></div>
       <div>
