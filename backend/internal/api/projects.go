@@ -239,6 +239,10 @@ func (s *Server) createProject(c *gin.Context) {
 		return
 	}
 	if err := s.db.Create(&project).Error; err != nil {
+		if strings.Contains(err.Error(), "Duplicate entry") {
+			conflict(c, "CODE_CONFLICT", "项目编码已被占用（回收站中的对象也计入）")
+			return
+		}
 		serverError(c, err)
 		return
 	}
@@ -315,6 +319,10 @@ func (s *Server) updateProject(c *gin.Context) {
 		return
 	}
 	if err := s.db.Save(project).Error; err != nil {
+		if strings.Contains(err.Error(), "Duplicate entry") {
+			conflict(c, "CODE_CONFLICT", "项目编码已被其他项目占用")
+			return
+		}
 		serverError(c, err)
 		return
 	}

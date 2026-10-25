@@ -99,6 +99,10 @@ func (s *Server) createCredential(c *gin.Context) {
 		AuditIDs: model.JSONBytes(req.AuditIDs), Status: status, CreatedBy: user.ID,
 	}
 	if err := s.db.Create(&row).Error; err != nil {
+		if strings.Contains(err.Error(), "Duplicate entry") {
+			conflict(c, "NAME_CONFLICT", "当前项目下已存在同名接入凭证")
+			return
+		}
 		serverError(c, err)
 		return
 	}
@@ -141,6 +145,10 @@ func (s *Server) updateCredential(c *gin.Context) {
 		credential.Status = req.Status
 	}
 	if err := s.db.Save(credential).Error; err != nil {
+		if strings.Contains(err.Error(), "Duplicate entry") {
+			conflict(c, "NAME_CONFLICT", "当前项目下已存在同名接入凭证")
+			return
+		}
 		serverError(c, err)
 		return
 	}

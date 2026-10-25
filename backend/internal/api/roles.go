@@ -131,6 +131,10 @@ func (s *Server) createRole(c *gin.Context) {
 		Permissions: model.JSONBytes(req.Permissions), Menus: model.JSONBytes(req.Menus),
 	}
 	if err := s.db.Create(&record).Error; err != nil {
+		if strings.Contains(err.Error(), "Duplicate entry") {
+			conflict(c, "ROLE_EXISTS", "角色编码已存在")
+			return
+		}
 		serverError(c, err)
 		return
 	}

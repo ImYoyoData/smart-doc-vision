@@ -117,6 +117,10 @@ func (s *Server) createUser(c *gin.Context) {
 		return syncUserProjects(tx, user.ID, projectIDs)
 	})
 	if err != nil {
+		if strings.Contains(err.Error(), "Duplicate entry") {
+			conflict(c, "USERNAME_CONFLICT", "该账号已存在")
+			return
+		}
 		serverError(c, err)
 		return
 	}
