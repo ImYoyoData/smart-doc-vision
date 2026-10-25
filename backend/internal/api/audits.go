@@ -581,8 +581,10 @@ func applyCallbackConfig(s *Server, audit *model.Audit, req *auditInput, creatin
 		results := make([]string, 0, len(req.CallbackResults))
 		for _, r := range req.CallbackResults {
 			r = strings.ToUpper(strings.TrimSpace(r))
-			if r != model.ResultPass && r != model.ResultReject {
-				return fmt.Errorf("回调结果类型 %q 不合法（仅支持 PASS/REJECT）", r)
+			// REVIEW 用于「外部系统复核」模式：任务直接完成并把待议结论回调给
+			// 业务方自行复核；内部复核模式下 REVIEW 不会触发回调，放开无副作用。
+			if r != model.ResultPass && r != model.ResultReject && r != model.ResultReview {
+				return fmt.Errorf("回调结果类型 %q 不合法（仅支持 PASS/REJECT/REVIEW）", r)
 			}
 			results = append(results, r)
 		}

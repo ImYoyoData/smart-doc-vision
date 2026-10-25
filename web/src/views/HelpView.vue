@@ -483,7 +483,7 @@ if not hmac.compare_digest(expected, actual):
             <thead><tr><th>配置</th><th>说明</th></tr></thead>
             <tbody>
               <tr><td>callback_url</td><td>业务回调地址；任务级 callback_url 可覆盖。</td></tr>
-              <tr><td>callback_results</td><td>需要回调的结论集合：PASS / REJECT（待议任务经人工复核后再回调）。</td></tr>
+              <tr><td>callback_results</td><td>需要回调的结论集合：PASS / REJECT / REVIEW。默认待议任务经人工复核后再回调；配置「外部系统复核」时勾选 REVIEW，待议任务会直接完成并回调通知业务方自行复核。</td></tr>
               <tr><td>callback_secret</td><td>HMAC 签名密钥，加密保存。</td></tr>
               <tr><td>callback_include_content</td><td>是否回传原文/文本内容；关闭时只回传 URL 和元信息。</td></tr>
             </tbody>

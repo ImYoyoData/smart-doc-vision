@@ -209,7 +209,7 @@ async function load(credentialId?: number | null) {
     redisForm.max_inflight = redisTrigger.value?.max_inflight || guide.value.redis.max_inflight || 1
     callbackForm.enabled = guide.value.callback.enabled
     callbackForm.url = guide.value.callback.url || ''
-    callbackForm.results = guide.value.callback.results?.filter((r) => r !== 'REVIEW').length ? guide.value.callback.results.filter((r) => r !== 'REVIEW') : ['REJECT']
+    callbackForm.results = guide.value.callback.results?.length ? [...guide.value.callback.results] : ['REJECT']
     callbackForm.include_content = guide.value.callback.include_content
     showCallbackSecret.value = Boolean(guide.value.callback.secret_set)
     await loadConnections()
@@ -703,6 +703,7 @@ watch(
                 <n-checkbox-group v-model:value="callbackForm.results">
                   <n-checkbox value="PASS">通过</n-checkbox>
                   <n-checkbox value="REJECT">不通过</n-checkbox>
+                  <n-checkbox value="REVIEW">待议（供「外部系统复核」通知业务方）</n-checkbox>
                 </n-checkbox-group>
               </label>
               <label class="checkbox-field"><span>回传原内容</span><n-switch v-model:value="callbackForm.include_content" /></label>
