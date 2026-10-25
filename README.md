@@ -229,7 +229,7 @@ cd web && npm run build
 .\build.ps1 -Target linux-arm64
 .\build.ps1 -Target all
 .\build.ps1 -Target both -Upx
-.\build.ps1 -Target all -Version 1.3.0
+.\build.ps1 -Target all -Version 1.4.0
 ```
 
 `-Upx` 会额外生成 Windows amd64 和 Linux amd64 的 UPX 压缩版本（文件名带 `-upx` 后缀），未压缩产物始终保留。未指定 `-Upx` 时，若检测到 `upx` 会询问一次；默认不压缩，避免个别安全软件把 UPX 壳误判为可疑程序。
@@ -247,11 +247,11 @@ cd web && npm run build
 生成文件示例：
 
 ```text
-dist/smartdoc-vision-1.3.0-windows-amd64.exe
-dist/smartdoc-vision-1.3.0-windows-amd64-upx.exe
-dist/smartdoc-vision-1.3.0-linux-amd64
-dist/smartdoc-vision-1.3.0-linux-amd64-upx
-dist/smartdoc-vision-1.3.0-linux-arm64
+dist/smartdoc-vision-1.4.0-windows-amd64.exe
+dist/smartdoc-vision-1.4.0-windows-amd64-upx.exe
+dist/smartdoc-vision-1.4.0-linux-amd64
+dist/smartdoc-vision-1.4.0-linux-amd64-upx
+dist/smartdoc-vision-1.4.0-linux-arm64
 dist/.env
 ```
 
