@@ -123,10 +123,15 @@ func main() {
 			}
 			out := make([]string, len(cols))
 			for i, v := range vals {
-				out[i] = fmt.Sprintf("%v", v)
 				if v == nil {
 					out[i] = "NULL"
+					continue
 				}
+				if b, ok := v.([]byte); ok {
+					out[i] = string(b)
+					continue
+				}
+				out[i] = fmt.Sprintf("%v", v)
 			}
 			fmt.Println(strings.Join(out, "\t"))
 		}
