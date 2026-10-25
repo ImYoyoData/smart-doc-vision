@@ -52,6 +52,8 @@ func main() {
 	stormEvery := flag.Int("storm-every", 0, "extra concurrent burst every N rounds (0 disables)")
 	stormSize := flag.Int("storm-size", 18, "tasks per burst")
 	pairCheck := flag.Bool("pair-check", true, "run consistency check every 2 rounds")
+	raceEvery := flag.Int("race-every", 0, "concurrent duplicate race every N rounds (0 disables)")
+	raceSize := flag.Int("race-size", 8, "concurrent duplicate submissions per race")
 	flag.Parse()
 
 	root := repoRoot()
@@ -160,6 +162,7 @@ func main() {
 			actionRedis: actionRedis, db: db,
 			roundStart: *start, multiplier: *multiplier,
 			stormEvery: *stormEvery, stormSize: *stormSize, pairCheck: *pairCheck,
+			raceEvery: *raceEvery, raceSize: *raceSize,
 		}
 		if err := runner.runRounds(ctx, *start, *end); err != nil {
 			fatal("run rounds: %v", err)

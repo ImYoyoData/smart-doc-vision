@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"sync"
 	"time"
 )
 
@@ -134,4 +135,84 @@ func (r *runner) runPairCheck(ctx context.Context, round int) ([]string, []strin
 		fmt.Printf("  ! %s\n", failure)
 	}
 	return failures, warnings
+}
+
+func (r *runner) runDedupeRace(ctx context.Context, round int, cfg *configSpec) ([]string, []string, int) {
+	size := r.raceSize
+	if size < 2 {
+		size = 8
+	}
+	bizKey := fmt.Sprintf("qa100:%s:r%03d:a:race:%d", r.state.RunID, round, time.Now().UnixNano())
+	text := fmt.Sprintf("QA_PASS concurrent dedupe race round=%d", round)
+	ext := map[string]any{"race": true, "round": round}
+	type result struct {
+		task       *task
+		duplicated bool
+		err        error
+	}
+	results := make([]result, size)
+	var wg sync.WaitGroup
+	for i := 0; i < size; i++ {
+		i := i
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			t, duplicated, err := r.client.submitTask(ctx, r.state.ProjectID, cfg.AuditID, bizKey, text, ext, nil)
+			results[i] = result{task: t, duplicated: duplicated, err: err}
+		}()
+	}
+	wg.Wait()
+	var failures, warnings []string
+	var created []*task
+	var anyTask *task
+	for i, result := range results {
+		if result.err != nil {
+			failures = append(failures, fmt.Sprintf("R%03d RACE submit %d: %v", round, i+1, result.err))
+			continue
+		}
+		if result.task == nil {
+			failures = append(failures, fmt.Sprintf("R%03d RACE submit %d returned nil task", round, i+1))
+			continue
+		}
+		if anyTask == nil {
+			anyTask = result.task
+		}
+		if !result.duplicated {
+			created = append(created, result.task)
+		} else if anyTask != nil && result.task.ID != anyTask.ID {
+			failures = append(failures, fmt.Sprintf("R%03d RACE duplicate references task %d, first %d", round, result.task.ID, anyTask.ID))
+		}
+	}
+	var count int
+	if err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM tasks WHERE biz_key = ?", bizKey).Scan(&count); err != nil {
+		failures = append(failures, fmt.Sprintf("R%03d RACE count: %v", round, err))
+	}
+	if count > 0 {
+		r.latencyMu.Lock()
+		r.expectedTasks += count
+		r.latencyMu.Unlock()
+	}
+	if count != 1 {
+		failures = append(failures, fmt.Sprintf("R%03d RACE stored tasks=%d want 1", round, count))
+	}
+	if len(created) > 1 {
+		failures = append(failures, fmt.Sprintf("R%03d RACE created=%d want 1", round, len(created)))
+	}
+	if len(created) == 0 {
+		failures = append(failures, fmt.Sprintf("R%03d RACE no request returned created=false", round))
+	}
+	if anyTask == nil {
+		return failures, warnings, 0
+	}
+	c := &caseSpec{
+		Round: round, ConfigKey: "a", AuditID: cfg.AuditID, Secret: cfg.CallbackSecret,
+		Kind: "RACE", Expected: "PASS", Marker: "QA_PASS",
+		Task: anyTask, TaskID: anyTask.ID, TaskNo: anyTask.TaskNo,
+		SubmittedAt: time.Now(),
+	}
+	r.waitCase(ctx, c)
+	r.verifyCase(ctx, c)
+	failures = append(failures, prefixFailures(round, "a/RACE", anyTask.TaskNo, c.Failures)...)
+	warnings = append(warnings, prefixWarnings(round, "a/RACE", anyTask.TaskNo, c.Warnings)...)
+	return failures, warnings, 1
 }

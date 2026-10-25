@@ -99,6 +99,8 @@ type runner struct {
 	stormEvery  int
 	stormSize   int
 	pairCheck   bool
+	raceEvery   int
+	raceSize    int
 
 	latencyMu       sync.Mutex
 	submitLatencies []time.Duration
@@ -251,6 +253,12 @@ func (r *runner) runRound(ctx context.Context, round int) roundReport {
 			failures, warnings := r.runValidationTests(ctx, round, cfgA)
 			report.Failures = append(report.Failures, failures...)
 			report.Warnings = append(report.Warnings, warnings...)
+		}
+		if r.raceEvery > 0 && round%r.raceEvery == 0 {
+			failures, warnings, cases := r.runDedupeRace(ctx, round, cfgA)
+			report.Failures = append(report.Failures, failures...)
+			report.Warnings = append(report.Warnings, warnings...)
+			report.Cases += cases
 		}
 	}
 	if _, err := r.client.reviewSummary(ctx, r.state.ProjectID); err != nil {
