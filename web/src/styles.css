@@ -695,7 +695,8 @@ textarea {
   .connection-modal,
   .cred-modal,
   .project-modal,
-  .user-modal {
+  .user-modal,
+  .submit-modal {
     width: 100vw !important;
     max-width: 100vw !important;
     height: 100vh !important;
@@ -714,7 +715,8 @@ textarea {
   .connection-modal .modal-head,
   .cred-modal .modal-head,
   .project-modal .modal-head,
-  .user-modal .modal-head {
+  .user-modal .modal-head,
+  .submit-modal .modal-head {
     flex: none !important;
     border-radius: 0 !important;
     padding-top: max(18px, env(safe-area-inset-top)) !important;
@@ -726,7 +728,8 @@ textarea {
   .connection-modal .modal-body,
   .cred-modal .modal-body,
   .project-modal .modal-body,
-  .user-modal .modal-body {
+  .user-modal .modal-body,
+  .submit-modal .modal-body {
     flex: 1 !important;
     min-height: 0 !important;
     max-height: none !important;
