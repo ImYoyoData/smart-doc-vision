@@ -50,7 +50,7 @@ import AuditFieldAssistantModal from '@/components/AuditFieldAssistantModal.vue'
 import ResultRoutesEditor from '@/components/ResultRoutesEditor.vue'
 import TriggerManageModal from '@/components/TriggerManageModal.vue'
 import ScriptLogsModal from '@/components/ScriptLogsModal.vue'
-import { auditApi, metaApi, providerApi } from '@/api'
+import { analyticsApi, auditApi, metaApi, providerApi } from '@/api'
 import { copyText } from '@/utils/clipboard'
 import type { Audit, AuditAssistantConfig, AuditAssistantMessage, AuditAssistantResult, AuditAssistantStep, AuditCategory, Provider, RuleTemplate, TriggerSource } from '@/api/types'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -65,6 +65,11 @@ const loading = ref(false)
 const saving = ref(false)
 const audits = ref<Audit[]>([])
 const providers = ref<Provider[]>([])
+const auditPage = ref(1)
+const auditTotal = ref(0)
+const auditPageSize = 100
+const loadingMore = ref(false)
+const hasMoreAudits = computed(() => audits.value.length < auditTotal.value)
 const templates = ref<RuleTemplate[]>([])
 const search = ref('')
 const statusFilter = ref<string | null>('ACTIVE')
@@ -402,9 +407,9 @@ function applyRulesPreset(key: string) {
   if (key !== 'keep' && key !== 'custom') form.rulesText = rulesTextForPreset(key)
 }
 
-const activeCount = computed(() => audits.value.filter((a) => a.status === 'ACTIVE').length)
-const classifyCount = computed(() => audits.value.filter((a) => a.decision_mode === 'CLASSIFY' || a.decision_mode === 'CLASSIFY_ONLY').length)
-const todayCount = computed(() => audits.value.reduce((sum, a) => sum + (a.today_tasks || 0), 0))
+const activeCount = ref(0)
+const classifyCount = ref(0)
+const todayCount = ref(0)
 const selectedProvider = computed(() => providers.value.find((p) => p.id === form.providerId))
 const jevProviders = computed(() => providers.value.filter((p) => p.kind === 'JEV' && p.status === 'ACTIVE'))
 const selectedTemplate = computed(() => templates.value.find((t) => t.key === form.rulesPreset))
@@ -804,20 +809,52 @@ async function runExport() {
   }
 }
 
+async function loadMoreAudits() {
+  if (!workspace.currentProjectId || loadingMore.value || !hasMoreAudits.value) return
+  loadingMore.value = true
+  try {
+    const data = await auditApi.list({
+      project_id: workspace.currentProjectId,
+      page: auditPage.value + 1,
+      page_size: auditPageSize,
+    })
+    audits.value.push(...data.items)
+    auditTotal.value = data.total
+    auditPage.value += 1
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : '加载更多审核配置失败')
+  } finally {
+    loadingMore.value = false
+  }
+}
+
 async function load() {
   if (!workspace.currentProjectId) {
     audits.value = []
     providers.value = []
+    auditTotal.value = 0
+    activeCount.value = 0
+    classifyCount.value = 0
+    todayCount.value = 0
     return
   }
   loading.value = true
   try {
-    const [auditData, providerData] = await Promise.all([
-      auditApi.list({ project_id: workspace.currentProjectId, page: 1, page_size: 100 }),
+    const [auditData, providerData, activeData, classifyData, classifierData, analyticsData] = await Promise.all([
+      auditApi.list({ project_id: workspace.currentProjectId, page: 1, page_size: auditPageSize }),
       providerApi.list({ project_id: workspace.currentProjectId }),
+      auditApi.list({ project_id: workspace.currentProjectId, status: 'ACTIVE', page: 1, page_size: 1 }),
+      auditApi.list({ project_id: workspace.currentProjectId, decision_mode: 'CLASSIFY', page: 1, page_size: 1 }),
+      auditApi.list({ project_id: workspace.currentProjectId, decision_mode: 'CLASSIFY_ONLY', page: 1, page_size: 1 }),
+      analyticsApi.get({ range: 'today', project_id: workspace.currentProjectId }).catch(() => null),
     ])
     audits.value = auditData.items
+    auditTotal.value = auditData.total
+    auditPage.value = 1
     providers.value = providerData.items
+    activeCount.value = activeData.total
+    classifyCount.value = classifyData.total + classifierData.total
+    todayCount.value = analyticsData?.overview?.total ?? 0
   } catch (error) {
     message.error(error instanceof Error ? error.message : '加载审核配置失败')
   } finally {
@@ -1553,7 +1590,7 @@ onMounted(async () => {
         placeholder="审核类型"
         style="width: 135px"
       />
-      <span class="result-count">{{ filtered.length }} 条配置</span>
+      <span class="result-count">已显示 {{ filtered.length }} / 共 {{ auditTotal }} 条</span>
     </div>
 
     <div v-if="filtered.length" class="audit-list fade-list">
@@ -1632,6 +1669,12 @@ onMounted(async () => {
     >
       <template #icon><ShieldCheckmarkOutline /></template>
     </EmptyState>
+
+    <div v-if="hasMoreAudits" class="load-more-row">
+      <n-button secondary :loading="loadingMore" @click="loadMoreAudits">
+        加载更多（已显示 {{ audits.length }} / 共 {{ auditTotal }} 条）
+      </n-button>
+    </div>
 
     <n-modal v-model:show="modalShow" :mask-closable="!saving">
       <div class="audit-modal">
