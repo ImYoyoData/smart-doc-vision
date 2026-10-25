@@ -258,6 +258,13 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
           </div>
         </div>
         <div class="topbar-right">
+          <n-dropdown trigger="click" :options="projectOptions" placement="bottom-end" @select="handleProject">
+            <button class="project-chip" type="button" :title="workspace.currentProject?.name || '选择项目'">
+              <LayersOutline />
+              <span class="project-chip-name">{{ workspace.currentProject?.name || '选择项目' }}</span>
+              <ChevronDownOutline class="project-chip-chev" />
+            </button>
+          </n-dropdown>
           <div class="date-chip">{{ today }}</div>
           <button v-if="auth.canMenu('reviews')" class="topbar-review" :class="{ active: route.name === 'reviews' }" type="button" @click="navigate('reviews')">
             <NotificationsOutline />
@@ -703,6 +710,44 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
   letter-spacing: 0.05em;
 }
 
+.project-chip {
+  display: inline-flex;
+  max-width: 260px;
+  height: 32px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--card);
+  color: var(--muted);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.project-chip:hover {
+  border-color: var(--brand-border);
+  color: var(--brand-strong);
+  background: var(--brand-softer);
+}
+
+.project-chip :deep(svg) {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+
+.project-chip-name {
+  overflow: hidden;
+  max-width: 190px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-chip-chev {
+  color: var(--muted-light);
+}
+
 .top-divider {
   width: 1px;
   height: 22px;
@@ -825,6 +870,14 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
   .top-divider,
   .topbar-review span {
     display: none;
+  }
+
+  .project-chip {
+    max-width: 150px;
+  }
+
+  .project-chip-name {
+    max-width: 105px;
   }
 
   .user-role {
