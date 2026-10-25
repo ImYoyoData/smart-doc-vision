@@ -340,11 +340,18 @@ watch([auditId, statuses, results, sources, dateRange], () => {
   load()
 })
 
-watch(page, load)
+watch(page, () => {
+  load()
+  scrollToTasksTop()
+})
 watch(pageSize, () => {
   page.value = 1
   load()
 })
+
+function scrollToTasksTop() {
+  window.scrollTo({ top: 0, behavior: 'smooth' })
+}
 
 onMounted(async () => {
   loadLayout()
@@ -543,13 +550,14 @@ onBeforeUnmount(() => {
         <div v-for="i in 5" :key="i" class="loading-row"></div>
       </div>
 
-      <div class="pagination-row">
+      <div class="pagination-row sticky-pagination">
         <span>第 {{ page }} 页 · 每页 {{ pageSize }} 条</span>
         <n-pagination
           v-model:page="page"
           v-model:page-size="pageSize"
           :page-sizes="[20, 50, 100]"
           show-size-picker
+          show-quick-jumper
           :item-count="total"
         />
       </div>
@@ -569,6 +577,22 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.sticky-pagination {
+  position: sticky;
+  bottom: 0;
+  z-index: 6;
+  background: var(--card);
+  box-shadow: 0 -10px 24px rgba(15, 23, 42, 0.08);
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+}
+
+@media (max-width: 560px) {
+  .sticky-pagination {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+}
+
 .task-toolbar {
   display: flex;
   flex-wrap: wrap;
