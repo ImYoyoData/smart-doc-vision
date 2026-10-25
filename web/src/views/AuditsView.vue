@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { onBeforeRouteLeave, useRouter } from 'vue-router'
 import dayjs from 'dayjs'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
@@ -40,6 +40,7 @@ import {
   SparklesOutline,
   TextOutline,
   TrashOutline,
+  WarningOutline,
 } from '@vicons/ionicons5'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
@@ -315,6 +316,100 @@ const exportForm = reactive({
   keyword: '',
 })
 
+// 编辑/新建配置弹窗的离开守卫：关闭、路由跳转、刷新页面前统一确认未保存修改与 AI 请求。
+const formBaseline = ref('')
+const leaveConfirmShow = ref(false)
+const leaveTarget = ref('')
+const leaveTitle = ref('')
+const leaveMessage = ref('')
+const leaveConfirmText = ref('放弃修改并离开')
+let leaveAction: (() => void) | null = null
+let leaveRouteResolve: ((value: boolean) => void) | null = null
+
+function snapshotFormBaseline() {
+  formBaseline.value = JSON.stringify(form)
+}
+
+const formDirty = computed(() => {
+  if (!modalShow.value || !formBaseline.value) return false
+  return JSON.stringify(form) !== formBaseline.value
+})
+
+const assistantBusyNow = computed(() => assistantShow.value && assistantBusy.value)
+
+function openLeaveConfirm(title: string, body: string, confirmText: string, options: { action?: () => void; resolve?: (value: boolean) => void }) {
+  leaveTitle.value = title
+  leaveMessage.value = body
+  leaveConfirmText.value = confirmText
+  leaveAction = options.action || null
+  leaveRouteResolve = options.resolve || null
+  leaveConfirmShow.value = true
+}
+
+function cancelLeaveConfirm() {
+  leaveConfirmShow.value = false
+  const resolve = leaveRouteResolve
+  leaveAction = null
+  leaveRouteResolve = null
+  resolve?.(false)
+}
+
+function acceptLeaveConfirm() {
+  leaveConfirmShow.value = false
+  const resolve = leaveRouteResolve
+  const action = leaveAction
+  leaveAction = null
+  leaveRouteResolve = null
+  if (assistantBusy.value) assistantAbort?.abort()
+  resolve?.(true)
+  action?.()
+}
+
+function requestCloseModal() {
+  if (!formDirty.value) {
+    modalShow.value = false
+    return
+  }
+  openLeaveConfirm(
+    '配置尚未保存，确认离开？',
+    '当前审核配置有未保存的修改，离开后会丢失这些修改。',
+    '放弃修改并离开',
+    { action: () => { modalShow.value = false } },
+  )
+}
+
+function handleModalShowChange(value: boolean) {
+  if (value) {
+    modalShow.value = true
+    return
+  }
+  requestCloseModal()
+}
+
+onBeforeRouteLeave(() => {
+  const dirty = formDirty.value
+  const busy = assistantBusyNow.value
+  if (!dirty && !busy) return true
+  const body = dirty && busy
+    ? '离开会停止当前 AI 请求，并丢失审核配置的未保存修改。'
+    : busy
+      ? '当前 AI 配置助手仍在生成内容，离开会停止请求，尚未保存的结果不会保留。'
+      : '当前审核配置有未保存的修改，离开后会丢失这些修改。'
+  leaveTarget.value = '离开当前页面'
+  return new Promise<boolean>((resolve) => {
+    openLeaveConfirm(busy ? 'AI 正在执行，确认离开？' : '配置尚未保存，确认离开？', body, busy ? '停止 AI 并离开' : '放弃修改并离开', { resolve })
+  })
+})
+
+function handleBeforeUnload(event: BeforeUnloadEvent) {
+  if (!formDirty.value && !assistantBusyNow.value) return
+  event.preventDefault()
+  event.returnValue = ''
+}
+
+onMounted(() => window.addEventListener('beforeunload', handleBeforeUnload))
+onBeforeUnmount(() => window.removeEventListener('beforeunload', handleBeforeUnload))
+
 const statusFilterOptions = [
   { label: '已启用', value: 'ACTIVE' },
   { label: '已暂停', value: 'PAUSED' },
@@ -441,6 +536,7 @@ function resetForm() {
   form.dedupeWindowSec = 86400
   errorText.value = ''
   editing.value = null
+  snapshotFormBaseline()
 }
 
 function openCreate() {
@@ -469,6 +565,7 @@ function openEdit(audit: Audit) {
   form.onModelFail = audit.on_model_fail
   form.dedupeWindowSec = audit.dedupe_window_sec
   errorText.value = ''
+  snapshotFormBaseline()
   modalShow.value = true
 }
 
@@ -1699,7 +1796,7 @@ onMounted(async () => {
       </n-button>
     </div>
 
-    <n-modal v-model:show="modalShow" :mask-closable="!saving">
+    <n-modal :show="modalShow" :mask-closable="!saving" @update:show="handleModalShowChange">
       <div class="audit-modal">
         <div class="modal-head">
           <div>
@@ -1709,7 +1806,7 @@ onMounted(async () => {
           </div>
           <div class="modal-head-actions">
             <span class="modal-icon"><ShieldCheckmarkOutline /></span>
-            <button class="modal-close" type="button" title="关闭" aria-label="关闭" @click="modalShow = false">×</button>
+            <button class="modal-close" type="button" title="关闭" aria-label="关闭" @click="requestCloseModal">×</button>
           </div>
         </div>
         <div class="modal-body">
@@ -1943,7 +2040,7 @@ onMounted(async () => {
             <template #icon><SparklesOutline /></template>
             AI 帮我修改
           </n-button>
-          <n-button :disabled="saving" @click="modalShow = false">取消</n-button>
+          <n-button :disabled="saving" @click="requestCloseModal">取消</n-button>
           <n-button v-if="auth.can('audit:write')" type="primary" :loading="saving" @click="save()">{{ editing ? '保存修改' : '创建并查看接入方式' }}</n-button>
         </div>
       </div>
@@ -2334,10 +2431,76 @@ onMounted(async () => {
       :audit-id="scriptLogsAudit?.id || 0"
       :audit-name="scriptLogsAudit?.name || ''"
     />
+
+    <n-modal :show="leaveConfirmShow" :mask-closable="false" :close-on-esc="false">
+      <div class="leave-confirm-modal">
+        <div class="leave-confirm-body">
+          <span class="leave-confirm-icon"><WarningOutline /></span>
+          <div>
+            <h3>{{ leaveTitle }}</h3>
+            <p>{{ leaveMessage }}</p>
+            <p v-if="leaveTarget" class="leave-confirm-target">即将前往：{{ leaveTarget }}</p>
+          </div>
+        </div>
+        <div class="leave-confirm-actions">
+          <n-button @click="cancelLeaveConfirm">留在当前页</n-button>
+          <n-button type="error" @click="acceptLeaveConfirm">{{ leaveConfirmText }}</n-button>
+        </div>
+      </div>
+    </n-modal>
   </div>
 </template>
 
 <style scoped>
+.leave-confirm-modal {
+  width: min(420px, calc(100vw - 40px));
+  padding: 22px;
+  border-radius: 14px;
+  background: var(--card, #fff);
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.22);
+}
+
+.leave-confirm-body {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.leave-confirm-icon {
+  display: inline-flex;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: rgba(240, 173, 78, 0.16);
+  color: #d97706;
+}
+
+.leave-confirm-body h3 {
+  margin: 2px 0 6px;
+  font-size: 15px;
+}
+
+.leave-confirm-body p {
+  margin: 0 0 4px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--muted, #64748b);
+}
+
+.leave-confirm-target {
+  color: var(--muted-light, #94a3b8);
+}
+
+.leave-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 18px;
+}
+
 .audit-summary {
   display: flex;
   align-items: center;
