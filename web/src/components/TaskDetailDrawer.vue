@@ -10,6 +10,7 @@ import {
   NModal,
   NRadio,
   NRadioGroup,
+  NSelect,
   NSpin,
   useDialog,
   useMessage,
@@ -24,10 +25,12 @@ import {
   FlashOutline,
   ImagesOutline,
   RefreshOutline,
+  SendOutline,
   ShieldCheckmarkOutline,
   TimeOutline,
 } from '@vicons/ionicons5'
 import StatusTag from './StatusTag.vue'
+import CopyButton from './CopyButton.vue'
 import ReviewContext from './ReviewContext.vue'
 import { taskApi } from '@/api'
 import type { Task, TaskDetail, TaskEvent } from '@/api/types'
@@ -209,6 +212,7 @@ watch(
           <div class="drawer-title">
             <span>任务详情</span>
             <span v-if="task" class="mono">{{ task.task_no }}</span>
+            <CopyButton v-if="task" :text="task.task_no" size="tiny" label="" title="复制任务号" />
           </div>
           <div v-if="task" class="header-actions">
             <n-button size="small" quaternary circle @click="exportJSON">
