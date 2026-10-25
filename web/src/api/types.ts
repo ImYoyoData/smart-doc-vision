@@ -255,6 +255,7 @@ export interface Audit {
   routes: Record<string, unknown>
   default_result: string
   on_model_fail: string
+  review_mode?: 'INTERNAL' | 'EXTERNAL'
   dedupe_window_sec: number
   callback_enabled: boolean
   callback_url: string
@@ -684,6 +685,7 @@ export interface AuditAssistantConfig {
   routes: Record<string, unknown>
   default_result: string
   on_model_fail: string
+  review_mode?: 'INTERNAL' | 'EXTERNAL'
   dedupe_window_sec: number
   triggers?: Record<string, string>
   redis_trigger?: {

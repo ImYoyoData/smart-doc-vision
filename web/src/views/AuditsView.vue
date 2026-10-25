@@ -304,6 +304,7 @@ const form = reactive({
   routesText: defaultRoutesText,
   defaultResult: 'REVIEW',
   onModelFail: 'REVIEW',
+  reviewMode: 'INTERNAL',
   dedupeWindowSec: 86400,
 })
 
@@ -542,6 +543,7 @@ function resetForm() {
   form.routesText = defaultRoutesText
   form.defaultResult = 'REVIEW'
   form.onModelFail = 'REVIEW'
+  form.reviewMode = 'INTERNAL'
   form.dedupeWindowSec = 86400
   errorText.value = ''
   editing.value = null
@@ -572,6 +574,7 @@ function openEdit(audit: Audit) {
   form.routesText = JSON.stringify(audit.routes || JSON.parse(defaultRoutesText), null, 2)
   form.defaultResult = audit.decision_mode === 'CLASSIFY_ONLY' ? 'PASS' : audit.default_result
   form.onModelFail = audit.on_model_fail
+  form.reviewMode = audit.review_mode === 'EXTERNAL' ? 'EXTERNAL' : 'INTERNAL'
   form.dedupeWindowSec = audit.dedupe_window_sec
   errorText.value = ''
   snapshotFormBaseline()
@@ -1046,6 +1049,7 @@ async function save(openGuide = true): Promise<Audit | null> {
     review_prompt: form.reviewPrompt,
     default_result: form.defaultResult,
     on_model_fail: form.onModelFail,
+    review_mode: form.reviewMode,
     dedupe_window_sec: form.dedupeWindowSec,
     rules,
     routes,
@@ -1185,6 +1189,7 @@ function buildAssistantCurrentConfig() {
     routes,
     default_result: form.defaultResult,
     on_model_fail: form.onModelFail,
+    review_mode: form.reviewMode,
     dedupe_window_sec: form.dedupeWindowSec,
   }
 }
@@ -1219,6 +1224,7 @@ function applyAssistantDraft(config: AuditAssistantConfig) {
   if (form.decisionMode === 'CLASSIFY_ONLY') ensureClassifierUnknownCategory()
   form.defaultResult = form.decisionMode === 'CLASSIFY_ONLY' ? 'PASS' : config.default_result || 'REVIEW'
   form.onModelFail = config.on_model_fail || 'REVIEW'
+  form.reviewMode = config.review_mode === 'EXTERNAL' ? 'EXTERNAL' : 'INTERNAL'
   form.dedupeWindowSec = config.dedupe_window_sec ?? 86400
 }
 
@@ -1759,6 +1765,7 @@ onMounted(async () => {
             <span class="meta-item">
               去重 {{ audit.dedupe_window_sec ? `${Math.round(audit.dedupe_window_sec / 3600)}h` : '关闭' }}
             </span>
+            <span v-if="audit.review_mode === 'EXTERNAL'" class="meta-item" title="REVIEW 任务不进本平台复核台，由结果动作通知业务系统复核">外部复核</span>
           </div>
           <div class="audit-trigger-row">
             <span class="trigger-row-label">已开启接入</span>
@@ -2031,6 +2038,19 @@ onMounted(async () => {
                   { label: '不通过 REJECT', value: 'REJECT' },
                 ]"
               />
+            </div>
+            <div class="field">
+              <label>人工复核方式</label>
+              <n-select
+                v-model:value="form.reviewMode"
+                :options="[
+                  { label: '平台内复核 · 待议任务进本平台复核台', value: 'INTERNAL' },
+                  { label: '外部系统复核 · 不进复核台，按结果动作通知业务方', value: 'EXTERNAL' },
+                ]"
+              />
+              <div v-if="form.reviewMode === 'EXTERNAL'" class="form-hint">
+                REVIEW 结论的任务直接完成，不进入本平台待议复核队列；请在「结果动作回调」中配置通知，由业务系统自行人工复核。
+              </div>
             </div>
             <div class="field">
               <label>去重窗口（秒，0 表示不去重）</label>

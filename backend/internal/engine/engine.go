@@ -382,6 +382,9 @@ func (e *Engine) process(taskID uint64) {
 		"media_type":          task.MediaType,
 		"callback":            nil,
 	}
+	if finalResult == model.ResultReview && audit.ReviewMode == model.ReviewModeExternal {
+		resultDetail["external_review"] = true
+	}
 	if reviewErr != nil {
 		resultDetail["model_error"] = reviewErr.Error()
 	}
@@ -391,7 +394,8 @@ func (e *Engine) process(taskID uint64) {
 
 	status := model.TaskSuccess
 	var finished *time.Time
-	if finalResult == model.ResultReview {
+	externalReview := finalResult == model.ResultReview && audit.ReviewMode == model.ReviewModeExternal
+	if finalResult == model.ResultReview && !externalReview {
 		status = model.TaskReviewPending
 	} else {
 		finished = ptrTime(time.Now())
@@ -416,6 +420,9 @@ func (e *Engine) process(taskID uint64) {
 		"updated_at":    time.Now(),
 	}
 	message := fmt.Sprintf("审核完成，结论 %s（规则：%s）", finalResult, emptyDash(ruleResult.MatchedRule))
+	if externalReview {
+		message = fmt.Sprintf("审核完成，结论 %s（转外部系统复核，已按配置触发结果动作）", finalResult)
+	}
 	if reviewErr != nil {
 		message = fmt.Sprintf("模型异常，按兜底策略给出 %s", finalResult)
 	}

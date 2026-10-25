@@ -3,20 +3,25 @@ package model
 import "time"
 
 type Audit struct {
-	ID                     uint64     `gorm:"primaryKey;autoIncrement" json:"id"`
-	ProjectID              uint64     `gorm:"not null;index;index:idx_audit_project_code,unique" json:"project_id"`
-	Name                   string     `gorm:"size:64;not null" json:"name"`
-	Code                   string     `gorm:"size:32;not null;index:idx_audit_project_code,unique" json:"code"`
-	Description            string     `gorm:"size:255" json:"description"`
-	MediaTypes             JSONText   `gorm:"type:text" json:"media_types"`
-	DecisionMode           string     `gorm:"size:16;not null;default:REVIEW" json:"decision_mode"`
-	Categories             JSONText   `gorm:"type:longtext" json:"categories"`
-	ProviderID             uint64     `gorm:"not null;index" json:"provider_id"`
-	ReviewPrompt           string     `gorm:"type:text" json:"review_prompt"`
-	Rules                  JSONText   `gorm:"type:longtext" json:"rules"`
-	Routes                 JSONText   `gorm:"type:longtext" json:"routes"`
-	DefaultResult          string     `gorm:"size:16;not null;default:REVIEW" json:"default_result"`
-	OnModelFail            string     `gorm:"size:16;not null;default:REVIEW" json:"on_model_fail"`
+	ID            uint64   `gorm:"primaryKey;autoIncrement" json:"id"`
+	ProjectID     uint64   `gorm:"not null;index;index:idx_audit_project_code,unique" json:"project_id"`
+	Name          string   `gorm:"size:64;not null" json:"name"`
+	Code          string   `gorm:"size:32;not null;index:idx_audit_project_code,unique" json:"code"`
+	Description   string   `gorm:"size:255" json:"description"`
+	MediaTypes    JSONText `gorm:"type:text" json:"media_types"`
+	DecisionMode  string   `gorm:"size:16;not null;default:REVIEW" json:"decision_mode"`
+	Categories    JSONText `gorm:"type:longtext" json:"categories"`
+	ProviderID    uint64   `gorm:"not null;index" json:"provider_id"`
+	ReviewPrompt  string   `gorm:"type:text" json:"review_prompt"`
+	Rules         JSONText `gorm:"type:longtext" json:"rules"`
+	Routes        JSONText `gorm:"type:longtext" json:"routes"`
+	DefaultResult string   `gorm:"size:16;not null;default:REVIEW" json:"default_result"`
+	OnModelFail   string   `gorm:"size:16;not null;default:REVIEW" json:"on_model_fail"`
+	// ReviewMode decides where a REVIEW verdict waits for humans: INTERNAL
+	// queues the task in this platform's review workbench; EXTERNAL finishes
+	// the task immediately and only notifies the business system via result
+	// routes / callbacks, which runs its own manual review.
+	ReviewMode             string     `gorm:"size:16;not null;default:INTERNAL" json:"review_mode"`
 	DedupeWindowSec        int        `gorm:"not null" json:"dedupe_window_sec"`
 	CallbackEnabled        bool       `gorm:"not null;default:false" json:"callback_enabled"`
 	CallbackURL            string     `gorm:"size:1024" json:"callback_url"`
@@ -51,6 +56,14 @@ const (
 	DecisionReview       = "REVIEW"
 	DecisionClassify     = "CLASSIFY"
 	DecisionClassifyOnly = "CLASSIFY_ONLY"
+)
+
+const (
+	// ReviewModeInternal queues REVIEW tasks in this platform's workbench.
+	ReviewModeInternal = "INTERNAL"
+	// ReviewModeExternal finishes REVIEW tasks and defers manual review to the
+	// business system notified via result routes / callbacks.
+	ReviewModeExternal = "EXTERNAL"
 )
 
 // AuditCategory maps one model-selected category to a final audit decision.

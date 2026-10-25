@@ -37,6 +37,7 @@ type auditInput struct {
 	Routes          json.RawMessage       `json:"routes"`
 	DefaultResult   string                `json:"default_result"`
 	OnModelFail     string                `json:"on_model_fail"`
+	ReviewMode      string                `json:"review_mode"`
 	DedupeWindowSec *int                  `json:"dedupe_window_sec"`
 	Status          string                `json:"status"`
 
@@ -176,6 +177,7 @@ func (s *Server) createAudit(c *gin.Context) {
 		Categories: model.JSONBytes(req.Categories), ProviderID: provider.ID,
 		ReviewPrompt: req.ReviewPrompt, Rules: model.JSONText(storedRules), Routes: model.JSONText(storedRoutes),
 		DefaultResult: defaultResult(req.DefaultResult), OnModelFail: defaultResult(req.OnModelFail),
+		ReviewMode:      normalizeReviewMode(req.ReviewMode),
 		DedupeWindowSec: dedupeWindow(req.DedupeWindowSec), Status: status, Version: 1, CreatedBy: user.ID,
 	}
 	if err := applyCallbackConfig(s, &audit, &req, true); err != nil {
@@ -297,6 +299,13 @@ func (s *Server) updateAudit(c *gin.Context) {
 			return
 		}
 		audit.OnModelFail = req.OnModelFail
+	}
+	if req.ReviewMode != "" {
+		if req.ReviewMode != model.ReviewModeInternal && req.ReviewMode != model.ReviewModeExternal {
+			badRequest(c, "人工复核方式需为 INTERNAL 或 EXTERNAL")
+			return
+		}
+		audit.ReviewMode = req.ReviewMode
 	}
 	if req.DedupeWindowSec != nil {
 		if *req.DedupeWindowSec < 0 || *req.DedupeWindowSec > 604800 {
@@ -644,6 +653,9 @@ func validateAuditInput(req *auditInput, creating bool) error {
 	if req.OnModelFail != "" && !validResult(req.OnModelFail) {
 		return fmt.Errorf("模型失败兜底需为 PASS/REJECT/REVIEW")
 	}
+	if req.ReviewMode != "" && req.ReviewMode != model.ReviewModeInternal && req.ReviewMode != model.ReviewModeExternal {
+		return fmt.Errorf("人工复核方式需为 INTERNAL 或 EXTERNAL")
+	}
 	if req.DedupeWindowSec != nil && (*req.DedupeWindowSec < 0 || *req.DedupeWindowSec > 604800) {
 		return fmt.Errorf("去重窗口需在 0~604800 秒之间")
 	}
@@ -916,6 +928,13 @@ func defaultResult(v string) string {
 		return strings.ToUpper(strings.TrimSpace(v))
 	}
 	return model.ResultReview
+}
+
+func normalizeReviewMode(v string) string {
+	if v == model.ReviewModeExternal {
+		return model.ReviewModeExternal
+	}
+	return model.ReviewModeInternal
 }
 
 func dedupeWindow(v *int) int {
