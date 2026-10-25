@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { NButton, NInput, NInputNumber, NModal, NSelect, NSwitch, NTag, useMessage } from 'naive-ui'
-import { auditApi } from '@/api'
-import type { TriggerSource } from '@/api/types'
+import { auditApi, redisConnectionApi } from '@/api'
+import type { RedisConnection, TriggerSource, TriggerUpdate } from '@/api/types'
+import { useWorkspaceStore } from '@/stores/workspace'
 
 const props = defineProps<{ show: boolean; trigger: TriggerSource | null }>()
 const emit = defineEmits<{
@@ -10,11 +12,14 @@ const emit = defineEmits<{
   (e: 'updated'): void
 }>()
 const message = useMessage()
+const router = useRouter()
+const workspace = useWorkspaceStore()
 const saving = ref(false)
 const testing = ref(false)
 const testResult = ref<Record<string, unknown> | null>(null)
 const testError = ref('')
-const headersText = ref('')
+const connections = ref<RedisConnection[]>([])
+const loadingConnections = ref(false)
 
 const form = reactive({
   name: '',
@@ -22,70 +27,147 @@ const form = reactive({
   priority: 40,
   secret: '',
   config: {} as Record<string, any>,
+  redisConnectionId: null as number | null,
+  redisDb: 0,
+  stream: '',
+  consumerGroup: '',
+  startPosition: '$',
+  batchSize: 16,
+  maxInflight: 1,
 })
 
 const typeLabels: Record<string, string> = {
   OPENAPI: '开放 API',
   WEBSOCKET: 'WebSocket',
   REDIS: 'Redis Stream',
-  POLLING: 'HTTP 定时轮询',
 }
 const type = computed(() => props.trigger?.type || '')
 const title = computed(() => `${typeLabels[type.value] || type.value} · 触发源配置`)
+const isRedis = computed(() => type.value === 'REDIS')
 
 const statusOptions = [
   { label: '启用 ACTIVE', value: 'ACTIVE' },
   { label: '暂停 PAUSED', value: 'PAUSED' },
   { label: '停用 DISABLED', value: 'DISABLED' },
 ]
-const methodOptions = ['GET', 'POST'].map((value) => ({ label: value, value }))
+const startPositionOptions = [
+  { label: '$ · 只消费新消息（推荐）', value: '$' },
+  { label: '0 · 从头消费积压消息', value: '0' },
+]
+const connectionOptions = computed(() => connections.value.map((connection) => {
+  const unavailable = connection.status !== 'ACTIVE' || !connection.last_test_ok || connection.health !== 'OK'
+  const suffix = connection.status !== 'ACTIVE'
+    ? ' · 已停用'
+    : !connection.last_test_ok || connection.health !== 'OK'
+      ? ' · 未通过测试'
+      : ''
+  return {
+    label: `${connection.name} · ${connection.addr}${suffix}`,
+    value: connection.id,
+    disabled: unavailable,
+  }
+}))
+const hasEligibleConnection = computed(() => connections.value.some((connection) =>
+  connection.status === 'ACTIVE' && connection.last_test_ok && connection.health === 'OK'))
+
+function pauseReasonLabel(reason: string) {
+  const labels: Record<string, string> = {
+    MANUAL: '手动暂停',
+    CONNECTION_DISABLED: 'Redis 连接已停用',
+    CONNECTION_UNHEALTHY: 'Redis 连接不可用',
+    FAILURE_LIMIT: '连续失败达到上限',
+  }
+  return labels[reason] || reason
+}
+
+function applyTrigger(trigger: TriggerSource) {
+  form.name = trigger.name
+  form.status = trigger.status
+  form.priority = trigger.priority
+  form.secret = ''
+  form.config = { ...(trigger.config || {}) }
+  form.redisConnectionId = trigger.redis_connection_id || null
+  form.redisDb = trigger.redis_db || 0
+  form.stream = trigger.stream || ''
+  form.consumerGroup = trigger.consumer_group || ''
+  form.startPosition = trigger.start_position || '$'
+  form.batchSize = trigger.batch_size || 16
+  form.maxInflight = trigger.max_inflight || 1
+  testResult.value = null
+  testError.value = ''
+}
 
 watch(
   () => props.trigger,
   (trigger) => {
-    if (!trigger) return
-    form.name = trigger.name
-    form.status = trigger.status
-    form.priority = trigger.priority
-    form.secret = ''
-    form.config = { ...(trigger.config || {}) }
-    headersText.value = Object.entries(form.config.headers || {})
-      .map(([key, value]) => `${key}: ${value}`)
-      .join('\n')
-    testResult.value = null
-    testError.value = ''
+    if (trigger) applyTrigger(trigger)
   },
   { immediate: true },
 )
+
+watch(
+  () => props.show,
+  (visible) => {
+    if (!visible) return
+    if (props.trigger) applyTrigger(props.trigger)
+    void loadConnections()
+  },
+)
+
+async function loadConnections() {
+  if (!workspace.currentProjectId || !isRedis.value) return
+  loadingConnections.value = true
+  try {
+    const data = await redisConnectionApi.list(workspace.currentProjectId)
+    connections.value = data.items
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : '加载 Redis 连接失败')
+  } finally {
+    loadingConnections.value = false
+  }
+}
 
 function close() {
   emit('update:show', false)
 }
 
-function parseHeaders(): Record<string, string> {
-  const map: Record<string, string> = {}
-  for (const line of headersText.value.split(/\r?\n/)) {
-    const index = line.indexOf(':')
-    if (index <= 0) continue
-    const key = line.slice(0, index).trim()
-    if (key) map[key] = line.slice(index + 1).trim()
-  }
-  return map
+function goConnections() {
+  emit('update:show', false)
+  router.push({ name: 'connections' })
 }
 
 async function save() {
   if (!props.trigger) return
+  if (isRedis.value && form.status === 'ACTIVE') {
+    if (!form.redisConnectionId) {
+      message.warning('启用 Redis 触发前请选择项目 Redis 连接')
+      return
+    }
+    if (!form.stream.trim()) {
+      message.warning('请填写要监听的 Redis Stream')
+      return
+    }
+  }
   saving.value = true
   try {
-    const config = { ...form.config }
-    if (type.value === 'POLLING') config.headers = parseHeaders()
-    await auditApi.updateTrigger(props.trigger.id, {
+    const payload: TriggerUpdate = {
       name: form.name,
       status: form.status,
       priority: form.priority,
-      config,
-      ...(form.secret.trim() ? { secret: form.secret.trim() } : {}),
-    })
+    }
+    if (isRedis.value) {
+      payload.redis_connection_id = form.redisConnectionId || undefined
+      payload.redis_db = form.redisDb
+      payload.stream = form.stream.trim()
+      payload.consumer_group = form.consumerGroup.trim()
+      payload.start_position = form.startPosition
+      payload.batch_size = form.batchSize
+      payload.max_inflight = form.maxInflight
+    } else {
+      payload.config = form.config
+    }
+    if (form.secret.trim()) payload.secret = form.secret.trim()
+    await auditApi.updateTrigger(props.trigger.id, payload)
     message.success('触发源配置已保存')
     emit('updated')
     close()
@@ -143,71 +225,58 @@ function formatTime(value?: string | null): string {
           <n-input-number v-model:value="form.priority" size="small" :min="0" :max="1000" style="width: 160px" />
         </div>
 
-        <template v-if="type === 'REDIS'">
-          <div class="two-col">
-            <div class="field">
-              <label>Stream</label>
-              <n-input v-model:value="form.config.stream" size="small" placeholder="sdv:project:audit:review" />
-            </div>
-            <div class="field">
-              <label>消费组</label>
-              <n-input v-model:value="form.config.group" size="small" placeholder="sdv-cg-1" />
-            </div>
+        <template v-if="isRedis">
+          <div v-if="props.trigger?.pause_reason" class="connection-hint paused">
+            当前暂停原因：{{ pauseReasonLabel(props.trigger.pause_reason) }}
+            <template v-if="props.trigger.auto_paused">（平台自动暂停）</template>
           </div>
           <div class="field">
-            <label>批量大小 <span>1~32</span></label>
-            <n-input-number v-model:value="form.config.batch_size" size="small" :min="1" :max="32" style="width: 160px" />
-          </div>
-          <p class="hint">消息格式：<code>XADD stream * data '{"biz_key":"...","media":[{"type":"text","content":"..."}]}'</code></p>
-        </template>
-
-        <template v-else-if="type === 'POLLING'">
-          <div class="field">
-            <label>轮询地址</label>
-            <n-input v-model:value="form.config.url" size="small" placeholder="https://example.com/api/pending-tasks" />
-          </div>
-          <div class="two-col">
-            <div class="field">
-              <label>请求方法</label>
-              <n-select v-model:value="form.config.method" :options="methodOptions" size="small" />
-            </div>
-            <div class="field">
-              <label>轮询间隔（秒）<span>10~86400</span></label>
-              <n-input-number v-model:value="form.config.interval_sec" size="small" :min="10" :max="86400" style="width: 100%" />
-            </div>
-          </div>
-          <div class="three-col">
-            <div class="field">
-              <label>列表字段路径</label>
-              <n-input v-model:value="form.config.items_path" size="small" placeholder="items" />
-            </div>
-            <div class="field">
-              <label>游标字段路径</label>
-              <n-input v-model:value="form.config.cursor_path" size="small" placeholder="next_cursor" />
-            </div>
-            <div class="field">
-              <label>游标参数名</label>
-              <n-input v-model:value="form.config.cursor_param" size="small" placeholder="cursor" />
+            <label>Redis 连接 <span>只能选择当前项目已启用且测试成功的连接</span></label>
+            <n-select
+              v-model:value="form.redisConnectionId"
+              :options="connectionOptions"
+              :loading="loadingConnections"
+              size="small"
+              clearable
+              placeholder="选择项目 Redis 连接"
+            />
+            <div v-if="!loadingConnections && !hasEligibleConnection" class="connection-hint">
+              当前项目没有可用 Redis 连接。请先到
+              <n-button text type="primary" size="tiny" @click="goConnections">数据连接</n-button>
+              新增并测试连接。
             </div>
           </div>
           <div class="two-col">
             <div class="field">
-              <label>鉴权 Header 名称 <span>值来自下方密钥</span></label>
-              <n-input v-model:value="form.config.auth_header" size="small" placeholder="Authorization" />
+              <label>DB 编号 <span>0~255</span></label>
+              <n-input-number v-model:value="form.redisDb" size="small" :min="0" :max="255" style="width: 100%" />
             </div>
             <div class="field">
-              <label>鉴权密钥 <span>留空保持原值</span></label>
-              <n-input v-model:value="form.secret" type="password" show-password-on="click" size="small" placeholder="Bearer token 或签名密钥" />
+              <label>消费起点</label>
+              <n-select v-model:value="form.startPosition" :options="startPositionOptions" size="small" />
             </div>
           </div>
           <div class="field">
-            <label>附加请求头 <span>每行 key: value</span></label>
-            <n-input v-model:value="headersText" type="textarea" :autosize="{ minRows: 2, maxRows: 5 }" size="small" placeholder="X-Tenant: demo" />
+            <label>Stream <span>要监听的队列名</span></label>
+            <n-input v-model:value="form.stream" size="small" placeholder="例如 sdv:archive:contract" class="mono-input" />
           </div>
-          <div class="field-inline">
-            <n-switch v-model:value="form.config.allow_private" size="small" />
-            <span>允许访问内网地址（仅联调环境建议开启）</span>
+          <div class="two-col">
+            <div class="field">
+              <label>消费组 <span>留空自动生成</span></label>
+              <n-input v-model:value="form.consumerGroup" size="small" placeholder="sdv-cg-1" />
+            </div>
+            <div class="field">
+              <label>批量大小 <span>1~32</span></label>
+              <n-input-number v-model:value="form.batchSize" size="small" :min="1" :max="32" style="width: 100%" />
+            </div>
           </div>
+          <div class="field">
+            <label>最大并发处理数 <span>1~32</span></label>
+            <n-input-number v-model:value="form.maxInflight" size="small" :min="1" :max="32" style="width: 160px" />
+          </div>
+          <p class="hint">
+            一个 <code>(连接, DB, Stream)</code> 只能被一个审核消费。消息格式：<code>XADD stream * data '{"biz_key":"...","media":[{"type":"text","content":"..."}]}'</code>
+          </p>
         </template>
 
         <template v-else-if="type === 'OPENAPI'">
@@ -249,7 +318,7 @@ function formatTime(value?: string | null): string {
 
 <style scoped>
 .trigger-modal {
-  width: min(640px, calc(100vw - 32px));
+  width: min(680px, calc(100vw - 32px));
   max-height: calc(100vh - 48px);
   display: flex;
   flex-direction: column;
@@ -285,11 +354,6 @@ function formatTime(value?: string | null): string {
   grid-template-columns: 1fr 1fr;
   gap: 10px;
 }
-.three-col {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 10px;
-}
 .field {
   display: flex;
   flex-direction: column;
@@ -303,13 +367,6 @@ function formatTime(value?: string | null): string {
   color: var(--muted);
   font-weight: 400;
 }
-.field-inline {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  color: var(--muted);
-}
 .hint {
   margin: 0;
   color: var(--muted);
@@ -322,6 +379,20 @@ function formatTime(value?: string | null): string {
   background: #eef2f8;
   font-size: 11px;
   word-break: break-all;
+}
+.connection-hint {
+  padding: 8px 10px;
+  border: 1px solid #dbe7fb;
+  border-radius: 8px;
+  background: #f6faff;
+  color: #4b6a9b;
+  font-size: 11px;
+  line-height: 1.7;
+}
+.connection-hint.paused {
+  border-color: #fde68a;
+  background: #fffbeb;
+  color: #92400e;
 }
 .runtime {
   display: grid;
@@ -377,7 +448,6 @@ function formatTime(value?: string | null): string {
 }
 @media (max-width: 640px) {
   .two-col,
-  .three-col,
   .runtime {
     grid-template-columns: 1fr;
   }

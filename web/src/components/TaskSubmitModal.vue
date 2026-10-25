@@ -242,7 +242,10 @@ async function submit() {
           <h2>发起一次图档审核</h2>
           <p>任务将进入异步审核引擎，并按审核配置的规则与结果路由处理。</p>
         </div>
-        <span class="modal-icon"><FlashOutline /></span>
+        <div class="modal-head-actions">
+          <span class="modal-icon"><FlashOutline /></span>
+          <button class="modal-close" type="button" title="关闭" aria-label="关闭" @click="close">×</button>
+        </div>
       </div>
 
       <div class="modal-body">

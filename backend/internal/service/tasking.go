@@ -105,17 +105,17 @@ func (s *TaskService) Submit(ctx context.Context, in SubmitInput) (*SubmitOutcom
 	}
 
 	window := audit.DedupeWindowSec
-	hash := dedupeHash(in.ProjectID, in.AuditID, in.SourceType, in.SourceID, in.Input, window)
+	hash, previousHash, lockHash := dedupeHash(in.ProjectID, in.AuditID, in.SourceType, in.SourceID, in.Input, window)
 	if window > 0 && hash != "" {
-		if existing := s.lookupDedupedTask(ctx, in.ProjectID, hash, window); existing != nil {
+		if existing := s.lookupDedupePair(ctx, in.ProjectID, hash, previousHash, window); existing != nil {
 			return &SubmitOutcome{Task: *existing, Duplicated: true}, nil
 		}
 		if s.redis != nil {
-			lockKey := fmt.Sprintf("sdv:%d:dedupe-lock:%s", in.ProjectID, hash)
+			lockKey := fmt.Sprintf("sdv:%d:dedupe-lock:%s", in.ProjectID, lockHash)
 			locked, lockErr := s.redis.SetNX(ctx, lockKey, "1", 8*time.Second).Result()
 			if lockErr == nil && locked {
 				defer s.redis.Del(context.Background(), lockKey)
-				if existing := s.lookupDedupedTask(ctx, in.ProjectID, hash, window); existing != nil {
+				if existing := s.lookupDedupePair(ctx, in.ProjectID, hash, previousHash, window); existing != nil {
 					return &SubmitOutcome{Task: *existing, Duplicated: true}, nil
 				}
 			} else {
@@ -125,7 +125,7 @@ func (s *TaskService) Submit(ctx context.Context, in SubmitInput) (*SubmitOutcom
 					case <-ctx.Done():
 						return nil, submitErr(http.StatusRequestTimeout, "REQUEST_TIMEOUT", "请求已取消")
 					}
-					if existing := s.lookupDedupedTask(ctx, in.ProjectID, hash, window); existing != nil {
+					if existing := s.lookupDedupePair(ctx, in.ProjectID, hash, previousHash, window); existing != nil {
 						return &SubmitOutcome{Task: *existing, Duplicated: true}, nil
 					}
 				}
@@ -209,6 +209,20 @@ func (s *TaskService) lookupDedupedTask(ctx context.Context, projectID uint64, h
 	return &task
 }
 
+func (s *TaskService) lookupDedupePair(ctx context.Context, projectID uint64, currentHash, previousHash string, windowSec int) *model.Task {
+	if currentHash != "" {
+		if existing := s.lookupDedupedTask(ctx, projectID, currentHash, windowSec); existing != nil {
+			return existing
+		}
+	}
+	if previousHash != "" && previousHash != currentHash {
+		if existing := s.lookupDedupedTask(ctx, projectID, previousHash, windowSec); existing != nil {
+			return existing
+		}
+	}
+	return nil
+}
+
 func (s *TaskService) findRecentDuplicate(projectID uint64, hash string, windowSec int) *model.Task {
 	cutoff := time.Now().Add(-time.Duration(windowSec) * time.Second)
 	var task model.Task
@@ -219,22 +233,38 @@ func (s *TaskService) findRecentDuplicate(projectID uint64, hash string, windowS
 	return &task
 }
 
-func dedupeHash(projectID, auditID uint64, sourceType string, sourceID uint64, input model.TaskInput, windowSec int) string {
+// dedupeHash returns the current and previous time-bucket hashes plus a
+// bucket-independent lock hash. Checking the previous bucket closes the
+// boundary hole where two identical submissions straddle a window boundary.
+func dedupeHash(projectID, auditID uint64, sourceType string, sourceID uint64, input model.TaskInput, windowSec int) (current, previous, lock string) {
 	if input.BizKey == "" && len(input.Media) == 0 {
-		return ""
+		return "", "", ""
 	}
 	payload := map[string]any{
 		"project_id": projectID, "audit_id": auditID,
 		"source_type": sourceType, "source_id": sourceID,
 		"biz_key": input.BizKey, "media": input.Media,
 	}
-	if windowSec > 0 {
-		payload["window"] = time.Now().Unix() / int64(windowSec)
-	} else {
+	if windowSec <= 0 {
+		// Dedupe is disabled, but dedupe_hash still participates in a unique
+		// index; keep a random nonce so concurrent tasks do not collide.
 		payload["nonce"] = uuid.NewString()
+		return hashPayload(payload), "", ""
 	}
-	b, _ := json.Marshal(payload)
-	sum := sha256.Sum256(b)
+	base, _ := json.Marshal(payload)
+	baseSum := sha256.Sum256(base)
+	lock = hex.EncodeToString(baseSum[:])
+	bucket := time.Now().Unix() / int64(windowSec)
+	payload["window"] = bucket
+	current = hashPayload(payload)
+	payload["window"] = bucket - 1
+	previous = hashPayload(payload)
+	return current, previous, lock
+}
+
+func hashPayload(payload map[string]any) string {
+	raw, _ := json.Marshal(payload)
+	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])
 }
 

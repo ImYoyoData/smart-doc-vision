@@ -25,6 +25,54 @@ type projectInput struct {
 	MaxTasksPerDay   *int   `json:"max_tasks_per_day"`
 	MaxConcurrent    *int   `json:"max_concurrent_tasks"`
 	OpenAPIRateLimit *int   `json:"openapi_rate_limit"`
+
+	JSMaxMemoryMB          *int `json:"js_max_memory_mb"`
+	JSTimeoutMS            *int `json:"js_timeout_ms"`
+	JSMaxLogBytes          *int `json:"js_max_log_bytes"`
+	JSMaxResultBytes       *int `json:"js_max_result_bytes"`
+	JSMaxHTTPRequests      *int `json:"js_max_http_requests"`
+	JSMaxHTTPResponseBytes *int `json:"js_max_http_response_bytes"`
+	JSMaxDBRows            *int `json:"js_max_db_rows"`
+	JSMaxConcurrency       *int `json:"js_max_concurrency"`
+}
+
+func applyProjectJSSettings(project *model.Project, req *projectInput, creating bool) error {
+	if creating {
+		project.JSMaxMemoryMB = 64
+		project.JSTimeoutMS = 5000
+		project.JSMaxLogBytes = 32768
+		project.JSMaxResultBytes = 65536
+		project.JSMaxHTTPRequests = 20
+		project.JSMaxHTTPResponseBytes = 2 << 20
+		project.JSMaxDBRows = 1000
+		project.JSMaxConcurrency = 2
+	}
+	checks := []struct {
+		value *int
+		dest  *int
+		min   int
+		max   int
+		label string
+	}{
+		{req.JSMaxMemoryMB, &project.JSMaxMemoryMB, 8, 512, "脚本内存上限需在 8~512 MB 之间"},
+		{req.JSTimeoutMS, &project.JSTimeoutMS, 500, 60000, "脚本超时需在 500~60000 ms 之间"},
+		{req.JSMaxLogBytes, &project.JSMaxLogBytes, 1024, 1 << 20, "脚本日志上限需在 1KB~1MB 之间"},
+		{req.JSMaxResultBytes, &project.JSMaxResultBytes, 1024, 1 << 20, "脚本返回值上限需在 1KB~1MB 之间"},
+		{req.JSMaxHTTPRequests, &project.JSMaxHTTPRequests, 0, 100, "脚本 HTTP 请求上限需在 0~100 之间"},
+		{req.JSMaxHTTPResponseBytes, &project.JSMaxHTTPResponseBytes, 1024, 16 << 20, "脚本 HTTP 响应上限需在 1KB~16MB 之间"},
+		{req.JSMaxDBRows, &project.JSMaxDBRows, 1, 10000, "脚本 DB 行数上限需在 1~10000 之间"},
+		{req.JSMaxConcurrency, &project.JSMaxConcurrency, 1, 16, "脚本并发数需在 1~16 之间"},
+	}
+	for _, check := range checks {
+		if check.value == nil {
+			continue
+		}
+		if *check.value < check.min || *check.value > check.max {
+			return fmt.Errorf("%s", check.label)
+		}
+		*check.dest = *check.value
+	}
+	return nil
 }
 
 func isSuperAdmin(user *model.User) bool {
@@ -186,6 +234,10 @@ func (s *Server) createProject(c *gin.Context) {
 		RetentionDays: req.RetentionDays, MaxTasksPerDay: maxTasksPerDay,
 		MaxConcurrent: maxConcurrent, OpenAPIRateLimit: rateLimit, CreatedBy: user.ID,
 	}
+	if err := applyProjectJSSettings(&project, &req, true); err != nil {
+		badRequest(c, err.Error())
+		return
+	}
 	if err := s.db.Create(&project).Error; err != nil {
 		serverError(c, err)
 		return
@@ -257,6 +309,10 @@ func (s *Server) updateProject(c *gin.Context) {
 			return
 		}
 		project.MaxConcurrent = *req.MaxConcurrent
+	}
+	if err := applyProjectJSSettings(project, &req, false); err != nil {
+		badRequest(c, err.Error())
+		return
 	}
 	if err := s.db.Save(project).Error; err != nil {
 		serverError(c, err)

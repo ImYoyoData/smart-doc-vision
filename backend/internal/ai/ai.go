@@ -2,9 +2,13 @@ package ai
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
+
+	"github.com/google/uuid"
 
 	"smartdoc-vision/backend/internal/model"
 	"smartdoc-vision/backend/internal/textenc"
@@ -42,14 +46,68 @@ func AdapterFor(kind string) (Adapter, error) {
 	}
 }
 
+// MaxOutputTokensLimit is a safety ceiling only. Individual providers still
+// reject values above what their selected model actually supports.
+const MaxOutputTokensLimit = 200000
+
+// ApplyCustomHeaders adds provider-defined headers (for example a session ID
+// required by a proxy) without letting them replace the protocol's auth headers.
+func ApplyCustomHeaders(req *http.Request, headers map[string]string) {
+	hasSession := req.Header.Get("x-opencode-session") != ""
+	for key, value := range headers {
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		if key == "" || value == "" {
+			continue
+		}
+		switch strings.ToLower(key) {
+		case "authorization", "x-api-key", "content-type":
+			continue
+		}
+		if strings.EqualFold(key, "x-opencode-session") {
+			hasSession = true
+		}
+		if strings.EqualFold(value, "{{random}}") || strings.EqualFold(value, "auto") {
+			value = uuid.NewString()
+		}
+		req.Header.Set(key, value)
+	}
+	// Some OpenCode-compatible gateways require a per-request session header.
+	// Unknown headers are harmless for other providers, so attach one by default
+	// and let an explicit custom header override it.
+	if !hasSession {
+		req.Header.Set("x-opencode-session", uuid.NewString())
+	}
+}
+
+// WithRandomSessionHeader returns a copy of the provider whose gateway session
+// header is a fresh UUID. Health probes must never reuse a fixed session ID.
+func WithRandomSessionHeader(provider model.AIProvider) model.AIProvider {
+	cfg := ParseConfig(provider)
+	if cfg.Headers == nil {
+		cfg.Headers = map[string]string{}
+	}
+	for key := range cfg.Headers {
+		if strings.EqualFold(key, "x-opencode-session") {
+			delete(cfg.Headers, key)
+			break
+		}
+	}
+	cfg.Headers["x-opencode-session"] = uuid.NewString()
+	if raw, err := json.Marshal(cfg); err == nil {
+		provider.ConfigJSON = model.JSONText(raw)
+	}
+	return provider
+}
+
 func ParseConfig(p model.AIProvider) model.ProviderConfig {
 	var cfg model.ProviderConfig
 	_ = model.DecodeJSON(p.ConfigJSON, &cfg)
 	if cfg.MaxTokens <= 0 {
 		cfg.MaxTokens = 2200
 	}
-	if cfg.MaxTokens > 8000 {
-		cfg.MaxTokens = 8000
+	if cfg.MaxTokens > MaxOutputTokensLimit {
+		cfg.MaxTokens = MaxOutputTokensLimit
 	}
 	if cfg.MaxImages <= 0 {
 		cfg.MaxImages = 6

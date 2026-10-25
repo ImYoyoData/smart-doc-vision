@@ -1,7 +1,12 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
-import { NButton, NIcon, NInput, NInputNumber, NSelect, NSwitch, NTabPane, NTabs, NTag } from 'naive-ui'
-import { AddOutline, ArrowDownOutline, ArrowUpOutline, TrashOutline } from '@vicons/ionicons5'
+import { computed, onMounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
+import { NButton, NIcon, NInput, NInputNumber, NPopover, NSelect, NSwitch, NTabPane, NTabs, NTag } from 'naive-ui'
+import { AddOutline, ArrowDownOutline, ArrowUpOutline, HelpCircleOutline, TrashOutline } from '@vicons/ionicons5'
+import ScriptEditorModal from '@/components/ScriptEditorModal.vue'
+import { redisConnectionApi } from '@/api'
+import type { RedisConnection } from '@/api/types'
+import { useWorkspaceStore } from '@/stores/workspace'
 
 interface RouteAction {
   type: string
@@ -14,9 +19,11 @@ interface RouteAction {
   command?: string
   target?: string
   payload?: string
-  dsn_env?: string
-  query?: string
-  args?: unknown[]
+  connection_id?: number
+  db?: number
+  remark?: string
+  script?: string
+  memory_mb?: number
 }
 
 interface RouteConfig {
@@ -27,8 +34,56 @@ interface RouteConfig {
 
 type RouteMap = Record<string, RouteConfig>
 
-const props = defineProps<{ modelValue: string }>()
+const props = defineProps<{ modelValue: string; auditId?: number }>()
 const emit = defineEmits<{ (e: 'update:modelValue', value: string): void }>()
+const workspace = useWorkspaceStore()
+const router = useRouter()
+const connections = ref<RedisConnection[]>([])
+const loadingConnections = ref(false)
+const projectJsMemoryMB = computed(() => workspace.currentProject?.js_max_memory_mb ?? 64)
+const projectJsTimeoutMS = computed(() => workspace.currentProject?.js_timeout_ms ?? 5000)
+
+const connectionOptions = computed(() => connections.value.map((connection) => {
+  const unavailable = connection.status !== 'ACTIVE' || !connection.last_test_ok || connection.health !== 'OK'
+  const suffix = connection.status !== 'ACTIVE'
+    ? ' · 已停用'
+    : !connection.last_test_ok || connection.health !== 'OK'
+      ? ' · 未通过测试'
+      : ''
+  return {
+    label: `${connection.name} · ${connection.addr}${suffix}`,
+    value: connection.id,
+    disabled: unavailable,
+  }
+}))
+
+async function loadConnections() {
+  if (!workspace.currentProjectId) {
+    connections.value = []
+    return
+  }
+  loadingConnections.value = true
+  try {
+    const data = await redisConnectionApi.list(workspace.currentProjectId)
+    connections.value = data.items
+  } catch {
+    connections.value = []
+  } finally {
+    loadingConnections.value = false
+  }
+}
+
+onMounted(() => {
+  void loadConnections()
+})
+
+watch(() => workspace.currentProjectId, () => {
+  void loadConnections()
+})
+
+function goConnections() {
+  router.push({ name: 'connections' })
+}
 
 const results = [
   { key: 'PASS', label: '通过 PASS' },
@@ -39,7 +94,7 @@ const actionTypes = [
   { label: 'HTTP 回调', value: 'http' },
   { label: 'WebSocket 回调', value: 'websocket' },
   { label: 'Redis 写入', value: 'redis' },
-  { label: 'MySQL 更新', value: 'mysql' },
+  { label: 'JS 脚本', value: 'js' },
 ]
 const methodOptions = ['POST', 'PUT', 'PATCH', 'GET', 'DELETE'].map((value) => ({ label: value, value }))
 const redisCommands = [
@@ -52,6 +107,46 @@ const onErrorOptions = [
   { label: 'stop · 停止后续动作', value: 'stop' },
   { label: 'to_review · 转人工复核', value: 'to_review' },
 ]
+
+// 模板变量说明。替换后一律是字符串，这里标注的是原始数据类型与取值形式。
+const templateVarGroups = [
+  {
+    title: '任务与来源',
+    vars: [
+      { name: 'task_no', desc: '任务号，平台生成的任务唯一编号', form: '字符串，SDV + 14 位时间 + 6 位大写 hex，如 SDV20261023233001A1B2C3' },
+      { name: 'task_id', desc: '任务内部自增 ID', form: '整数，如 1024' },
+      { name: 'biz_key', desc: '业务方提交时携带的业务主键', form: '字符串，可能为空' },
+      { name: 'source_type', desc: '任务来源', form: '枚举：OPENAPI / ADMIN / REDIS / WEBSOCKET' },
+      { name: 'project_code', desc: '项目编码', form: '字符串，如 arch-review' },
+      { name: 'project_id', desc: '项目内部 ID', form: '整数' },
+      { name: 'audit_code', desc: '审核配置编码', form: '字符串，如 doc-audit' },
+      { name: 'audit_id', desc: '审核配置内部 ID', form: '整数' },
+    ],
+  },
+  {
+    title: '结论与风险',
+    vars: [
+      { name: 'result', desc: '最终结论，人工复核后以人工结论为准', form: '枚举：PASS / REJECT / REVIEW' },
+      { name: 'summary', desc: '一句话结论摘要', form: '字符串' },
+      { name: 'reasons', desc: '判定原因列表', form: '字符串数组；模板替换后是空格分隔的裸文本' },
+      { name: 'labels', desc: '命中标签列表', form: '字符串数组；模板替换后是空格分隔的裸文本' },
+      { name: 'risk_level', desc: '风险等级', form: '枚举：low / medium / high' },
+      { name: 'score', desc: '风险分，越高越危险（不是通过率）', form: '0~1 小数，如 0.12；模型失败兜底时按结论取 0.2 / 0.5 / 0.9' },
+      { name: 'review_note', desc: '人工复核备注', form: '字符串，未复核时为空' },
+    ],
+  },
+  {
+    title: '分类',
+    vars: [
+      { name: 'category', desc: '分类编码，机器可读', form: '字符串，如 contract；仅分类类审核有值，普通审核通常为空' },
+      { name: 'category_name', desc: '分类中文名', form: '字符串，如 合同协议' },
+      { name: 'category_confidence', desc: '分类置信度', form: '0~1 小数，如 0.88' },
+    ],
+  },
+]
+
+// 模板里展示变量占位符用：避免在 SFC 里直接写 ${...} 引起插值歧义。
+const tpl = (name: string) => '${' + name + '}'
 
 const active = ref('PASS')
 const advanced = ref(false)
@@ -86,10 +181,13 @@ function normalizeAction(input: any): RouteAction {
     action.command = input?.command || 'publish'
     action.target = input?.target || ''
     action.payload = input?.payload || ''
-  } else if (action.type === 'mysql') {
-    action.dsn_env = input?.dsn_env || 'CALLBACK_DSN'
-    action.query = input?.query || ''
-    action.args = Array.isArray(input?.args) ? input.args : []
+    action.connection_id = Number(input?.connection_id) || 0
+    action.db = Number(input?.db) || 0
+  } else if (action.type === 'js') {
+    action.remark = input?.remark || ''
+    action.script = input?.script || ''
+    action.timeout_ms = Number(input?.timeout_ms) || 5000
+    action.memory_mb = Number(input?.memory_mb) || 0
   }
   return action
 }
@@ -138,8 +236,8 @@ watch(draft, commit, { deep: true })
 
 function newAction(type: string): RouteAction {
   if (type === 'websocket') return { type, url: '', headers: {}, payload: '', timeout_ms: 10000 }
-  if (type === 'redis') return { type, command: 'publish', target: '', payload: '' }
-  if (type === 'mysql') return { type, dsn_env: 'CALLBACK_DSN', query: '', args: [] }
+  if (type === 'redis') return { type, command: 'publish', target: '', payload: '', connection_id: 0, db: 0 }
+  if (type === 'js') return { type, remark: '', script: '', timeout_ms: 5000, memory_mb: 0 }
   return { type: 'http', method: 'POST', url: '', headers: {}, params: {}, body: '', timeout_ms: 10000 }
 }
 
@@ -176,15 +274,18 @@ function setKV(action: RouteAction, field: 'headers' | 'params', text: string) {
   action[field] = map
 }
 
-function argsText(action: RouteAction): string {
-  return (action.args || []).map((value) => String(value)).join('\n')
+const scriptEditorShow = ref(false)
+const scriptEditorAction = ref<RouteAction | null>(null)
+
+function openScriptEditor(action: RouteAction) {
+  scriptEditorAction.value = action
+  scriptEditorShow.value = true
 }
 
-function setArgs(action: RouteAction, text: string) {
-  action.args = text
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
+function scriptLineCount(script?: string) {
+  const text = (script || '').trim()
+  if (!text) return 0
+  return text.split(/\r?\n/).length
 }
 
 function toggleAdvanced(value: boolean) {
@@ -209,14 +310,43 @@ function actionTitle(action: RouteAction, index: number): string {
   if (action.type === 'http') return `${index + 1}. ${label} · ${action.method || 'POST'} ${action.url || '未填写地址'}`
   if (action.type === 'websocket') return `${index + 1}. ${label} · ${action.url || '未填写地址'}`
   if (action.type === 'redis') return `${index + 1}. ${label} · ${(action.command || 'publish').toUpperCase()} ${action.target || '未填写目标'}`
-  return `${index + 1}. ${label} · ${action.dsn_env || '未填写 DSN 环境变量'}`
+  if (action.type === 'js') return `${index + 1}. ${label} · ${action.remark || '未填写备注'}`
+  return `${index + 1}. ${label}`
 }
 </script>
 
 <template>
   <div class="routes-editor">
     <div class="routes-toolbar">
-      <span class="toolbar-note">按最终结论执行回调动作，模板变量支持 <code>${task_no}</code>、<code>${result}</code>、<code>${score}</code>、<code>${category}</code> 等。</span>
+      <span class="toolbar-note">
+        按最终结论执行回调动作，模板变量支持 <code>${task_no}</code>、<code>${result}</code>、<code>${score}</code>、<code>${category}</code> 等。
+        <n-popover trigger="click" placement="bottom-start" :width="560" :show-arrow="false">
+          <template #trigger>
+            <button type="button" class="vars-trigger">
+              <n-icon :component="HelpCircleOutline" :size="14" />
+              变量说明
+            </button>
+          </template>
+          <div class="vars-panel">
+            <p class="vars-intro">
+              模板按纯文本替换。变量原始类型只在「请求体 / 消息内容 / SQL 参数」留空、发送标准结果 JSON 时保持；写进 URL、Header、SQL 时一律按字符串拼接。
+            </p>
+            <div v-for="group in templateVarGroups" :key="group.title" class="vars-group">
+              <div class="vars-group-title">{{ group.title }}</div>
+              <div v-for="item in group.vars" :key="item.name" class="vars-item">
+                <div class="vars-item-head">
+                  <code class="vars-item-name">{{ tpl(item.name) }}</code>
+                  <span class="vars-item-desc">{{ item.desc }}</span>
+                </div>
+                <div class="vars-item-form">{{ item.form }}</div>
+              </div>
+            </div>
+            <p class="vars-foot">
+              注意：<code>{{ tpl('reasons') }}</code> / <code>{{ tpl('labels') }}</code> 是数组，替换后为空格分隔的裸文本，塞进 JSON 会破坏格式 —— 需要结构化字段时请留空请求体，走标准结果 JSON。<code>{{ tpl('score') }}</code> 是风险分，不是通过率。
+            </p>
+          </div>
+        </n-popover>
+      </span>
       <div class="toolbar-actions">
         <span class="advanced-label">高级 JSON</span>
         <n-switch :value="advanced" size="small" @update:value="toggleAdvanced" />
@@ -260,7 +390,7 @@ function actionTitle(action: RouteAction, index: number): string {
           暂无动作。该结论只落库，不向外部发送通知。
         </div>
 
-        <div v-for="(action, index) in draft[item.key].actions" :key="index" class="action-card">
+        <div v-for="(action, index) in draft[item.key].actions" :key="index" class="action-card" :class="{ 'js-action-card': action.type === 'js' }">
           <div class="action-head">
             <div class="action-title">
               <n-tag size="small" :bordered="false" type="info">{{ action.type.toUpperCase() }}</n-tag>
@@ -326,8 +456,26 @@ function actionTitle(action: RouteAction, index: number): string {
           </div>
 
           <div v-else-if="action.type === 'redis'" class="action-grid">
+            <div class="field">
+              <label>Redis 连接 <span>只能选择当前项目已启用且测试成功的连接</span></label>
+              <n-select
+                v-model:value="action.connection_id"
+                :options="connectionOptions"
+                :loading="loadingConnections"
+                size="small"
+                clearable
+                placeholder="选择项目 Redis 连接"
+              />
+              <div v-if="!loadingConnections && !connectionOptions.some((item) => !item.disabled)" class="form-hint">
+                当前项目没有可用 Redis 连接，请先到
+                <n-button text type="primary" size="tiny" @click="goConnections">数据连接</n-button>
+                新增并测试。
+              </div>
+            </div>
             <div class="field-inline">
-              <n-select v-model:value="action.command" :options="redisCommands" size="small" style="width: 160px" />
+              <n-select v-model:value="action.command" :options="redisCommands" size="small" style="width: 150px" />
+              <span>DB</span>
+              <n-input-number v-model:value="action.db" size="small" :min="0" :max="255" style="width: 100px" />
               <n-input v-model:value="action.target" size="small" placeholder="频道 / 键 / Stream 名称，支持模板变量" />
             </div>
             <div class="field">
@@ -336,18 +484,29 @@ function actionTitle(action: RouteAction, index: number): string {
             </div>
           </div>
 
-          <div v-else class="action-grid">
-            <div class="field">
-              <label>DSN 环境变量 <span>例如 CALLBACK_DSN，避免把连接串写进配置</span></label>
-              <n-input v-model:value="action.dsn_env" size="small" placeholder="CALLBACK_DSN" />
+          <div v-else-if="action.type === 'js'" class="action-grid js-action-grid">
+            <div class="js-action-toolbar">
+              <n-input
+                v-model:value="action.remark"
+                size="small"
+                maxlength="128"
+                placeholder="脚本备注（可选，显示在日志中）"
+                class="js-remark-input"
+              />
+              <div class="field-inline js-limits">
+                <span>超时</span>
+                <n-input-number v-model:value="action.timeout_ms" size="small" :min="500" :max="60000" :step="500" style="width: 110px" />
+                <span class="muted">毫秒（项目上限 {{ projectJsTimeoutMS }}）</span>
+                <span>内存</span>
+                <n-input-number v-model:value="action.memory_mb" size="small" :min="0" :max="512" :step="8" style="width: 90px" />
+                <span class="muted">MB（0 或超限按项目上限 {{ projectJsMemoryMB }}）</span>
+              </div>
             </div>
-            <div class="field">
-              <label>SQL 语句 <span>建议使用参数占位符 ?</span></label>
-              <n-input v-model:value="action.query" type="textarea" :autosize="{ minRows: 2, maxRows: 5 }" size="small" class="code-input" placeholder="UPDATE orders SET audit_result = ?, audit_note = ? WHERE order_no = ?" />
-            </div>
-            <div class="field">
-              <label>SQL 参数 <span>每行一个，支持模板变量</span></label>
-              <n-input :value="argsText(action)" type="textarea" :autosize="{ minRows: 2, maxRows: 5 }" size="small" class="code-input" placeholder="${result}&#10;${summary}&#10;${biz_key}" @update:value="(v) => setArgs(action, v)" />
+            <div class="js-script-row">
+              <span class="js-script-label">脚本</span>
+              <span v-if="action.script" class="js-script-lines">{{ scriptLineCount(action.script) }} 行</span>
+              <span v-else class="js-script-empty">尚未编写脚本</span>
+              <n-button size="small" type="primary" secondary title="直接编写顶层代码，全局 ctx 可用，最多 64KB" @click="openScriptEditor(action)">编辑脚本</n-button>
             </div>
           </div>
         </div>
@@ -358,6 +517,17 @@ function actionTitle(action: RouteAction, index: number): string {
       <n-icon :component="AddOutline" />
       <span>HTTP 动作受 SSRF 防护；本地联调时可设置 <code>MEDIA_ALLOW_PRIVATE=true</code>。</span>
     </div>
+
+    <ScriptEditorModal
+      v-if="scriptEditorAction"
+      v-model:show="scriptEditorShow"
+      :script="scriptEditorAction.script || ''"
+      :remark="scriptEditorAction.remark || ''"
+      :audit-id="props.auditId || 0"
+      :state="active"
+      @update:script="(value: string) => { if (scriptEditorAction) scriptEditorAction.script = value }"
+      @update:remark="(value: string) => { if (scriptEditorAction) scriptEditorAction.remark = value }"
+    />
   </div>
 </template>
 
@@ -386,6 +556,26 @@ function actionTitle(action: RouteAction, index: number): string {
   border-radius: 4px;
   background: #eef2f8;
   font-size: 11px;
+}
+.vars-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 2px;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #fff;
+  color: #3a4a5f;
+  font-size: 12px;
+  line-height: 18px;
+  cursor: pointer;
+  vertical-align: baseline;
+}
+.vars-trigger:hover {
+  border-color: #8fb4e8;
+  color: #1f6fd0;
+  background: #f2f7ff;
 }
 .toolbar-actions {
   display: flex;
@@ -425,6 +615,12 @@ function actionTitle(action: RouteAction, index: number): string {
   background: #fff;
   padding: 10px 12px;
   margin-bottom: 10px;
+}
+.action-card.js-action-card {
+  padding: 8px 10px;
+}
+.js-action-card .action-head {
+  margin-bottom: 6px;
 }
 .action-head {
   display: flex;
@@ -497,5 +693,115 @@ function actionTitle(action: RouteAction, index: number): string {
     flex-direction: column;
     align-items: stretch;
   }
+}
+.js-action-grid {
+  gap: 6px;
+}
+.js-action-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.js-remark-input {
+  flex: 1 1 220px;
+  min-width: 180px;
+}
+.js-limits {
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 12px;
+}
+.js-limits .muted {
+  font-size: 11px;
+}
+.js-script-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: #f8fafd;
+}
+.js-script-label {
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+.js-script-lines {
+  flex: 1;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 10.5px;
+}
+.js-script-empty {
+  flex: 1;
+  color: var(--muted-light);
+  font-size: 10.5px;
+}
+.js-script-row :deep(.n-button) {
+  flex-shrink: 0;
+}
+</style>
+
+<!-- popover 内容会被 teleport 到 body，scoped 样式命中不到，故用唯一前缀类名单独声明。 -->
+<style>
+.vars-panel {
+  max-height: 420px;
+  overflow-y: auto;
+  font-size: 12px;
+  line-height: 1.55;
+  color: #33415c;
+}
+.vars-intro,
+.vars-foot {
+  margin: 0 0 8px;
+  color: #6b7787;
+}
+.vars-foot {
+  margin: 8px 0 0;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border, #e3e8ef);
+}
+.vars-group + .vars-group {
+  margin-top: 10px;
+}
+.vars-group-title {
+  margin-bottom: 2px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #1f2d3d;
+}
+.vars-item {
+  padding: 5px 0;
+  border-top: 1px solid #eef1f6;
+}
+.vars-group-title + .vars-item {
+  border-top: none;
+}
+.vars-item-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.vars-item-name {
+  flex-shrink: 0;
+}
+.vars-item-desc {
+  color: #33415c;
+}
+.vars-item-form {
+  margin-top: 1px;
+  padding-left: 2px;
+  color: #6b7787;
+  font-size: 11.5px;
+}
+.vars-panel code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: #eef2f8;
+  font-size: 11px;
 }
 </style>

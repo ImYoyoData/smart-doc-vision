@@ -5,14 +5,24 @@ import {
   NGlobalStyle,
   NLoadingBarProvider,
   NMessageProvider,
+  darkTheme,
   zhCN,
   dateZhCN,
 } from 'naive-ui'
-import { themeOverrides } from './theme'
+import { darkThemeOverrides, themeOverrides } from './theme'
+import { useThemeStore } from '@/stores/theme'
+
+const theme = useThemeStore()
+theme.init()
 </script>
 
 <template>
-  <n-config-provider :theme-overrides="themeOverrides" :locale="zhCN" :date-locale="dateZhCN">
+  <n-config-provider
+    :theme="theme.isDark ? darkTheme : null"
+    :theme-overrides="theme.isDark ? darkThemeOverrides : themeOverrides"
+    :locale="zhCN"
+    :date-locale="dateZhCN"
+  >
     <n-global-style />
     <n-loading-bar-provider>
       <n-message-provider placement="top-right" :max="4">

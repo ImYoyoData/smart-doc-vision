@@ -11,12 +11,14 @@ import {
   CloudOutline,
   HelpCircleOutline,
   KeyOutline,
+  LinkOutline,
   DocumentTextOutline,
   FolderOpenOutline,
   GridOutline,
   LayersOutline,
   LogOutOutline,
   MenuOutline,
+  MoonOutline,
   NotificationsOutline,
   PeopleOutline,
   PersonCircleOutline,
@@ -25,11 +27,13 @@ import {
   SettingsOutline,
   ShieldCheckmarkOutline,
   SpeedometerOutline,
+  SunnyOutline,
   TrashOutline,
 } from '@vicons/ionicons5'
 import BrandMark from '@/components/BrandMark.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useWorkspaceStore } from '@/stores/workspace'
+import { useThemeStore } from '@/stores/theme'
 import { metaApi } from '@/api'
 import { useReviewStore } from '@/stores/review'
 
@@ -39,6 +43,7 @@ const message = useMessage()
 const auth = useAuthStore()
 const workspace = useWorkspaceStore()
 const review = useReviewStore()
+const theme = useThemeStore()
 const sidebarOpen = ref(false)
 const version = ref('1.0.0')
 const metaLoading = ref(false)
@@ -63,6 +68,7 @@ const sections = [
     label: '资源配置',
     items: [
       { name: 'providers', label: '模型接入', icon: CloudOutline },
+      { name: 'connections', label: '数据连接', icon: LinkOutline },
       { name: 'credentials', label: '接入凭证', icon: KeyOutline },
       { name: 'projects', label: '项目空间', icon: FolderOpenOutline },
     ],
@@ -252,6 +258,13 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
           </div>
         </div>
         <div class="topbar-right">
+          <n-dropdown trigger="click" :options="projectOptions" placement="bottom-end" @select="handleProject">
+            <button class="project-chip" type="button" :title="workspace.currentProject?.name || '选择项目'">
+              <LayersOutline />
+              <span class="project-chip-name">{{ workspace.currentProject?.name || '选择项目' }}</span>
+              <ChevronDownOutline class="project-chip-chev" />
+            </button>
+          </n-dropdown>
           <div class="date-chip">{{ today }}</div>
           <button v-if="auth.canMenu('reviews')" class="topbar-review" :class="{ active: route.name === 'reviews' }" type="button" @click="navigate('reviews')">
             <NotificationsOutline />
@@ -260,6 +273,17 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
           </button>
           <button v-if="auth.canMenu('help')" class="icon-btn topbar-help" type="button" title="对接文档" @click="navigate('help')">
             <HelpCircleOutline />
+          </button>
+          <button
+            class="theme-toggle"
+            type="button"
+            :title="theme.isDark ? '切换到浅色主题' : '切换到深色主题'"
+            :aria-label="theme.isDark ? '切换到浅色主题' : '切换到深色主题'"
+            @click="theme.toggle()"
+          >
+            <SunnyOutline v-if="theme.isDark" />
+            <MoonOutline v-else />
+            <span>{{ theme.isDark ? '浅色' : '深色' }}</span>
           </button>
           <div class="top-divider"></div>
           <n-dropdown trigger="click" :options="userOptions" placement="bottom-end" @select="handleUser">
@@ -567,6 +591,44 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
   height: 16px;
 }
 
+.theme-toggle {
+  display: inline-flex;
+  height: 32px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--card);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
+  transition: border-color 0.16s ease, background 0.16s ease, color 0.16s ease;
+}
+
+.theme-toggle:hover {
+  border-color: var(--brand);
+  background: var(--brand-soft);
+  color: var(--brand-strong);
+}
+
+.theme-toggle :deep(svg) {
+  width: 14px;
+  height: 14px;
+}
+
+@media (max-width: 720px) {
+  .theme-toggle {
+    width: 32px;
+    justify-content: center;
+    padding: 0;
+  }
+
+  .theme-toggle span {
+    display: none;
+  }
+}
+
 .sidebar-footer {
   padding: 14px 20px 18px;
   border-top: 1px solid #f0f3f8;
@@ -646,6 +708,44 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
   font-family: var(--mono);
   font-size: 11px;
   letter-spacing: 0.05em;
+}
+
+.project-chip {
+  display: inline-flex;
+  max-width: 260px;
+  height: 32px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--card);
+  color: var(--muted);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.project-chip:hover {
+  border-color: var(--brand-border);
+  color: var(--brand-strong);
+  background: var(--brand-softer);
+}
+
+.project-chip :deep(svg) {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+
+.project-chip-name {
+  overflow: hidden;
+  max-width: 190px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-chip-chev {
+  color: var(--muted-light);
 }
 
 .top-divider {
@@ -770,6 +870,14 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
   .top-divider,
   .topbar-review span {
     display: none;
+  }
+
+  .project-chip {
+    max-width: 150px;
+  }
+
+  .project-chip-name {
+    max-width: 105px;
   }
 
   .user-role {

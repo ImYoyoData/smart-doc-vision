@@ -27,13 +27,12 @@ import {
   SparklesOutline,
   ShieldCheckmarkOutline,
   SwapHorizontalOutline,
-  TerminalOutline,
   WarningOutline,
 } from '@vicons/ionicons5'
 import CodeBlock from './CodeBlock.vue'
 import CopyButton from './CopyButton.vue'
 import StatusTag from './StatusTag.vue'
-import { auditApi } from '@/api'
+import { auditApi, redisConnectionApi } from '@/api'
 import { copyText } from '@/utils/clipboard'
 import {
   INTEGRATION_METHODS,
@@ -44,7 +43,7 @@ import {
   type IntegrationPromptContext,
 } from '@/utils/integrationPrompt'
 import { useAuthStore } from '@/stores/auth'
-import type { IntegrationGuide, TriggerSource } from '@/api/types'
+import type { IntegrationGuide, RedisConnection, TriggerSource } from '@/api/types'
 
 const props = defineProps<{
   show: boolean
@@ -72,23 +71,21 @@ const tabs = [
   { key: 'openapi', label: '开放 API', icon: GlobeOutline },
   { key: 'redis', label: 'Redis', icon: LayersOutline },
   { key: 'websocket', label: 'WebSocket', icon: SwapHorizontalOutline },
-  { key: 'polling', label: '定时轮询', icon: TerminalOutline },
   { key: 'callback', label: '结果回调', icon: SendOutline },
   { key: 'permissions', label: '权限边界', icon: ShieldCheckmarkOutline },
 ]
 
-const redisForm = reactive({ stream: '', group: '', batch_size: 16 })
-const pollingForm = reactive({
-  url: '',
-  method: 'GET',
-  interval_sec: 60,
-  items_path: 'items',
-  cursor_path: 'next_cursor',
-  cursor_param: 'cursor',
-  auth_header: '',
-  secret: '',
-  allow_private: false,
+const redisForm = reactive({
+  connection_id: null as number | null,
+  db: 0,
+  stream: '',
+  group: '',
+  start_position: '$',
+  batch_size: 16,
+  max_inflight: 1,
 })
+const connections = ref<RedisConnection[]>([])
+const loadingConnections = ref(false)
 const callbackForm = reactive({
   enabled: false,
   url: '',
@@ -96,8 +93,21 @@ const callbackForm = reactive({
   results: ['REJECT'] as string[],
   include_content: true,
 })
-const showPollingSecret = ref(false)
 const showCallbackSecret = ref(false)
+
+const connectionOptions = computed(() => connections.value.map((connection) => {
+  const unavailable = connection.status !== 'ACTIVE' || !connection.last_test_ok || connection.health !== 'OK'
+  const suffix = connection.status !== 'ACTIVE'
+    ? ' · 已停用'
+    : !connection.last_test_ok || connection.health !== 'OK'
+      ? ' · 未通过测试'
+      : ''
+  return {
+    label: `${connection.name} · ${connection.addr}${suffix}`,
+    value: connection.id,
+    disabled: unavailable,
+  }
+}))
 
 const triggerMap = computed<Record<string, TriggerSource>>(() => {
   const map: Record<string, TriggerSource> = {}
@@ -120,7 +130,6 @@ const docsURL = computed(() => `${window.location.origin}${appBase}help`)
 const openapiTrigger = computed(() => triggerMap.value.OPENAPI)
 const redisTrigger = computed(() => triggerMap.value.REDIS)
 const wsTrigger = computed(() => triggerMap.value.WEBSOCKET)
-const pollingTrigger = computed(() => triggerMap.value.POLLING)
 
 const wsURL = computed(() => {
   if (!guide.value) return ''
@@ -145,18 +154,6 @@ const wsFrames = computed(() => {
     2,
   )}`
 })
-const pollingContract = computed(() => {
-  if (!guide.value) return ''
-  return JSON.stringify(
-    {
-      items: [guide.value.polling.response_contract.item],
-      next_cursor: 'opaque-cursor',
-    },
-    null,
-    2,
-  )
-})
-
 const aiMethodOptions = INTEGRATION_METHODS
 const aiCopyLabel = computed(() => {
   if (!aiMethods.value.length) return '请选择接入方式'
@@ -184,8 +181,6 @@ const promptContext = computed<IntegrationPromptContext | null>(() => {
     websocketEnabled: g.websocket.enabled,
     websocketPath: g.websocket.path,
     websocketURL: wsURL.value,
-    pollingEnabled: g.polling.enabled,
-    pollingConfig: (pollingTrigger.value?.config || g.polling.config || {}) as Record<string, unknown>,
     callback: {
       enabled: g.callback.enabled,
       url: g.callback.url,
@@ -205,25 +200,19 @@ async function load(credentialId?: number | null) {
     const targetCredential = credentialId ?? selectedCredentialId.value
     guide.value = await auditApi.integration(props.auditId, targetCredential || undefined)
     selectedCredentialId.value = guide.value.credentials.selected?.id ?? null
-    const redisCfg = (redisTrigger.value?.config || {}) as Record<string, any>
-    redisForm.stream = redisCfg.stream || guide.value.redis.stream
-    redisForm.group = redisCfg.group || guide.value.redis.group
-    redisForm.batch_size = Number(redisCfg.batch_size || guide.value.redis.batch_size || 16)
-    const pollCfg = (pollingTrigger.value?.config || {}) as Record<string, any>
-    pollingForm.url = pollCfg.url || ''
-    pollingForm.method = pollCfg.method || 'GET'
-    pollingForm.interval_sec = Number(pollCfg.interval_sec || 60)
-    pollingForm.items_path = pollCfg.items_path || 'items'
-    pollingForm.cursor_path = pollCfg.cursor_path || 'next_cursor'
-    pollingForm.cursor_param = pollCfg.cursor_param || 'cursor'
-    pollingForm.auth_header = pollCfg.auth_header || ''
-    pollingForm.allow_private = Boolean(pollCfg.allow_private)
+    redisForm.connection_id = redisTrigger.value?.redis_connection_id || guide.value.redis.connection_id || null
+    redisForm.db = redisTrigger.value?.redis_db ?? guide.value.redis.db ?? 0
+    redisForm.stream = redisTrigger.value?.stream || guide.value.redis.stream || ''
+    redisForm.group = redisTrigger.value?.consumer_group || guide.value.redis.group || ''
+    redisForm.start_position = redisTrigger.value?.start_position || guide.value.redis.start_position || '$'
+    redisForm.batch_size = redisTrigger.value?.batch_size || guide.value.redis.batch_size || 16
+    redisForm.max_inflight = redisTrigger.value?.max_inflight || guide.value.redis.max_inflight || 1
     callbackForm.enabled = guide.value.callback.enabled
     callbackForm.url = guide.value.callback.url || ''
     callbackForm.results = guide.value.callback.results?.filter((r) => r !== 'REVIEW').length ? guide.value.callback.results.filter((r) => r !== 'REVIEW') : ['REJECT']
     callbackForm.include_content = guide.value.callback.include_content
-    showPollingSecret.value = Boolean(pollingTrigger.value?.secret_set)
     showCallbackSecret.value = Boolean(guide.value.callback.secret_set)
+    await loadConnections()
     const activeMethods = (guide.value.triggers || [])
       .filter((trigger) => trigger.status === 'ACTIVE')
       .map((trigger) => trigger.type as IntegrationMethod)
@@ -236,47 +225,46 @@ async function load(credentialId?: number | null) {
   }
 }
 
-async function saveRedis() {
-  if (!redisTrigger.value) return
-  saving.value = true
+async function loadConnections() {
+  const projectID = guide.value?.project.id
+  if (!projectID) return
+  loadingConnections.value = true
   try {
-    await auditApi.updateTrigger(redisTrigger.value.id, {
-      config: { stream: redisForm.stream, group: redisForm.group, batch_size: redisForm.batch_size },
-    })
-    message.success('Redis 触发配置已保存')
-    await load()
-    emit('updated')
+    const data = await redisConnectionApi.list(projectID)
+    connections.value = data.items
   } catch (error) {
-    message.error(error instanceof Error ? error.message : '保存失败')
+    message.error(error instanceof Error ? error.message : '加载 Redis 连接失败')
   } finally {
-    saving.value = false
+    loadingConnections.value = false
   }
 }
 
-async function savePolling(enable?: boolean): Promise<boolean> {
-  if (!pollingTrigger.value) return false
-  if ((enable ?? pollingTrigger.value.status === 'ACTIVE') && !pollingForm.url.trim()) {
-    message.warning('请先填写轮询 URL')
-    return false
+async function saveRedis(enable?: boolean): Promise<boolean> {
+  if (!redisTrigger.value) return false
+  const targetStatus = enable === undefined ? redisTrigger.value.status : enable ? 'ACTIVE' : 'DISABLED'
+  if (targetStatus === 'ACTIVE') {
+    if (!redisForm.connection_id) {
+      message.warning('启用 Redis 触发前请选择项目 Redis 连接')
+      return false
+    }
+    if (!redisForm.stream.trim()) {
+      message.warning('请填写要监听的 Redis Stream')
+      return false
+    }
   }
   saving.value = true
   try {
-    const payload: Record<string, unknown> = {
-      config: {
-        url: pollingForm.url.trim(),
-        method: pollingForm.method,
-        interval_sec: pollingForm.interval_sec,
-        items_path: pollingForm.items_path,
-        cursor_path: pollingForm.cursor_path,
-        cursor_param: pollingForm.cursor_param,
-        auth_header: pollingForm.auth_header,
-        allow_private: pollingForm.allow_private,
-      },
-      status: enable === undefined ? pollingTrigger.value.status : enable ? 'ACTIVE' : 'DISABLED',
-    }
-    if (pollingForm.secret) payload.secret = pollingForm.secret
-    await auditApi.updateTrigger(pollingTrigger.value.id, payload)
-    message.success('轮询配置已保存')
+    await auditApi.updateTrigger(redisTrigger.value.id, {
+      status: targetStatus,
+      redis_connection_id: redisForm.connection_id || undefined,
+      redis_db: redisForm.db,
+      stream: redisForm.stream.trim(),
+      consumer_group: redisForm.group.trim(),
+      start_position: redisForm.start_position,
+      batch_size: redisForm.batch_size,
+      max_inflight: redisForm.max_inflight,
+    })
+    message.success(targetStatus === 'ACTIVE' ? 'Redis 触发已启用' : 'Redis 触发配置已保存')
     await load()
     emit('updated')
     return true
@@ -288,20 +276,16 @@ async function savePolling(enable?: boolean): Promise<boolean> {
   }
 }
 
-async function toggleTrigger(type: 'OPENAPI' | 'REDIS' | 'WEBSOCKET' | 'POLLING', value: boolean) {
+async function toggleTrigger(type: 'OPENAPI' | 'REDIS' | 'WEBSOCKET', value: boolean) {
   const trigger = triggerMap.value[type]
   if (!trigger) return
-  if (type === 'POLLING') {
-    await savePolling(value)
+  if (type === 'REDIS') {
+    await saveRedis(value)
     return
   }
   saving.value = true
   try {
-    const payload: Record<string, unknown> = { status: value ? 'ACTIVE' : 'DISABLED' }
-    if (type === 'REDIS') {
-      payload.config = { stream: redisForm.stream, group: redisForm.group, batch_size: redisForm.batch_size }
-    }
-    await auditApi.updateTrigger(trigger.id, payload)
+    await auditApi.updateTrigger(trigger.id, { status: value ? 'ACTIVE' : 'DISABLED' })
     message.success(value ? '触发方式已启用' : '触发方式已停用')
     await load()
     emit('updated')
@@ -340,21 +324,6 @@ async function saveCallback() {
     message.error(error instanceof Error ? error.message : '保存失败')
   } finally {
     saving.value = false
-  }
-}
-
-async function testPolling() {
-  if (!pollingTrigger.value) return
-  const saved = await savePolling()
-  if (!saved) return
-  testing.value = true
-  try {
-    const result = await auditApi.testTrigger(pollingTrigger.value.id)
-    message.success(String(result.message || '测试成功'))
-  } catch (error) {
-    message.error(error instanceof Error ? error.message : '轮询测试失败')
-  } finally {
-    testing.value = false
   }
 }
 
@@ -431,7 +400,7 @@ async function copyDocsURL() {
 }
 
 function triggerLabel(type: string) {
-  return { OPENAPI: '开放 API', REDIS: 'Redis Stream', WEBSOCKET: 'WebSocket', POLLING: '定时轮询' }[type] || type
+  return { OPENAPI: '开放 API', REDIS: 'Redis Stream', WEBSOCKET: 'WebSocket' }[type] || type
 }
 
 watch(
@@ -442,7 +411,6 @@ watch(
       selectedCredentialId.value = null
       load()
     } else {
-      showPollingSecret.value = false
       showCallbackSecret.value = false
     }
   },
@@ -503,7 +471,7 @@ watch(
               <GlobeOutline />
               <div>
                 <strong>先启用触发方式，再按示例调用</strong>
-                <p>每个审核配置独立控制四种接入方式。AppKey/AppSecret 在「接入凭证」中创建，并按项目内的审核配置授权；Redis 与轮询启用后由平台消费/拉取。</p>
+                <p>每个审核配置独立控制三种接入方式。AppKey/AppSecret 在「接入凭证」中创建，并按项目内的审核配置授权；Redis 触发使用「数据连接」中配置的项目 Redis。</p>
               </div>
               <n-button text type="primary" @click="openDocs('overview')">完整文档</n-button>
             </div>
@@ -514,12 +482,12 @@ watch(
             </div>
 
             <div class="trigger-grid">
-              <div v-for="tab in tabs.slice(1, 5)" :key="tab.key" class="trigger-toggle-card">
+              <div v-for="tab in tabs.slice(1, 4)" :key="tab.key" class="trigger-toggle-card">
                 <div class="trigger-toggle-top">
                   <span class="trigger-icon"><component :is="tab.icon" /></span>
                   <div>
                     <strong>{{ triggerLabel(tab.key.toUpperCase()) }}</strong>
-                    <span>{{ tab.key === 'openapi' ? '业务主动提交' : tab.key === 'redis' ? 'Stream 队列消费' : tab.key === 'websocket' ? '长连接推送 + 回推结果' : '平台定时拉取' }}</span>
+                    <span>{{ tab.key === 'openapi' ? '业务主动提交' : tab.key === 'redis' ? 'Stream 队列消费' : '长连接推送 + 回推结果' }}</span>
                   </div>
                   <n-switch
                     size="small"
@@ -576,7 +544,7 @@ watch(
               <span class="ai-skill-icon"><SparklesOutline /></span>
               <div>
                 <strong>按触发方式生成专用 AI 提示词</strong>
-                <p>选择一种或多种方式再复制，提示词会对应生成签名、队列、长连接或轮询的实现要求；统一 Skill 会询问 AI 用哪种方式。</p>
+                <p>选择一种或多种方式再复制，提示词会对应生成签名、队列或长连接的实现要求；统一 Skill 会询问 AI 用哪种方式。</p>
               </div>
               <div class="ai-skill-actions">
                 <n-button size="small" secondary :disabled="!aiMethods.length" @click="copyAIPrompt()">{{ aiCopyLabel }}</n-button>
@@ -606,7 +574,6 @@ watch(
               <div><span class="rec-icon"><GlobeOutline /></span><strong>已有服务端</strong><p>开放 API + HMAC，业务主动提交并拿到 task_no。</p></div>
               <div><span class="rec-icon"><LayersOutline /></span><strong>已有 Redis</strong><p>启用 Redis 触发，业务向 Stream 写入标准 TaskInput。</p></div>
               <div><span class="rec-icon"><SwapHorizontalOutline /></span><strong>需要实时结果</strong><p>WebSocket 提交，平台主动推送终态结果帧。</p></div>
-              <div><span class="rec-icon"><TerminalOutline /></span><strong>只有查询接口</strong><p>HTTP 轮询，平台按 cursor 增量拉取。</p></div>
             </div>
           </div>
 
@@ -645,7 +612,7 @@ watch(
 
           <div v-else-if="activeTab === 'redis'" class="tab-pane">
             <div class="pane-title-row">
-              <div><h3>Redis Stream</h3><p>平台从 DB 3 消费，业务方负责写入消息；启用后约 5 秒内生效。</p></div>
+              <div><h3>Redis Stream</h3><p>选择当前项目已启用且测试成功的 Redis 连接，再指定 DB 和 Stream；启用后约 5 秒内生效。</p></div>
               <n-switch :value="redisTrigger?.status === 'ACTIVE'" :loading="saving" :disabled="!canWrite" @update:value="toggleTrigger('REDIS', $event)" />
             </div>
             <div class="method-ai-row">
@@ -656,19 +623,46 @@ watch(
               </n-button>
             </div>
             <div class="form-grid">
-              <label><span>Stream</span><n-input v-model:value="redisForm.stream" placeholder="sdv:project:audit:code" /></label>
-              <label><span>消费组</span><n-input v-model:value="redisForm.group" placeholder="sdv-cg-1" /></label>
+              <label class="full">
+                <span>Redis 连接</span>
+                <n-select
+                  v-model:value="redisForm.connection_id"
+                  :options="connectionOptions"
+                  :loading="loadingConnections"
+                  clearable
+                  placeholder="选择当前项目已启用且测试成功的连接"
+                />
+              </label>
+              <label><span>DB 编号</span><n-input-number v-model:value="redisForm.db" :min="0" :max="255" /></label>
+              <label>
+                <span>消费起点</span>
+                <n-select
+                  v-model:value="redisForm.start_position"
+                  :options="[
+                    { label: '$ · 只消费新消息', value: '$' },
+                    { label: '0 · 从头消费', value: '0' },
+                  ]"
+                />
+              </label>
               <label><span>批量大小</span><n-input-number v-model:value="redisForm.batch_size" :min="1" :max="32" /></label>
+              <label class="full"><span>Stream</span><n-input v-model:value="redisForm.stream" placeholder="sdv:project:audit:code" /></label>
+              <label><span>消费组</span><n-input v-model:value="redisForm.group" placeholder="留空自动生成" /></label>
+              <label><span>最大并发处理数</span><n-input-number v-model:value="redisForm.max_inflight" :min="1" :max="32" /></label>
+            </div>
+            <div v-if="!loadingConnections && !connectionOptions.some((item) => !item.disabled)" class="guide-notice warning">
+              <WarningOutline />
+              <span>当前项目没有已启用且测试成功的 Redis 连接，请先到「数据连接」创建并测试。</span>
+              <n-button text type="primary" @click="openDocs('overview')">去数据连接</n-button>
             </div>
             <div class="pane-actions">
-              <n-button size="small" :loading="saving" :disabled="!canWrite" @click="saveRedis">保存配置</n-button>
+              <n-button size="small" :loading="saving" :disabled="!canWrite" @click="saveRedis()">保存配置</n-button>
               <span v-if="redisTrigger?.last_error" class="inline-warning"><WarningOutline /> {{ redisTrigger.last_error }}</span>
-              <span v-else class="inline-ok"><CheckmarkCircleOutline /> Stream: {{ redisForm.stream }} · Group: {{ redisForm.group }}</span>
+              <span v-else class="inline-ok"><CheckmarkCircleOutline /> Stream: {{ redisForm.stream || '未配置' }} · Group: {{ redisForm.group || '自动生成' }}</span>
             </div>
             <div class="field-label-row"><span>消息格式：单个 data 字段（或 payload），值为 TaskInput JSON</span><copy-button :text="JSON.stringify(guide.redis.example, null, 2)" label="复制消息示例" size="tiny" /></div>
             <CodeBlock :code="JSON.stringify(guide.redis.example, null, 2)" title="TaskInput Message" />
             <CodeBlock :code="guide.redis.xadd_command" title="XADD Command" />
-            <div class="guide-note"><HelpCircleOutline /><span>非法消息会被 ACK 并写入 <code>{{ redisForm.stream }}:dlq</code>。消息格式、消费组和 PEL 说明请查阅对接文档。</span><n-button text type="primary" @click="openDocs('redis')">查看完整规范</n-button></div>
+            <div class="guide-note"><HelpCircleOutline /><span>一个 Stream 只允许一个审核消费。非法消息会被 ACK 并写入 <code>{{ redisForm.stream }}:dlq</code>。消息格式、消费组和 PEL 说明请查阅对接文档。</span><n-button text type="primary" @click="openDocs('redis')">查看完整规范</n-button></div>
           </div>
 
           <div v-else-if="activeTab === 'websocket'" class="tab-pane">
@@ -695,39 +689,6 @@ watch(
             <div class="field-label-row"><span>帧协议（data 支持多个 text / image）</span><copy-button :text="wsFrames" label="复制帧示例" size="tiny" /></div>
             <CodeBlock :code="wsFrames" title="Frames" />
             <div class="guide-note"><HelpCircleOutline /><span>平台会先发送 ready 帧；心跳支持 ping/pong；结果帧在任务进入终态后主动推送。</span><n-button text type="primary" @click="openDocs('websocket')">查看完整协议</n-button></div>
-          </div>
-
-          <div v-else-if="activeTab === 'polling'" class="tab-pane">
-            <div class="pane-title-row">
-              <div><h3>HTTP 定时轮询</h3><p>平台定时拉取业务查询接口，按 cursor 增量审核。</p></div>
-              <n-switch :value="pollingTrigger?.status === 'ACTIVE'" :loading="saving" :disabled="!canWrite" @update:value="toggleTrigger('POLLING', $event)" />
-            </div>
-            <div class="method-ai-row">
-              <span>提示词面向业务侧，只实现平台要拉取的查询接口与游标</span>
-              <n-button size="tiny" secondary @click="copyAIPrompt('POLLING')">
-                <template #icon><SparklesOutline /></template>
-                复制轮询专用提示词
-              </n-button>
-            </div>
-            <div class="form-grid">
-              <label class="full"><span>轮询 URL *</span><n-input v-model:value="pollingForm.url" placeholder="https://your-service/api/audit-items" /></label>
-              <label><span>请求方式</span><n-select v-model:value="pollingForm.method" :options="[{ label: 'GET', value: 'GET' }, { label: 'POST', value: 'POST' }]" /></label>
-              <label><span>间隔（秒）</span><n-input-number v-model:value="pollingForm.interval_sec" :min="10" :max="86400" /></label>
-              <label><span>items 路径</span><n-input v-model:value="pollingForm.items_path" /></label>
-              <label><span>cursor 路径</span><n-input v-model:value="pollingForm.cursor_path" /></label>
-              <label><span>cursor 参数名</span><n-input v-model:value="pollingForm.cursor_param" /></label>
-              <label><span>认证 Header</span><n-input v-model:value="pollingForm.auth_header" placeholder="Authorization" /></label>
-              <label><span>认证值</span><n-input v-model:value="pollingForm.secret" type="password" show-password-on="click" :placeholder="showPollingSecret ? '已配置，留空保留' : '可选，加密保存'" /></label>
-              <label class="checkbox-field"><span>允许内网地址</span><n-switch v-model:value="pollingForm.allow_private" /></label>
-            </div>
-            <div class="pane-actions">
-              <n-button size="small" :loading="saving" :disabled="!canWrite" @click="savePolling()">保存配置</n-button>
-              <n-button size="small" secondary :loading="testing" :disabled="!canWrite" @click="testPolling">测试拉取</n-button>
-              <span v-if="pollingTrigger?.last_error" class="inline-warning"><WarningOutline /> {{ pollingTrigger.last_error }}</span>
-            </div>
-            <div class="field-label-row"><span>期望的业务接口响应</span><copy-button :text="pollingContract" label="复制响应示例" size="tiny" /></div>
-            <CodeBlock :code="pollingContract" title="Response Contract" />
-            <div class="guide-note"><HelpCircleOutline /><span>平台只处理 items 数组中的 TaskInput 对象，游标会持久化。接口连续失败 5 次会自动暂停触发。</span><n-button text type="primary" @click="openDocs('polling')">查看完整规范</n-button></div>
           </div>
 
           <div v-else-if="activeTab === 'callback'" class="tab-pane">

@@ -4,6 +4,14 @@
 
 **SmartDoc Vision** 是一个面向档案、图纸、扫描件与文本内容的审核中台。后端使用 **Go + Gin**，数据层使用 **MySQL + Redis**，管理后台使用 **Vue 3 + TypeScript + Naive UI + ECharts**。平台支持**通用大模型**（OpenAI 兼容协议或 **Anthropic Claude Messages API**，两者属于同一业务分类，仅协议不同），并原生支持 **JEV / TypeSafe System One** 结构化决策模型。
 
+### 发布会宣传片
+
+[![智审图档 · 40 秒发布会宣传片](docs/video/launch-preview.gif)](docs/video/smartdoc-vision-launch.mp4)
+
+![点击播放完整宣传片](docs/video/smartdoc-vision-launch.mp4)
+
+[▶ 观看完整宣传片（40 秒 · 1080p · 含音效）](docs/video/smartdoc-vision-launch.mp4)
+
 ![登录页](docs/screenshots/login.png)
 
 ![仪表盘](docs/screenshots/dashboard.png)
@@ -16,16 +24,16 @@
 | 项目空间 | 多项目隔离、启停、软删除与回收站恢复、环境标识 |
 | 接入凭证 | 项目内多 AppKey、按审核配置授权、启用/停用、轮换、删除；审核删除后访问自动失效 |
 | 账号与权限 | 内置角色（超管/项目管理员/审核配置员/复核员/只读）、自定义角色与菜单/操作权限组合、项目数据范围、个人中心改密、2FA 重置 |
-| 模型接入 | 通用大模型（OpenAI 兼容 / Anthropic Messages 两种协议）、JEV System One（Choice / Noul）、连接测试、图片能力开关、多图预算、参数配置 |
+| 模型接入 | 通用大模型（一个业务分类，OpenAI 兼容 / Anthropic Messages 只是 API 协议）、JEV System One（Choice / Noul）、模型列表与能力探测、自定义请求头、连接测试、失败自动切换与熔断恢复 |
 | 审核配置 | 合规审核 / 分类审核 / 纯分类器三种模式、媒体类型、模型绑定、审核要求 Prompt、规则模板与规则 JSON 编辑、分类映射与置信度兜底、分类类型 CSV/JSON 导入导出、默认结论、模型失败兜底、去重窗口、版本号 |
-| 任务引擎 | 项目级调度队列 + 并发 Worker 名额 + 公平轮询、异步 Worker 池、项目每日配额、幂等去重、状态机、结构化审核、规则判定、灰区转人工复核、结果动作路由（HTTP / WebSocket / Redis / MySQL）、业务回调、失败重试 |
+| 任务引擎 | 项目级调度队列 + 并发 Worker 名额 + 公平轮询、异步 Worker 池、项目每日配额、幂等去重、状态机、结构化审核、规则判定、灰区转人工复核、结果动作路由（HTTP / WebSocket / Redis / JS）、业务回调、失败重试 |
 | 规则引擎 | AND/OR 条件组、优先级、stop_on_hit、模型分数/风险等级/标签、扩展字段、媒体字段等 |
-| 触发接入 | 开放 API（HMAC + 防重放 + 审核授权范围 + 每分钟限流）、Redis Stream、WebSocket（含结果推送）、HTTP 定时轮询，每个审核配置独立开关 |
+| 触发接入 | 开放 API（HMAC + 防重放 + 审核授权范围 + 每分钟限流）、Redis Stream（项目级 Redis 连接 + DB 0~255 + 独占 Stream）、WebSocket（含结果推送），每个审核配置独立开关 |
 | 结果回调 | 可配置回调 URL / Secret / 需要回调的结论 / 是否回传原内容；支持 HTTP(S) Webhook 与 WebSocket 推送，HMAC-SHA256 签名、自动重试、幂等键 |
 | 人工复核 | 独立复核工作台、等待时长排序、媒体与规则命中预览、详细复核上下文（转人工原因、风险分/等级、分类置信度、规则命中、模型依据）、建议原因码、PASS/REJECT 后自动回调 |
 | 数据报表 | ECharts 趋势、通过率、结论分布、分类审核分布、项目/审核维度对比、未通过原因、错误与延迟分布 |
 | 审核导出 | 每个审核配置可按时间、状态、结论、触发来源、媒体类型、关键字筛选导出 UTF-8 CSV 任务记录 |
-| AI 配置助手 | 通过对话收集审核要求，自动生成并保存审核配置；创建走需求采集，编辑必须先选择目标并展示当前配置，确认“当前值 → 目标值”后只修改指定字段；前提是项目内至少有一个启用的通用大模型 |
+| AI 配置助手 | 通过流式对话收集审核要求，自动生成并保存审核配置与接入方式（开放 API / Redis / WebSocket）；支持单独让 AI 生成审核规则 JSON 或优化审核要求提示词，结果先预览、确认后再应用；Redis 只从当前项目已启用且测试成功的连接中选择；创建走需求采集，编辑先选择目标并只修改指定字段；支持 Markdown 回复、粘贴图片预览/移除、底部切换对话模型 |
 | 平台体验 | 任务筛选视图保存、表格显示列设置、本地图片上传、项目与审核永久清理、按保留期自动清理、分类类型 CSV/JSON 导入导出 |
 | 管理后台 | 仪表盘、数据报表、项目、模型接入、接入凭证、审核配置与接入指南、任务、待议复核、审计日志、回收站、用户与权限、个人中心；桌面/平板/手机响应式布局 |
 | 文本编码 | 输入文本自动处理 UTF-8 BOM、GB18030/Big5 和常见 Latin-1 乱码，MySQL 连接与建表默认 utf8mb4 |
@@ -221,7 +229,7 @@ cd web && npm run build
 .\build.ps1 -Target linux-arm64
 .\build.ps1 -Target all
 .\build.ps1 -Target both -Upx
-.\build.ps1 -Target all -Version 1.3.0
+.\build.ps1 -Target all -Version 1.4.0
 ```
 
 `-Upx` 会额外生成 Windows amd64 和 Linux amd64 的 UPX 压缩版本（文件名带 `-upx` 后缀），未压缩产物始终保留。未指定 `-Upx` 时，若检测到 `upx` 会询问一次；默认不压缩，避免个别安全软件把 UPX 壳误判为可疑程序。
@@ -239,11 +247,11 @@ cd web && npm run build
 生成文件示例：
 
 ```text
-dist/smartdoc-vision-1.3.0-windows-amd64.exe
-dist/smartdoc-vision-1.3.0-windows-amd64-upx.exe
-dist/smartdoc-vision-1.3.0-linux-amd64
-dist/smartdoc-vision-1.3.0-linux-amd64-upx
-dist/smartdoc-vision-1.3.0-linux-arm64
+dist/smartdoc-vision-1.4.0-windows-amd64.exe
+dist/smartdoc-vision-1.4.0-windows-amd64-upx.exe
+dist/smartdoc-vision-1.4.0-linux-amd64
+dist/smartdoc-vision-1.4.0-linux-amd64-upx
+dist/smartdoc-vision-1.4.0-linux-arm64
 dist/.env
 ```
 
@@ -337,20 +345,29 @@ docker compose up -d --build
 
 ## 审核接入与触发
 
-每个审核配置在「审核配置 → 接入指南」中拥有四种独立开关，新审核创建成功后会自动打开接入指南：
+每个审核配置在「审核配置 → 接入指南」中拥有三种独立开关，新审核创建成功后会自动打开接入指南：
 
 | 触发方式 | 平台行为 | 业务方要做什么 |
 |---|---|---|
 | 开放 API | 校验项目凭证 + HMAC 签名 + 审核授权范围，支持同步/异步执行 | 按规范签名并 POST，可在返回中拿到 `task_no` |
-| Redis Stream | 消费平台 Redis DB 3 的指定 Stream，消费组做多实例负载均衡 | 向约定 Stream XADD 标准 TaskInput，失败消息进入 `:dlq` |
+| Redis Stream | 从项目「数据连接」中选择已启用且测试成功的 Redis 连接，指定 DB 0~255、Stream、消费组、消费起点与批量参数；一个 Stream 只允许一个审核消费 | 向约定 Stream XADD 标准 TaskInput，失败消息进入 `:dlq` |
 | WebSocket | 签名连接后接收 `submit` 帧，返回 ACK，并主动推送终态 `result` 帧 | 建立长连接并处理心跳/重连 |
-| HTTP 轮询 | 按间隔和 cursor 拉取业务查询接口，连续失败自动暂停 | 提供只读查询接口，返回 `items` + `next_cursor` |
 
-项目中新创建的审核会自动生成这四种触发源（仅开放 API 默认启用）。在审核详情点击任一触发源的「配置」，可以直接启用/暂停、修改 Stream、轮询地址、鉴权密钥等参数、查看最近运行/消费时间与错误，并执行连接测试。AppKey/AppSecret 在「接入凭证」页面创建，每条凭证必须勾选允许访问的审核配置。接入指南内提供可按当前项目/审核编码直接复制的 cURL、带签名的 WebSocket 地址、Redis XADD 命令、轮询响应示例和回调报文。
+项目中新创建的审核会自动生成三种触发源（仅开放 API 默认启用）。Redis 触发在首次启用时必须选择项目 Redis 连接并填写 Stream；连接停用后绑定的触发源会自动暂停，网络恢复后按连接的「自动恢复触发」配置决定是否恢复，管理员手动停用连接后需要手动恢复触发源。AppKey/AppSecret 在「接入凭证」页面创建，每条凭证必须勾选允许访问的审核配置。接入指南内提供可按当前项目/审核编码直接复制的 cURL、带签名的 WebSocket 地址、Redis XADD 命令和回调报文。
 
-AI 对接助手按触发方式拆分：每个方式都有独立的专用提示词，避免把 HMAC、队列生产端、长连接和查询接口的约束混在一份泛化提示词里；总览可多选方式生成组合提示词。下载的「统一 Skill.md」包含四种方式，并明确要求编码助手先询问业务方要接入哪一种或哪几种。
+> 平台自身缓存使用的 Redis 与项目「数据连接」中的业务 Redis 是两套独立配置。触发源不会使用平台缓存 Redis。
+
+AI 对接助手按触发方式拆分：每个方式都有独立的专用提示词，避免把 HMAC、队列生产端和长连接的约束混在一份泛化提示词里；总览可多选方式生成组合提示词。下载的「统一 Skill.md」包含三种方式，并明确要求编码助手先询问业务方要接入哪一种或哪几种。HTTP/MySQL 轮询已下线。
 
 完整规格见 [docs/INTEGRATION.md](docs/INTEGRATION.md)；后台右上角「?」、侧边栏「对接文档」，以及每个审核配置的「接入指南」都提供按当前项目/审核编码生成的实时示例。
+
+### 项目级 Redis 连接
+
+- 在「数据连接」页面按项目管理 Redis 连接，一个项目可以配置多个实例；每条连接独立配置地址、用户名、密码、TLS、启用状态和自动恢复开关。
+- 审核触发只能选择当前项目、状态启用、最近测试成功且健康状态为 OK 的连接，再填写 DB（0~255）、Stream、消费组、消费起点、批量大小和最大并发。
+- 一个 `(连接, DB, Stream)` 只能被一个审核消费；审核暂停时队列仍为它保留，删除触发源后才释放。
+- 连接停用会暂停所有绑定的触发源；网络故障时平台标记连接不健康并暂停触发源，恢复后按「自动恢复触发源」决定是否继续。管理员手动停用连接后，即使重新启用也需要手动恢复触发源。
+- 平台 Redis 仅用于自身缓存，不会出现在数据连接列表里；触发和结果动作只使用项目 Redis 连接。
 
 ### 结果回调
 
@@ -364,16 +381,55 @@ AI 对接助手按触发方式拆分：每个方式都有独立的专用提示�
 |---|---|---|
 | HTTP | method、url、params、headers、body、timeout_ms | `params` 与 `headers` 每行一个 `key: value`；body 留空时发送标准结果 JSON |
 | WebSocket | url、headers、payload、timeout_ms | 仅支持 `ws://` / `wss://`，headers 用于握手鉴权，payload 留空时发送标准结果 JSON |
-| Redis | command、target、payload | command 支持 `publish` / `set` / `xadd` |
-| MySQL | dsn_env、query、args | DSN 从服务端环境变量读取，SQL 使用 `?` 占位符，args 每行一个 |
+| Redis | connection_id、db、command、target、payload | 必须选择项目 Redis 连接；db 0~255；command 支持 `publish` / `set` / `xadd` |
+| JS 脚本 | remark、script、timeout_ms、memory_mb | 直接写顶层代码，平台注入全局 `ctx`（无需 `main`）；可用 `ctx.mysql` / `ctx.pg` / `ctx.http` / `ctx.crypto` / `ctx.secret`，执行日志按审核配置查看 |
 
-动作支持模板变量：`${task_no}`、`${task_id}`、`${biz_key}`、`${source_type}`、`${project_code}`、`${audit_code}`、`${result}`、`${summary}`、`${reasons}`、`${labels}`、`${risk_level}`、`${score}`、`${category}`、`${category_name}`、`${category_confidence}`、`${review_note}`。`on_error` 可选 `continue` / `stop` / `to_review`，执行结果写入任务详情的 `routes` 字段。后台已提供结构化编辑器，也可切换「高级 JSON」直接编辑。
+动作支持模板变量：`${task_no}`、`${task_id}`、`${biz_key}`、`${source_type}`、`${project_code}`、`${audit_code}`、`${result}`、`${summary}`、`${reasons}`、`${labels}`、`${risk_level}`、`${score}`、`${category}`、`${category_name}`、`${category_confidence}`、`${review_note}`。`on_error` 可选 `continue` / `stop` / `to_review`，执行结果写入任务详情的 `routes` 字段。后台已提供结构化编辑器，也可切换「高级 JSON」直接编辑；编辑器右上角的「变量说明」可查看每个变量的含义与取值形式。
+
+变量的语义与坑：
+
+- `${result}` 只会是 `PASS` / `REJECT` / `REVIEW`；人工复核后以人工结论为准。
+- `${score}` 是 **0~1 的风险分，越高越危险**，不是通过率或置信度。模型调用失败走兜底时按结论取 `0.2`（PASS）/ `0.5`（REVIEW）/ `0.9`（REJECT）。
+- `${category}` / `${category_name}` / `${category_confidence}` 只对分类类审核（分类器、JEV 分类）有值，普通文本审核通常为空；类别以审核配置里的分类列表为准，未知类型落在 `other`。
+- `${reasons}` / `${labels}` 是数组。模板替换走纯文本拼接，渲染成空格分隔的裸文本（如 `[关键页缺失 缺章]`），直接塞进 JSON 会破坏格式 —— 需要结构化字段时把请求体 / 消息内容留空，让平台发送标准结果 JSON。
+- 替换结果是字符串：`${task_id}`、`${project_id}` 等数字变量写进 JSON 时也会变成字符串，需要数值类型的业务方应改用标准结果 JSON。
 
 > HTTP / WebSocket 结果动作默认启用 SSRF 防护，禁止访问内网与回环地址。本地联调需要回调到 `127.0.0.1` 时，仅在测试环境设置 `MEDIA_ALLOW_PRIVATE=true` 后重启后端。
 
+#### JS 脚本动作
+
+JS 脚本动作使用纯 Go 的 moejs 运行时。脚本直接写顶层代码，平台已注入全局 `ctx`，不需要定义主函数：
+
+```js
+ctx.log('审核结果', ctx.result)
+const db = ctx.mysql.connect({
+  host: '10.0.0.12', port: 3306,
+  user: 'svc_audit', password: ctx.secret('BILLING_DB_PASSWORD'),
+  database: 'billing'
+})
+db.exec('UPDATE orders SET audit_result = ? WHERE biz_key = ?', [ctx.result, ctx.task.biz_key])
+db.close()
+;({ ok: true })
+```
+
+- 平台记录脚本的完成值，最后一行可放对象/数组表达式，建议在行首加分号，避免被自动分号插入解析成上一行的函数调用。
+- 旧脚本仍兼容 `function main(ctx) { ... }`；定义后平台会调用并记录其返回值。
+
+- 脚本只能使用宿主注入的 `ctx` API，不提供文件读写、进程、socket、`eval`、`import`、定时器。
+- 支持 MySQL / PostgreSQL 独立连接（脚本结束自动关闭）、HTTP/HTTPS 请求（不支持 socket 长连接）。
+- 内置加解密：MD5 / SHA-1 / SHA-256、HMAC-MD5 / HMAC-SHA1 / HMAC-SHA256、Base64 / Hex、AES / DES（CBC / ECB，PKCS7 或 NONE，base64 或 hex 输出）、安全随机数与 UUID。第三方接口常见的「参数排序拼串 + 密钥签名」「AES-CBC 加密请求体」都可以直接拼装。
+- 项目设置页可配置单次最大内存、时长、日志、返回值、HTTP 请求数/响应体、DB 行数和项目并发脚本数。
+- 每次执行记录开始时间、耗时、状态（成功/脚本错误/超时/OOM/宿主错误）、完整日志和返回值，可在审核配置的「脚本日志」查看。
+- 凭据建议使用项目密钥 `ctx.secret('NAME')`，不要写明文密码。项目密钥在「项目空间 → 对应项目 → 项目密钥」维护，按项目隔离注入；脚本编辑器的「API 文档」里有图文流程和「去配置项目密钥」按钮，可直接跳转到当前项目的密钥面板。
+- 原 `mysql` 结果动作已移除；数据库写入请使用 JS 脚本的 `ctx.mysql` / `ctx.pg`。
+- 编辑器提供语法高亮、`ctx` API 补全和右侧 AI 脚本助手。AI 是可读写编辑器的多轮 Agent：会按需读取/替换/插入/删除行、联网搜索和读取网页；不确定时会先提问。修改会直接写入编辑器，可用 Ctrl+Z 撤销，保存后才会落库；查询/解释类请求不会改动脚本。
+- 助手输入区右侧的环形进度条显示本轮上下文占用（按 400000 Token 窗口估算，取最近一次请求的输入 + 输出并累加工具轮次）；点击可查看窗口、已用、剩余、请求次数、累计输入 / 缓存命中 / 输出 / 总量。每次调用同时计入「模型接入」的请求明细。
+- 离开守卫：脚本有未保存修改或 AI 请求正在运行时，关闭编辑器、去配置项目密钥、路由跳转、刷新/关闭标签页都会先弹窗确认，确认后才会停止 AI 并离开，避免误丢修改。
+- 编辑器右上角的「运行」支持沙盒模拟：默认使用当前脚本所在结论（PASS / REJECT / REVIEW）作为模拟结果，点击旁边的齿轮可改任务号、业务主键、输入文本、`ctx.detail` 摘要 / 风险 / 原因 / 标签 / 分类等参数。模拟运行时 `ctx.secret`、MySQL / PostgreSQL 连接和 `ctx.http` 全部返回占位数据，不会读取密钥或产生真实副作用；结果面板分「临时日志 / 返回值 / 临时变量」三栏，可展开为更高的面板，内容支持独立滚动；收起后底部常驻「展开结果」入口；日志超过 1000 行时只渲染最近 1000 行，避免长日志拖慢编辑器。模拟运行不落执行记录，真实日志仍在「脚本日志」查看。
+
 ### MySQL 说明
 
-标准四种触发方式中没有“直连业务 MySQL”。平台 MySQL 存储项目、审核、任务、审计与报表数据；业务 MySQL 建议通过一个只读查询 API 暴露，再使用 HTTP 定时轮询。原因和安全替代方案见 [对接文档的 MySQL 章节](docs/INTEGRATION.md#9-mysql-与定时读取数据库)。
+标准三种触发方式中没有“直连业务 MySQL”，也没有 HTTP/MySQL 轮询。平台 MySQL 存储项目、审核、任务、审计与报表数据；业务 MySQL 需要由业务方自行查询、脱敏和做增量控制，然后通过开放 API、Redis Stream 或 WebSocket 主动推送 TaskInput。原因和安全边界见 [对接文档的 MySQL 章节](docs/INTEGRATION.md#8-mysql-与业务数据库)。
 
 ## 后台账号与权限
 
@@ -418,6 +474,25 @@ GET /api/admin/v1/audits/{aid}/export?start=2026-10-01&end=2026-10-31&status=SUC
 导出行数上限 100000；CSV 已做公式注入转义。
 
 ## 模型接入
+
+> **通用大模型是一个业务分类**，OpenAI 兼容与 Anthropic Messages 只是两种 API 协议；JEV 是独立的结构化决策模型。
+
+### 模型列表、能力与失败切换
+
+- 「获取模型」会调用供应商的 `/models` 接口；只有接口实际返回的上下文窗口、最大输出、图片理解、推理能力才会自动带入。接口未提供的字段保持空白，由管理员手动填写。
+- 「上下文窗口」「最大输出 Token」均可手动配置；最大输出上限为 200000（仅作安全边界，实际以模型规格为准）。
+- 模型标记为「支持推理」后，可开启「优先使用推理」；失败切换时同类别模型会优先选择支持推理的模型。
+- 「自定义请求头」每行一个 Header。部分 OpenCode 兼容网关需要 `x-opencode-session`；平台默认自动附带随机会话 ID，测试连接和熔断恢复探测会强制使用新的随机值。
+- 审核调用失败时会立即尝试项目内同类别（通用模型 / JEV）的下一个启用模型；失败模型进入熔断冷却（30 秒起指数增长，最长 10 分钟），冷却期间不再参与调度。
+- 同类型模型支持「优先级」1~999，数字越小越优先：审核配置绑定的模型始终最先调用，失败或熔断后其余同类模型按优先级依次回落；优先级相同再参考推理偏好与创建顺序。AI 配置/脚本助手在未指定模型时也会选择优先级最高且已启用的通用大模型。
+- 后台每 30 秒对到期熔断模型执行连接测试；测试通过后清除熔断并恢复可用，测试失败则延长冷却。手动「测试连接」成功也会立即清除熔断。
+
+### 请求用量与 Token 统计
+
+- 每次模型调用都会写入请求明细：来源（审核任务 / 脚本助手 / 配置助手）、输入 Token、缓存命中、输出 Token、总 Token、耗时与成功/失败。失败的调用也计入请求量，但没有 Token 数据。
+- 模型卡片显示累计请求量与总 Token；通用大模型额外显示输入 / 缓存命中 / 输出，JEV 决策模型只统计输入（其输出免费），与供应商计费口径一致。
+- 点击卡片上的「请求明细」可查看该模型最近 80 次请求及累计汇总。
+- Token 数据来自供应商响应：OpenAI 兼容读取 `usage.prompt_tokens` / `completion_tokens` / `prompt_tokens_details.cached_tokens`（兼容 DeepSeek 的 `prompt_cache_hit_tokens`）；Anthropic 读取 `usage.input_tokens` / `output_tokens` / `cache_read_input_tokens`；JEV 读取 `usage.input_tokens` / `output_tokens`。网关不返回 usage 时明细仍会记录，Token 显示为 0。
 
 ### 通用大模型 · OpenAI 兼容协议
 
@@ -565,7 +640,7 @@ smart-doc-vision/
 | GET | `/audits/:id/integration` | 生成接入指南、签名示例与触发配置 |
 | GET | `/audits/:id/export` | 按时间/状态/结论/来源/媒体/关键字筛选导出该审核配置的 CSV |
 | PUT | `/trigger-sources/:id` | 更新触发源配置/开关 |
-| POST | `/trigger-sources/:id/test` | 测试 Redis / 轮询触发 |
+| POST | `/trigger-sources/:id/test` | 测试 Redis 触发（连接 + DB + Stream + 消费组） |
 | GET/POST | `/tasks` | 任务列表 / 提交审核 |
 | GET | `/tasks/:id` | 任务详情与事件时间线 |
 | POST | `/tasks/:id/review` | 人工复核 |
@@ -610,7 +685,7 @@ smart-doc-vision/
 - 视频/音频审核与大文件异步媒体处理（产品边界，当前仅支持多文本 + 多图片）；
 - 字段级权限（角色级操作权限、菜单权限与项目数据范围已实现）；
 - 邮件 / 短信 / 站内通知与外部告警推送（Prometheus 指标已提供，可接 Alertmanager）；
-- 直连业务 MySQL 的定时轮询数据源（推荐使用 HTTP 轮询、Redis Stream 或 WebSocket）；
+- 平台直连业务 MySQL 的数据源（业务方应自行查询后通过开放 API、Redis Stream 或 WebSocket 推送）；
 - 原生 XLSX 导出（当前导出 UTF-8 CSV，可直接用 Excel 打开）；
 - 拖拽式规则条件组编辑器（当前提供模板与结构化 JSON 编辑器，保存前做服务端校验）。
 
@@ -627,7 +702,7 @@ smart-doc-vision/
 |---|---|
 | 项目隔离、项目配置 | ✅ 项目 / 模型 / 审核均按 `project_id` 隔离 |
 | 模型与 JEV 双接入 | ✅ 通用适配器 + JEV System One（支持多文本 + 多图片；无视频） |
-| 触发源 | ✅ 开放 API / Redis Stream / WebSocket / HTTP 轮询，审核配置级开关 |
+| 触发源 | ✅ 开放 API / Redis Stream / WebSocket，审核配置级开关；Redis 使用项目级连接 |
 | 审核定义 / 规则 / 兜底 | ✅ 规则模板 + 自定义规则 JSON 持久化 |
 | 幂等去重 | ✅ Redis 去重键 + DB 窗口内查询 |
 | 三条结果路线 | ✅ PASS / REJECT / REVIEW，灰区进入人工复核 |
@@ -636,6 +711,24 @@ smart-doc-vision/
 | 审计日志 | ✅ 管理操作与任务事件全量入库 |
 | 监控看板 | ✅ 运营工作台 + ECharts 项目/审核数据报表；Prometheus `/metrics` 已接入，告警渠道未接入 |
 | 多项目资源隔离 | ✅ 数据、凭证、审核授权、配额、限流、项目级任务队列、并发 Worker 名额与公平调度已完成；MySQL/Redis 为平台共享连接池（单实例架构） |
+
+## 宣传视频
+
+仓库内置独立的 Remotion 工程 `video/`，用于生成 40 秒 1080p 产品宣传片：
+
+```bash
+cd video
+npm install
+SDV_TOKEN=<后台 access_token> npm run capture   # 采集当前界面的高清截图
+npm run render                                  # 输出 out/smartdoc-vision-promo.mp4（品牌介绍版）
+node scripts/make-beat.mjs                      # 合成 120 BPM 原创配乐（40 秒）
+npm run render:launch                           # 输出 out/smartdoc-vision-launch.mp4（发布会卡点版）
+npm run studio                                  # 可视化调整分镜
+```
+
+发布会卡点版使用 120 BPM、40 秒的原创电子配乐，画面按拍点切换并叠加冲击波、闪光、震屏与频谱；配乐由 `scripts/make-beat.mjs` 用振荡器和噪声合成，无第三方版权素材。
+
+截图脚本使用无头 Chrome 打开本地前端（默认 `http://localhost:5173`），通过 `SDV_TOKEN` 注入登录态；可用 `BASE_URL`、`BROWSER_PATH` 覆盖默认值。
 
 ## License
 

@@ -32,7 +32,6 @@ const restoringId = ref<string | null>(null)
 const purgingId = ref<string | null>(null)
 const canPurge = computed(() => auth.user?.role === 'SUPER_ADMIN')
 
-const pageCount = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
 
 async function load() {
   loading.value = true
@@ -254,7 +253,6 @@ onMounted(load)
         <n-pagination
           v-model:page="page"
           v-model:page-size="pageSize"
-          :page-count="pageCount"
           :page-sizes="[20, 50, 100]"
           show-size-picker
           :item-count="total"

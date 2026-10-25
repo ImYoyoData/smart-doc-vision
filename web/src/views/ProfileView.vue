@@ -7,8 +7,10 @@ import {
   LockClosedOutline,
   LogOutOutline,
   PersonOutline,
+  PhonePortraitOutline,
   ShieldCheckmarkOutline,
 } from '@vicons/ionicons5'
+import QRCode from 'qrcode'
 import PageHeader from '@/components/PageHeader.vue'
 import { authApi } from '@/api'
 import type { MFASetup } from '@/api/types'
@@ -29,6 +31,7 @@ const mfaPassword = ref('')
 const mfaConfirmCode = ref('')
 const mfaError = ref('')
 const mfaBusy = ref(false)
+const mfaQrDataUrl = ref('')
 
 onMounted(async () => {
   try {
@@ -44,13 +47,33 @@ async function startMFASetup() {
   mfaError.value = ''
   mfaBusy.value = true
   try {
-    mfaSetupData.value = await authApi.mfaSetup()
+    const setup = await authApi.mfaSetup()
+    let qrCode = ''
+    try {
+      qrCode = await QRCode.toDataURL(setup.otpauth_url, {
+        width: 220,
+        margin: 2,
+        errorCorrectionLevel: 'M',
+        color: { dark: '#0f172a', light: '#ffffff' },
+      })
+    } catch {
+      mfaError.value = '二维码生成失败，请使用下方手动密钥完成绑定'
+    }
+    mfaQrDataUrl.value = qrCode
+    mfaSetupData.value = setup
     mfaCode.value = ''
   } catch (error) {
     mfaError.value = error instanceof Error ? error.message : '生成动态验证码密钥失败'
   } finally {
     mfaBusy.value = false
   }
+}
+
+function cancelMFASetup() {
+  mfaSetupData.value = null
+  mfaQrDataUrl.value = ''
+  mfaCode.value = ''
+  mfaError.value = ''
 }
 
 async function enableMFA() {
@@ -64,6 +87,7 @@ async function enableMFA() {
     await authApi.mfaEnable(mfaCode.value.trim())
     mfaEnabled.value = true
     mfaSetupData.value = null
+    mfaQrDataUrl.value = ''
     mfaCode.value = ''
     if (auth.user) auth.user.mfa_enabled = true
     message.success('动态验证码已启用，下次登录需要二次验证')
@@ -215,20 +239,55 @@ async function logout() {
 
       <div v-else class="mfa-body">
         <template v-if="!mfaSetupData">
-          <p class="mfa-copy">使用 Google Authenticator、Microsoft Authenticator、1Password 等应用扫描或导入密钥，为账号增加一层保护。</p>
-          <n-button type="primary" secondary :loading="mfaBusy" @click="startMFASetup">生成绑定密钥</n-button>
+          <p class="mfa-copy">推荐使用 Microsoft Authenticator（支持 iOS 和 Android）扫描二维码或手动输入密钥，为账号增加一层保护。</p>
+          <n-button type="primary" secondary :loading="mfaBusy" @click="startMFASetup">生成绑定二维码</n-button>
         </template>
         <template v-else>
-          <div class="mfa-secret-box">
-            <span>手动密钥</span>
-            <strong class="mono">{{ mfaSetupData.secret }}</strong>
-            <n-button size="tiny" quaternary @click="copyMFASecret">复制密钥</n-button>
+          <div class="mfa-setup-grid">
+            <div class="mfa-qr-column">
+              <div class="mfa-qr-card">
+                <img v-if="mfaQrDataUrl" :src="mfaQrDataUrl" alt="TOTP 绑定二维码" />
+                <div v-else class="mfa-qr-placeholder">请使用下方手动密钥</div>
+              </div>
+              <span>用手机验证器扫码</span>
+            </div>
+
+            <div class="mfa-setup-main">
+              <div class="mfa-app-tip">
+                <span class="mfa-app-icon"><PhonePortraitOutline /></span>
+                <div class="mfa-app-copy">
+                  <strong>推荐使用 Microsoft Authenticator</strong>
+                  <p>支持 iOS 和 Android。请在 App Store 或手机应用商店搜索「Microsoft Authenticator」下载安装。</p>
+                </div>
+                <div class="mfa-platforms">
+                  <span>iOS</span>
+                  <span>Android</span>
+                </div>
+              </div>
+
+              <ol class="mfa-steps">
+                <li>打开 Microsoft Authenticator，点击右上角「+」。</li>
+                <li>选择「其他账户」，扫描左侧二维码。</li>
+                <li>把应用生成的 6 位动态验证码填入下方输入框。</li>
+              </ol>
+
+              <div class="mfa-secret-box">
+                <span>无法扫码？手动密钥</span>
+                <strong class="mono">{{ mfaSetupData.secret }}</strong>
+                <n-button size="tiny" quaternary @click="copyMFASecret">复制密钥</n-button>
+              </div>
+
+              <details class="mfa-uri-details">
+                <summary>无法扫码？查看 otpauth 链接</summary>
+                <div class="mfa-uri mono">{{ mfaSetupData.otpauth_url }}</div>
+              </details>
+            </div>
           </div>
-          <div class="mfa-uri mono">{{ mfaSetupData.otpauth_url }}</div>
-          <div class="mfa-form">
+
+          <div class="mfa-form mfa-setup-form">
             <n-input v-model:value="mfaCode" maxlength="6" placeholder="输入验证器上的 6 位验证码" :input-props="{ inputmode: 'numeric', autocomplete: 'one-time-code' }" @keyup.enter="enableMFA" />
             <n-button type="primary" :loading="mfaBusy" @click="enableMFA">验证并启用</n-button>
-            <n-button quaternary :disabled="mfaBusy" @click="mfaSetupData = null">取消</n-button>
+            <n-button quaternary :disabled="mfaBusy" @click="cancelMFASetup">取消</n-button>
           </div>
         </template>
       </div>
@@ -433,15 +492,136 @@ async function logout() {
   line-height: 1.7;
 }
 
-.mfa-form {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
+.mfa-setup-grid {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
 }
 
-.mfa-form :deep(.n-input) {
-  width: 210px;
+.mfa-qr-column {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+}
+
+.mfa-qr-column > span {
+  color: var(--muted);
+  font-size: 9.5px;
+}
+
+.mfa-qr-card {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 13px;
+  background: #fff;
+  box-shadow: var(--shadow-sm);
+}
+
+.mfa-qr-card img {
+  display: block;
+  width: 180px;
+  height: 180px;
+}
+
+.mfa-qr-placeholder {
+  display: flex;
+  width: 180px;
+  height: 180px;
+  align-items: center;
+  justify-content: center;
+  padding: 14px;
+  color: #64748b;
+  font-size: 10px;
+  line-height: 1.6;
+  text-align: center;
+}
+
+.mfa-setup-main {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mfa-app-tip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 10px 12px;
+  border: 1px solid var(--brand-border);
+  border-radius: 10px;
+  background: var(--brand-softer);
+}
+
+.mfa-app-icon {
+  display: flex;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+
+.mfa-app-icon :deep(svg) {
+  width: 15px;
+  height: 15px;
+}
+
+.mfa-app-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.mfa-app-copy strong {
+  display: block;
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.mfa-app-copy p {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 9.5px;
+  line-height: 1.65;
+}
+
+.mfa-platforms {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.mfa-platforms span {
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--brand-soft);
+  color: var(--brand-strong);
+  font-size: 8px;
+  font-weight: 550;
+}
+
+.mfa-steps {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.8;
+}
+
+.mfa-steps ::marker {
+  color: var(--brand);
+  font-weight: 650;
 }
 
 .mfa-secret-box {
@@ -450,9 +630,9 @@ async function logout() {
   align-items: center;
   gap: 9px;
   padding: 10px 12px;
-  border: 1px solid #e4ecf8;
+  border: 1px solid var(--border);
   border-radius: 9px;
-  background: #f8fbff;
+  background: var(--brand-softer);
 }
 
 .mfa-secret-box span {
@@ -461,15 +641,41 @@ async function logout() {
 }
 
 .mfa-secret-box strong {
-  color: #1e4b9e;
+  overflow-wrap: anywhere;
+  color: var(--brand-strong);
   font-size: 12px;
   letter-spacing: 0.06em;
 }
 
-.mfa-uri {
-  overflow-wrap: anywhere;
+.mfa-uri-details {
   color: var(--muted-light);
   font-size: 9px;
+}
+
+.mfa-uri-details summary {
+  cursor: pointer;
+}
+
+.mfa-uri {
+  overflow-wrap: anywhere;
+  margin-top: 4px;
+  color: var(--muted-light);
+  font-size: 9px;
+}
+
+.mfa-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.mfa-setup-form {
+  margin-top: 14px;
+}
+
+.mfa-form :deep(.n-input) {
+  width: 210px;
 }
 
 .mfa-error {
@@ -509,6 +715,22 @@ async function logout() {
 @media (max-width: 800px) {
   .profile-grid {
     grid-template-columns: 1fr;
+  }
+
+  .mfa-setup-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .mfa-qr-column {
+    align-items: flex-start;
+  }
+
+  .mfa-qr-card {
+    width: 204px;
+  }
+
+  .mfa-platforms {
+    margin-left: 0;
   }
 }
 </style>

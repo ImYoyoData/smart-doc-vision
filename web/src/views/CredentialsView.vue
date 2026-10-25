@@ -314,7 +314,10 @@ onMounted(load)
             <h2>{{ editing ? '编辑凭证授权' : '新建项目凭证' }}</h2>
             <p>没有勾选的审核配置，该凭证调用时会返回 403 AUDIT_OUT_OF_SCOPE。</p>
           </div>
-          <span class="modal-icon"><KeyOutline /></span>
+          <div class="modal-head-actions">
+            <span class="modal-icon"><KeyOutline /></span>
+            <button class="modal-close" type="button" title="关闭" aria-label="关闭" @click="modalShow = false">×</button>
+          </div>
         </div>
         <div class="modal-body">
           <div class="field">

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import {
   NButton,
   NDatePicker,
@@ -38,8 +38,6 @@ const objectType = ref<string | null>(null)
 const dateRange = ref<[number, number] | null>(null)
 const detailShow = ref(false)
 const selected = ref<AuditLog | null>(null)
-
-const pageCount = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
 
 const actionOptions = [
   { label: '登录', value: 'LOGIN' },
@@ -263,7 +261,6 @@ onMounted(load)
         <n-pagination
           v-model:page="page"
           v-model:page-size="pageSize"
-          :page-count="pageCount"
           :page-sizes="[20, 50, 100]"
           show-size-picker
           :item-count="total"

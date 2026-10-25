@@ -43,6 +43,7 @@ type openAIResponse struct {
 		Message string `json:"message"`
 		Type    string `json:"type"`
 	} `json:"error"`
+	Usage openAIUsage `json:"usage"`
 }
 
 func (a *OpenAIAdapter) Review(ctx context.Context, req Request) (*model.Verdict, error) {
@@ -152,6 +153,7 @@ func (a *OpenAIAdapter) Review(ctx context.Context, req Request) (*model.Verdict
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+req.APIKey)
+	ApplyCustomHeaders(httpReq, ParseConfig(req.Provider).Headers)
 
 	start := time.Now()
 	resp, err := a.client().Do(httpReq)
@@ -199,6 +201,7 @@ func (a *OpenAIAdapter) Review(ctx context.Context, req Request) (*model.Verdict
 	}
 	verdict.LatencyMS = latency
 	verdict.Raw = obj
+	applyUsageToVerdict(verdict, parsed.Usage.usage())
 	normalizeVerdict(verdict)
 	return verdict, nil
 }
@@ -225,6 +228,7 @@ func (a *OpenAIAdapter) Test(ctx context.Context, req Request) (TestResult, erro
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+req.APIKey)
+	ApplyCustomHeaders(httpReq, ParseConfig(req.Provider).Headers)
 	start := time.Now()
 	resp, err := a.client().Do(httpReq)
 	if err != nil {

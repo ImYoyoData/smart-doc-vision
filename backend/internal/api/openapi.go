@@ -287,7 +287,14 @@ func (s *Server) reviewSummary(c *gin.Context) {
 	var oldest *time.Time
 	if total > 0 {
 		var oldestValue time.Time
-		_ = q.Order("created_at asc").Limit(1).Pluck("created_at", &oldestValue).Error
+		// Build a fresh query: the list query above carries an explicit
+		// multi-column Select, and Pluck only sets its own column when none is
+		// present, which would scan 19 columns into one destination.
+		oldestQuery := s.db.Model(&model.Task{}).Where("status = ?", model.TaskReviewPending)
+		if projectID != 0 {
+			oldestQuery = oldestQuery.Where("project_id = ?", projectID)
+		}
+		_ = oldestQuery.Order("created_at asc").Limit(1).Pluck("created_at", &oldestValue).Error
 		if !oldestValue.IsZero() {
 			oldest = &oldestValue
 		}

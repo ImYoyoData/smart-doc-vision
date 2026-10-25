@@ -2,22 +2,21 @@ package engine
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 
-	_ "github.com/go-sql-driver/mysql"
 	"github.com/gorilla/websocket"
 	"github.com/redis/go-redis/v9"
 
 	"smartdoc-vision/backend/internal/media"
 	"smartdoc-vision/backend/internal/model"
+	"smartdoc-vision/backend/internal/redisconn"
 )
 
 type routeConfig struct {
@@ -27,20 +26,33 @@ type routeConfig struct {
 }
 
 type routeAction struct {
-	Type      string            `json:"type"`
-	Method    string            `json:"method"`
-	URL       string            `json:"url"`
-	Headers   map[string]string `json:"headers"`
-	Params    map[string]string `json:"params"`
-	Body      string            `json:"body"`
-	TimeoutMS int               `json:"timeout_ms"`
-	Command   string            `json:"command"`
-	Target    string            `json:"target"`
-	Payload   string            `json:"payload"`
-	DSNEnv    string            `json:"dsn_env"`
-	Query     string            `json:"query"`
-	Args      []any             `json:"args"`
+	Type         string            `json:"type"`
+	Method       string            `json:"method"`
+	URL          string            `json:"url"`
+	Headers      map[string]string `json:"headers"`
+	Params       map[string]string `json:"params"`
+	Body         string            `json:"body"`
+	TimeoutMS    int               `json:"timeout_ms"`
+	Command      string            `json:"command"`
+	Target       string            `json:"target"`
+	Payload      string            `json:"payload"`
+	ConnectionID uint64            `json:"connection_id"`
+	DB           int               `json:"db"`
+	Remark       string            `json:"remark"`
+	Script       string            `json:"script"`
+	MemoryMB     int               `json:"memory_mb"`
 }
+
+// actionError carries the failure category and script execution id back to the
+// task's route results.
+type actionError struct {
+	Type        string
+	Err         error
+	ExecutionID uint64
+}
+
+func (e *actionError) Error() string { return e.Err.Error() }
+func (e *actionError) Unwrap() error { return e.Err }
 
 type routeRender struct {
 	Task        model.Task
@@ -95,13 +107,24 @@ func (e *Engine) runRoutes(audit model.Audit, task model.Task, finalResult strin
 	override := ""
 	for index, action := range route.Actions {
 		start := time.Now()
-		err := e.executeRouteAction(render, action)
+		err := e.executeRouteAction(render, action, index)
 		entry := map[string]any{
 			"index": index, "type": action.Type, "ok": err == nil,
+			"started_at":  start.UTC().Format(time.RFC3339),
 			"duration_ms": time.Since(start).Milliseconds(),
+		}
+		if action.Type == "js" {
+			entry["remark"] = action.Remark
 		}
 		if err != nil {
 			entry["error"] = truncate(err.Error(), 500)
+			var actionErr *actionError
+			if errors.As(err, &actionErr) {
+				entry["error_type"] = actionErr.Type
+				if actionErr.ExecutionID > 0 {
+					entry["execution_id"] = actionErr.ExecutionID
+				}
+			}
 		}
 		results = append(results, entry)
 		if err == nil {
@@ -120,7 +143,7 @@ func (e *Engine) runRoutes(audit model.Audit, task model.Task, finalResult strin
 	return results, override
 }
 
-func (e *Engine) executeRouteAction(render routeRender, action routeAction) error {
+func (e *Engine) executeRouteAction(render routeRender, action routeAction, index int) error {
 	switch strings.ToLower(strings.TrimSpace(action.Type)) {
 	case "http":
 		return e.executeHTTPAction(render, action)
@@ -128,8 +151,8 @@ func (e *Engine) executeRouteAction(render routeRender, action routeAction) erro
 		return e.executeWebSocketAction(render, action)
 	case "redis":
 		return e.executeRedisAction(render, action)
-	case "mysql":
-		return e.executeMySQLAction(render, action)
+	case "js":
+		return e.executeJSAction(render, action, index)
 	default:
 		return fmt.Errorf("不支持的动作类型 %q", action.Type)
 	}
@@ -298,8 +321,29 @@ func (e *Engine) executeWebSocketAction(render routeRender, action routeAction) 
 }
 
 func (e *Engine) executeRedisAction(render routeRender, action routeAction) error {
-	if e.redis == nil {
-		return fmt.Errorf("Redis 未配置")
+	if action.ConnectionID == 0 {
+		return fmt.Errorf("Redis 动作必须选择项目 Redis 连接")
+	}
+	var connection model.RedisConnection
+	if err := e.db.Where("id = ? AND project_id = ?", action.ConnectionID, render.Project.ID).First(&connection).Error; err != nil {
+		return fmt.Errorf("Redis 连接不存在或不属于当前项目")
+	}
+	if connection.Status != model.RedisConnectionActive {
+		return fmt.Errorf("Redis 连接「%s」已停用", connection.Name)
+	}
+	if !connection.LastTestOK || connection.Health != model.RedisHealthOK {
+		return fmt.Errorf("Redis 连接「%s」未通过连接测试", connection.Name)
+	}
+	password := ""
+	if connection.PasswordEnc != "" {
+		decrypted, err := e.cipher.Decrypt(connection.PasswordEnc)
+		if err != nil {
+			return fmt.Errorf("Redis 连接密码解密失败")
+		}
+		password = decrypted
+	}
+	if action.DB < 0 || action.DB > 255 {
+		return fmt.Errorf("Redis DB 编号需在 0~255 之间")
 	}
 	target := renderString(action.Target, render)
 	if target == "" {
@@ -310,46 +354,18 @@ func (e *Engine) executeRedisAction(render routeRender, action routeAction) erro
 		raw, _ := json.Marshal(routePayload(render))
 		payload = string(raw)
 	}
+	client := redisconn.New(connection, password, action.DB)
+	defer client.Close()
 	ctx, cancel := context.WithTimeout(e.ctx, 5*time.Second)
 	defer cancel()
 	switch strings.ToLower(strings.TrimSpace(action.Command)) {
 	case "xadd":
-		return e.redis.XAdd(ctx, &redis.XAddArgs{Stream: target, Values: map[string]any{"data": payload}}).Err()
+		return client.XAdd(ctx, &redis.XAddArgs{Stream: target, Values: map[string]any{"data": payload}}).Err()
 	case "set":
-		return e.redis.Set(ctx, target, payload, 0).Err()
+		return client.Set(ctx, target, payload, 0).Err()
 	default:
-		return e.redis.Publish(ctx, target, payload).Err()
+		return client.Publish(ctx, target, payload).Err()
 	}
-}
-
-func (e *Engine) executeMySQLAction(render routeRender, action routeAction) error {
-	dsn := strings.TrimSpace(os.Getenv(strings.TrimSpace(action.DSNEnv)))
-	if dsn == "" {
-		return fmt.Errorf("MySQL 动作缺少环境变量 %s 或对应 DSN 为空", action.DSNEnv)
-	}
-	query := strings.TrimSpace(renderString(action.Query, render))
-	if query == "" {
-		return fmt.Errorf("MySQL 动作缺少 query")
-	}
-	args := make([]any, 0, len(action.Args))
-	for _, value := range action.Args {
-		switch v := value.(type) {
-		case string:
-			args = append(args, renderString(v, render))
-		default:
-			args = append(args, v)
-		}
-	}
-	db, err := sql.Open("mysql", dsn)
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-	db.SetMaxOpenConns(1)
-	ctx, cancel := context.WithTimeout(e.ctx, 8*time.Second)
-	defer cancel()
-	_, err = db.ExecContext(ctx, query, args...)
-	return err
 }
 
 func detailText(detail map[string]any, key string) string {

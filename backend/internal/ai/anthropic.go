@@ -57,6 +57,7 @@ type anthropicResponse struct {
 		Type    string `json:"type"`
 		Message string `json:"message"`
 	} `json:"error"`
+	Usage anthropicUsage `json:"usage"`
 }
 
 func (a *AnthropicAdapter) Review(ctx context.Context, req Request) (*model.Verdict, error) {
@@ -173,6 +174,7 @@ func (a *AnthropicAdapter) Review(ctx context.Context, req Request) (*model.Verd
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("x-api-key", req.APIKey)
 	httpReq.Header.Set("anthropic-version", "2023-06-01")
+	ApplyCustomHeaders(httpReq, ParseConfig(req.Provider).Headers)
 
 	start := time.Now()
 	resp, err := a.client().Do(httpReq)
@@ -213,6 +215,7 @@ func (a *AnthropicAdapter) Review(ctx context.Context, req Request) (*model.Verd
 	}
 	verdict.LatencyMS = latency
 	verdict.Raw = obj
+	applyUsageToVerdict(verdict, parsed.Usage.usage())
 	normalizeVerdict(verdict)
 	return verdict, nil
 }
@@ -241,6 +244,7 @@ func (a *AnthropicAdapter) Test(ctx context.Context, req Request) (TestResult, e
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("x-api-key", req.APIKey)
 	httpReq.Header.Set("anthropic-version", "2023-06-01")
+	ApplyCustomHeaders(httpReq, ParseConfig(req.Provider).Headers)
 	start := time.Now()
 	resp, err := a.client().Do(httpReq)
 	if err != nil {

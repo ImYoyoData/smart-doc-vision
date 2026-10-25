@@ -79,6 +79,14 @@ export interface Project {
   max_tasks_per_day: number
   max_concurrent_tasks: number
   openapi_rate_limit: number
+  js_max_memory_mb: number
+  js_timeout_ms: number
+  js_max_log_bytes: number
+  js_max_result_bytes: number
+  js_max_http_requests: number
+  js_max_http_response_bytes: number
+  js_max_db_rows: number
+  js_max_concurrency: number
   deleted_at?: string | null
   created_at: string
   updated_at: string
@@ -87,11 +95,98 @@ export interface Project {
   today_tasks: number
 }
 
+export interface ProjectSecret {
+  id: number
+  name: string
+  created_at: string
+  updated_at: string
+}
+
+export interface ScriptSimulationResult {
+  status: string
+  error_type?: string
+  error_message?: string
+  duration_ms: number
+  logs: string[]
+  output?: unknown
+  variables: Record<string, unknown>
+  memory_bytes: number
+  timeout_ms: number
+  memory_mb: number
+}
+
+export interface ScriptExecution {
+  id: number
+  project_id: number
+  audit_id: number
+  task_id: number
+  task_no: string
+  action_index: number
+  remark: string
+  script_hash: string
+  started_at: string
+  duration_ms: number
+  status: 'SUCCESS' | 'SCRIPT_ERROR' | 'TIMEOUT' | 'OOM' | 'HOST_ERROR' | string
+  error_type: string
+  error_message: string
+  log_text: string
+  memory_bytes: number
+  result_json: unknown
+  created_at: string
+}
+
 export interface ProviderConfig {
   supports_vision?: boolean
   max_tokens?: number
   temperature?: number
   max_images?: number
+  context_window?: number
+  supports_thinking?: boolean
+  prefer_reasoning?: boolean
+  headers?: Record<string, string>
+}
+
+export interface ProviderModel {
+  id: string
+  name?: string
+  context_window: number
+  context_window_known: boolean
+  max_output_tokens: number
+  max_output_known: boolean
+  supports_vision: boolean
+  vision_known: boolean
+  supports_thinking: boolean
+  thinking_known: boolean
+  source: 'metadata' | 'unknown' | string
+}
+
+export interface ProviderUsageSummary {
+  requests: number
+  input_tokens: number
+  cached_tokens: number
+  output_tokens: number
+  total_tokens: number
+  last_used_at?: string | null
+}
+
+export interface ProviderUsageLog {
+  id: number
+  project_id: number
+  provider_id: number
+  provider_name: string
+  kind: string
+  model: string
+  source: string
+  audit_id: number
+  task_id: number
+  input_tokens: number
+  cached_tokens: number
+  output_tokens: number
+  total_tokens: number
+  duration_ms: number
+  status: string
+  error_message?: string
+  created_at: string
 }
 
 export interface Provider {
@@ -104,14 +199,19 @@ export interface Provider {
   prompt: string
   config: ProviderConfig | null
   status: string
+  priority: number
   last_test_at?: string | null
   last_test_ok: boolean
   last_test_ms: number
   last_test_message: string
+  breaker_until?: string | null
+  breaker_reason: string
+  failure_count: number
   created_at: string
   updated_at: string
   api_key_masked: string
   has_api_key: boolean
+  usage?: ProviderUsageSummary
 }
 
 export interface RuleItem {
@@ -172,6 +272,25 @@ export interface Audit {
   deleted_at?: string | null
 }
 
+export interface RedisConnection {
+  id: number
+  project_id: number
+  name: string
+  addr: string
+  username: string
+  tls: boolean
+  status: 'ACTIVE' | 'DISABLED' | string
+  health: 'UNKNOWN' | 'OK' | 'UNHEALTHY' | string
+  auto_resume_triggers: boolean
+  last_test_at?: string | null
+  last_test_ok: boolean
+  last_test_ms: number
+  last_test_message: string
+  has_password: boolean
+  created_at: string
+  updated_at: string
+}
+
 export interface TriggerSource {
   id: number
   project_id: number
@@ -181,6 +300,15 @@ export interface TriggerSource {
   config: Record<string, any>
   priority: number
   status: string
+  redis_connection_id?: number | null
+  redis_db: number
+  stream: string
+  consumer_group: string
+  start_position: string
+  batch_size: number
+  max_inflight: number
+  pause_reason: string
+  auto_paused: boolean
   secret_set: boolean
   cursor: string
   last_consume_at?: string | null
@@ -197,6 +325,13 @@ export interface TriggerUpdate {
   secret?: string
   status?: string
   priority?: number
+  redis_connection_id?: number
+  redis_db?: number
+  stream?: string
+  consumer_group?: string
+  start_position?: string
+  batch_size?: number
+  max_inflight?: number
 }
 
 export interface CredentialScope {
@@ -272,9 +407,15 @@ export interface IntegrationGuide {
   }
   redis: {
     enabled: boolean
+    connection_id?: number | null
+    connection_name?: string
+    connection_addr?: string
+    db?: number
     stream: string
     group: string
+    start_position?: string
     batch_size: number
+    max_inflight?: number
     message_field: string
     example: Record<string, any>
     xadd_command: string
@@ -289,12 +430,6 @@ export interface IntegrationGuide {
     canonical: string
     submit_frame: Record<string, any>
     ack_frame: Record<string, any>
-  }
-  polling: {
-    enabled: boolean
-    config: Record<string, any>
-    response_contract: Record<string, any>
-    note: string
   }
   callback: {
     enabled: boolean
@@ -523,6 +658,17 @@ export interface RecycleItem {
 export interface AuditAssistantMessage {
   role: 'user' | 'assistant'
   content: string
+  images?: string[]
+  steps?: AuditAssistantStep[]
+  pending?: boolean
+}
+
+export interface AuditAssistantStep {
+  id: string
+  label: string
+  detail?: string
+  status: 'running' | 'done' | 'error'
+  at: number
 }
 
 export interface AuditAssistantConfig {
@@ -539,6 +685,16 @@ export interface AuditAssistantConfig {
   default_result: string
   on_model_fail: string
   dedupe_window_sec: number
+  triggers?: Record<string, string>
+  redis_trigger?: {
+    connection_id: number
+    db: number
+    stream: string
+    consumer_group?: string
+    start_position?: string
+    batch_size?: number
+    max_inflight?: number
+  }
 }
 
 export interface AuditAssistantResult {
@@ -548,6 +704,17 @@ export interface AuditAssistantResult {
   provider_id?: number
   provider_name?: string
   config?: AuditAssistantConfig
+  steps?: AuditAssistantStep[]
+  images?: number
+}
+
+export interface AuditFieldAssistantResult {
+  field: 'rules' | 'review_prompt' | string
+  text: string
+  explanation: string
+  provider_id: number
+  provider_name: string
+  model?: string
 }
 
 export interface RuleTemplate {

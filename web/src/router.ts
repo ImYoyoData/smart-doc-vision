@@ -86,6 +86,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '接入凭证', section: '资源配置', menu: 'credentials' },
       },
       {
+        path: 'connections',
+        name: 'connections',
+        component: () => import('@/views/ConnectionsView.vue'),
+        meta: { title: '数据连接', section: '资源配置', menu: 'connections' },
+      },
+      {
         path: 'logs',
         name: 'logs',
         component: () => import('@/views/LogsView.vue'),

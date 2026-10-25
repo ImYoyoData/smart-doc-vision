@@ -12,7 +12,6 @@ import {
   ShieldCheckmarkOutline,
   SparklesOutline,
   SwapHorizontalOutline,
-  TerminalOutline,
 } from '@vicons/ionicons5'
 import PageHeader from '@/components/PageHeader.vue'
 import CodeBlock from '@/components/CodeBlock.vue'
@@ -33,7 +32,6 @@ const sections = [
   { id: 'openapi', label: '开放 API', icon: GlobeOutline },
   { id: 'redis', label: 'Redis Stream', icon: LayersOutline },
   { id: 'websocket', label: 'WebSocket', icon: SwapHorizontalOutline },
-  { id: 'polling', label: 'HTTP 轮询', icon: TerminalOutline },
   { id: 'callback', label: '结果回调', icon: ShieldCheckmarkOutline },
   { id: 'mysql', label: 'MySQL 说明', icon: HelpCircleOutline },
 ]
@@ -71,13 +69,6 @@ function buildGenericContext(): IntegrationPromptContext {
     websocketEnabled: true,
     websocketPath: '/open/v1/ws/projects/PROJECT_CODE/audits/AUDIT_CODE',
     websocketURL: 'wss://your-smartdoc-host/open/v1/ws/projects/PROJECT_CODE/audits/AUDIT_CODE',
-    pollingEnabled: true,
-    pollingConfig: {
-      items_path: 'items',
-      cursor_path: 'next_cursor',
-      cursor_param: 'cursor',
-      auth_header: 'Authorization',
-    },
     callback: {
       enabled: false,
       results: ['REJECT'],
@@ -232,8 +223,9 @@ const queryResponse = `{
   }
 }`
 
-const redisMessage = `127.0.0.1:6379[3]> XADD sdv:smartdoc-demo:audit:archive_review * data '{"biz_key":"archive:2026:0001","media":[{"type":"text","content":"待审核文本"}],"ext":{"scene":"archive_review"}}'
+const redisMessage = `redis-cli -h 127.0.0.1 -p 6379 -n <DB> XADD sdv:smartdoc-demo:audit:archive_review * data '{"biz_key":"archive:2026:0001","media":[{"type":"text","content":"待审核文本"}],"ext":{"scene":"archive_review"}}'
 
+# DB 由审核触发源选择，必须与「数据连接」中的 Redis 连接指向同一实例
 # Stream 由平台消费，消费组默认为 sdv-cg-<audit_id>
 # 消息必须是单个 data 字段（也兼容 payload），值为 TaskInput JSON
 # 处理失败的消息会写入 <stream>:dlq`
@@ -272,18 +264,6 @@ const wsFrames = `// 客户端 → 平台
 {
   "type": "result",
   "data": { "task_no": "SDV...", "status": "SUCCESS", "result": "REJECT", "result_detail": {} }
-}`
-
-const pollingResponse = `{
-  "items": [
-    {
-      "biz_key": "archive:2026:0001",
-      "media": [{"type": "text", "content": "待审核文本"}],
-      "ext": {"scene": "archive_review"},
-      "callback_url": "https://your-service.example.com/callback"
-    }
-  ],
-  "next_cursor": "eyJpZCI6MTAwfQ=="
 }`
 
 const callbackPayload = `{
@@ -330,7 +310,7 @@ if not hmac.compare_digest(expected, actual):
     <PageHeader
       eyebrow="INTEGRATION GUIDE"
       title="对接文档"
-      subtitle="项目级鉴权、四种触发方式、任务参数、WebSocket 协议、回调签名与 MySQL 边界说明。"
+      subtitle="项目级鉴权、三种触发方式、任务参数、WebSocket 协议、回调签名与 MySQL 边界说明。"
     >
       <template #actions>
         <n-button secondary @click="openPromptPicker">
@@ -369,18 +349,17 @@ if not hmac.compare_digest(expected, actual):
         <section id="help-overview" class="doc-section">
           <div class="doc-kicker">01 / OVERVIEW</div>
           <h2>接入总览</h2>
-          <p>每个审核配置独立拥有四种触发方式开关，管理员可在后台按业务需要启用。所有触发方式最终都会生成同一种 <code>TaskInput</code>，进入统一审核引擎。</p>
+          <p>每个审核配置独立拥有三种触发方式开关，管理员可在后台按业务需要启用。所有触发方式最终都会生成同一种 <code>TaskInput</code>，进入统一审核引擎。</p>
           <div class="trigger-cards">
             <div class="trigger-card"><span>API</span><strong>开放 API</strong><p>业务方主动提交，HMAC 签名、防重放，可同步等待结果。</p></div>
-            <div class="trigger-card"><span>REDIS</span><strong>Redis Stream</strong><p>消费平台 Redis DB 3 的指定 Stream，适合已使用队列的业务。</p></div>
+            <div class="trigger-card"><span>REDIS</span><strong>Redis Stream</strong><p>从项目「数据连接」中选择 Redis，监听指定 DB 与 Stream；一个队列只允许一个审核消费。</p></div>
             <div class="trigger-card"><span>WS</span><strong>WebSocket</strong><p>双向长连接，提交后返回 ACK，并主动推送终态结果。</p></div>
-            <div class="trigger-card"><span>HTTP</span><strong>定时轮询</strong><p>平台定时拉取业务查询接口，按 cursor 增量获取任务。</p></div>
           </div>
           <div class="doc-warning" style="margin-top: 12px;">
-            <strong>AI 对接助手：</strong>「按方式复制 AI 提示词」会先让你选择开放 API / Redis / WebSocket / 轮询（可多选），只生成对应实现要求；「下载统一 Skill.md」包含四种方式，并会要求编码助手先询问你采用哪一种或哪几种。
+            <strong>AI 对接助手：</strong>「按方式复制 AI 提示词」会先让你选择开放 API / Redis / WebSocket（可多选），只生成对应实现要求；「下载统一 Skill.md」包含三种方式，并会要求编码助手先询问你采用哪一种或哪几种。
           </div>
           <div class="doc-warning">
-            <strong>MySQL 不是触发方式。</strong>平台自身用 MySQL 存储任务、审核记录与审计日志；如果需要从业务 MySQL 获取数据，请提供一个只读查询 API，再使用「HTTP 定时轮询」接入。详见文末。
+            <strong>MySQL 不是触发方式。</strong>平台自身用 MySQL 存储任务、审核记录与审计日志；如果需要从业务 MySQL 获取数据，请由业务方查询后通过开放 API、Redis Stream 或 WebSocket 推送。平台不支持 HTTP/MySQL 轮询。
           </div>
         </section>
 
@@ -446,7 +425,7 @@ if not hmac.compare_digest(expected, actual):
         <section id="help-redis" class="doc-section">
           <div class="doc-kicker">04 / REDIS</div>
           <h2>Redis Stream 触发</h2>
-          <p>审核配置启用 Redis 触发后，平台使用当前 Redis（<strong>DB 3</strong>）消费指定 Stream。业务方负责 XADD，平台负责消费、去重、审核和回调。</p>
+          <p>审核配置启用 Redis 触发后，平台使用当前项目「数据连接」中选定的 Redis 连接和 DB 消费指定 Stream。业务方负责 XADD，平台负责消费、去重、审核和回调。</p>
           <div class="doc-inline-action">
             <span>让编码助手只实现消息生产端，并明确结果需通过回调获取。</span>
             <n-button size="tiny" secondary @click="copyPromptFor('REDIS')">
@@ -457,16 +436,20 @@ if not hmac.compare_digest(expected, actual):
           <table class="doc-table">
             <thead><tr><th>配置</th><th>默认</th><th>说明</th></tr></thead>
             <tbody>
+              <tr><td>connection</td><td>—</td><td>当前项目「数据连接」中已启用且测试成功的 Redis 连接。</td></tr>
+              <tr><td>db</td><td>0</td><td>连接实例内的 DB 编号，0~255。</td></tr>
               <tr><td>stream</td><td><code>sdv:{project_code}:audit:{audit_code}</code></td><td>业务写入的 Stream 键。</td></tr>
               <tr><td>group</td><td><code>sdv-cg-{audit_id}</code></td><td>平台消费组，支持多实例负载均衡。</td></tr>
+              <tr><td>start_position</td><td><code>$</code></td><td><code>$</code> 只消费新消息，<code>0</code> 从头消费。</td></tr>
               <tr><td>batch_size</td><td>16</td><td>单次读取消息数量，1~32。</td></tr>
+              <tr><td>max_inflight</td><td>1</td><td>同一审核同时处理的消息数，1~32。</td></tr>
             </tbody>
           </table>
           <h3>消息格式</h3>
           <p>Stream 消息必须是单个 <code>data</code> 字段（兼容 <code>payload</code>），值为 <code>TaskInput</code> JSON。非法消息会被 ACK 并写入 <code>{stream}:dlq</code>。</p>
           <code-block :code="redisMessage" title="Redis Commands" />
           <div class="doc-warning">
-            队列消费与业务侧的生产必须使用同一个 Redis 实例和同一个 DB（当前为 DB 3）。平台无需业务方配置 Redis 密码；使用平台自身的连接。
+            业务生产端与平台消费必须使用同一个项目 Redis 连接和同一个 DB。连接停用或网络故障会自动暂停触发源；恢复后按连接的「自动恢复触发源」配置恢复，或手动重新开启触发源。
           </div>
         </section>
 
@@ -492,33 +475,6 @@ if not hmac.compare_digest(expected, actual):
           <p class="doc-note">连接后平台先发送 <code>ready</code> 帧。心跳使用 <code>ping</code> 帧或 WebSocket Ping/Pong；90 秒无响应会断开。终态结果（SUCCESS / FAILED / REVIEW_PENDING）会通过 <code>result</code> 帧主动推送。</p>
         </section>
 
-        <section id="help-polling" class="doc-section">
-          <div class="doc-kicker">06 / POLLING</div>
-          <h2>HTTP 定时轮询</h2>
-          <p>适合业务方已有查询接口、但没有 WebSocket 或队列能力的场景。平台按间隔拉取，使用 cursor 增量获取。启用前必须填写 URL；连续失败 5 次会自动暂停。</p>
-          <div class="doc-inline-action">
-            <span>让编码助手实现业务侧只读查询接口、游标分页和幂等读取。</span>
-            <n-button size="tiny" secondary @click="copyPromptFor('POLLING')">
-              <template #icon><SparklesOutline /></template>
-              复制轮询专用提示词
-            </n-button>
-          </div>
-          <table class="doc-table">
-            <thead><tr><th>配置</th><th>说明</th></tr></thead>
-            <tbody>
-              <tr><td>url</td><td>业务查询接口，GET/POST，平台会自动带上 cursor 查询参数。</td></tr>
-              <tr><td>interval_sec</td><td>轮询间隔，10~86400 秒。</td></tr>
-              <tr><td>items_path</td><td>返回 JSON 中任务数组的路径，默认 <code>items</code>。</td></tr>
-              <tr><td>cursor_path</td><td>下一游标路径，默认 <code>next_cursor</code>。空 cursor 表示第一页。</td></tr>
-              <tr><td>auth_header / secret</td><td>平台请求业务接口时附加的认证 Header 和值，加密保存。</td></tr>
-              <tr><td>allow_private</td><td>是否允许访问内网地址；默认 false。</td></tr>
-            </tbody>
-          </table>
-          <h3>业务接口响应</h3>
-          <code-block :code="pollingResponse" title="Polling Response" />
-          <p class="doc-note">平台只处理 <code>items</code> 中的任务对象；cursor 会持久化，重启后从断点继续。审核配置启用轮询后才开始拉取。</p>
-        </section>
-
         <section id="help-callback" class="doc-section">
           <div class="doc-kicker">07 / CALLBACK</div>
           <h2>审核结果回调</h2>
@@ -542,22 +498,14 @@ if not hmac.compare_digest(expected, actual):
         <section id="help-mysql" class="doc-section">
           <div class="doc-kicker">08 / MYSQL</div>
           <h2>MySQL 边界与推荐做法</h2>
-          <p>SmartDoc Vision 的 MySQL 存储的是平台元数据，不直接连接业务 MySQL。四种触发方式中没有“直接查询业务 MySQL”的模式，原因如下：</p>
+          <p>SmartDoc Vision 的 MySQL 存储的是平台元数据，不直接连接业务 MySQL。三种触发方式中没有“直接查询业务 MySQL”的模式，原因如下：</p>
           <ul class="doc-list">
             <li>平台不应持有业务库的长期账号，避免权限扩散与审计盲区；</li>
             <li>不同业务表结构、增量字段、审核字段差异大，无法用统一 SQL 安全表达；</li>
-            <li>业务方可控的查询 API 可以做鉴权、字段脱敏、限流和只读保护。</li>
+            <li>业务方可控的查询逻辑可以做鉴权、字段脱敏、限流和只读保护。</li>
           </ul>
-          <p>推荐方案：在业务服务中提供只读查询接口，使用 HTTP 定时轮询触发；接口返回 <code>items</code> 和 <code>next_cursor</code> 即可。例如 MySQL 表 <code>archive_audit_inbox</code> 由业务方按 ID 增量查询后转成 TaskInput。</p>
-          <code-block
-            title="推荐 SQL → HTTP 适配"
-            code="SELECT id, biz_key, media_json, ext_json
-FROM archive_audit_inbox
-WHERE id > ?
-ORDER BY id ASC
-LIMIT 100;"
-          />
-          <div class="doc-warning">如果你需要平台直连业务 MySQL，需要另建“只读数据源 + SQL 映射”扩展，并配置加密 DSN、SELECT 白名单、游标字段与脱敏规则；这不是四种标准触发开关中的一项。</div>
+          <p>推荐方案：业务方查询自己的 MySQL 后，通过开放 API、Redis Stream 或 WebSocket 主动推送 TaskInput。平台不再提供 HTTP/MySQL 定时轮询。</p>
+          <div class="doc-warning">平台不直连业务 MySQL。如果确实需要数据库读取，请由业务服务完成查询、脱敏和增量控制，再把数据推送到平台。</div>
         </section>
 
         <section class="doc-section">
@@ -600,7 +548,7 @@ LIMIT 100;"
           </n-checkbox-group>
           <div class="prompt-hint">
             <strong>为什么分开？</strong>
-            <span>开放 API 是 HMAC 提交端；Redis 是消息生产端；WebSocket 是长连接客户端；轮询是业务侧查询接口。混在一份泛化提示词里容易让 AI 生成错误方向的代码。</span>
+            <span>开放 API 是 HMAC 提交端；Redis 是消息生产端；WebSocket 是长连接客户端。混在一份泛化提示词里容易让 AI 生成错误方向的代码。</span>
           </div>
         </div>
         <div class="prompt-modal-footer">

@@ -134,6 +134,76 @@ export async function requestBlob(config: AxiosRequestConfig): Promise<Blob> {
   return response.data
 }
 
+export interface SSEHandlers {
+  onEvent: (event: string, data: unknown) => void
+  signal?: AbortSignal
+}
+
+export async function postSSE(url: string, payload: unknown, handlers: SSEHandlers): Promise<void> {
+  const token = localStorage.getItem(TOKEN_KEY)
+  const response = await fetch(`/api/admin/v1${url}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'text/event-stream',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(payload),
+    signal: handlers.signal,
+  })
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as ApiEnvelope<unknown> | null
+    throw new ApiError(
+      body?.message || `请求失败（HTTP ${response.status}）`,
+      String(body?.code || 'HTTP_ERROR'),
+      response.status,
+      body?.trace_id,
+      body?.data,
+    )
+  }
+  if (!response.body) {
+    throw new ApiError('当前浏览器不支持流式响应')
+  }
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let event = 'message'
+  let dataLines: string[] = []
+  const dispatch = () => {
+    if (dataLines.length) {
+      const raw = dataLines.join('\n')
+      dataLines = []
+      let parsed: unknown = raw
+      try {
+        parsed = JSON.parse(raw)
+      } catch {
+        // Keep non-JSON payloads as text.
+      }
+      handlers.onEvent(event, parsed)
+    }
+    event = 'message'
+  }
+  while (true) {
+    const { value, done } = await reader.read()
+    buffer += decoder.decode(value ?? new Uint8Array(), { stream: !done })
+    let index = buffer.indexOf('\n')
+    while (index >= 0) {
+      const line = buffer.slice(0, index).replace(/\r$/, '')
+      buffer = buffer.slice(index + 1)
+      if (line === '') {
+        dispatch()
+      } else if (line.startsWith('event:')) {
+        event = line.slice(6).trim()
+      } else if (line.startsWith('data:')) {
+        dataLines.push(line.slice(5).replace(/^ /, ''))
+      }
+      index = buffer.indexOf('\n')
+    }
+    if (done) break
+  }
+  if (dataLines.length) dispatch()
+}
+
 export const get = <T>(url: string, params?: Record<string, unknown>) => request<T>({ method: 'GET', url, params })
 export const post = <T>(url: string, data?: unknown) => request<T>({ method: 'POST', url, data })
 export const put = <T>(url: string, data?: unknown) => request<T>({ method: 'PUT', url, data })

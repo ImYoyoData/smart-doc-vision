@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 
 	"smartdoc-vision/backend/internal/model"
 	"smartdoc-vision/backend/internal/service"
@@ -281,21 +282,31 @@ func (s *Server) reviewTask(c *gin.Context) {
 		"review_reason_code": req.ReasonCode,
 		"finished_at":        now, "updated_at": now,
 	}
-	res := s.db.Model(&model.Task{}).Where("id = ? AND status = ?", task.ID, model.TaskReviewPending).Updates(updates)
-	if res.Error != nil {
-		serverError(c, res.Error)
-		return
-	}
-	if res.RowsAffected == 0 {
-		conflict(c, "STATUS_CONFLICT", "任务状态已变更，请刷新")
-		return
-	}
 	ev := model.TaskEvent{
 		TaskID: task.ID, ProjectID: task.ProjectID, FromStatus: model.TaskReviewPending,
 		ToStatus: model.TaskSuccess,
 		Message:  fmt.Sprintf("人工复核：%s，原因码=%s，备注=%s", req.Conclusion, emptyDefault(req.ReasonCode, "-"), truncateText(req.Remark, 100)),
 	}
-	_ = s.db.Create(&ev).Error
+	var rowsAffected int64
+	err = s.db.Transaction(func(tx *gorm.DB) error {
+		res := tx.Model(&model.Task{}).Where("id = ? AND status = ?", task.ID, model.TaskReviewPending).Updates(updates)
+		if res.Error != nil {
+			return res.Error
+		}
+		rowsAffected = res.RowsAffected
+		if rowsAffected == 0 {
+			return nil
+		}
+		return tx.Create(&ev).Error
+	})
+	if err != nil {
+		serverError(c, err)
+		return
+	}
+	if rowsAffected == 0 {
+		conflict(c, "STATUS_CONFLICT", "任务状态已变更，请刷新")
+		return
+	}
 	s.writeAudit(c, &task.ProjectID, "TASK_REVIEW", "TASK", task.TaskNo, "SUCCESS", map[string]any{
 		"conclusion": req.Conclusion, "reason_code": req.ReasonCode, "remark": req.Remark,
 	})

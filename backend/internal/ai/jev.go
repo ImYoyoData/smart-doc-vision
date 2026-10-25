@@ -179,6 +179,7 @@ func (a *JEVAdapter) Review(ctx context.Context, req Request) (*model.Verdict, e
 	if len(assets) > 0 {
 		httpReq.Header.Set("TypeSafe-Danger-Zone-Images", "true")
 	}
+	ApplyCustomHeaders(httpReq, ParseConfig(req.Provider).Headers)
 	start := time.Now()
 	resp, err := a.client().Do(httpReq)
 	if err != nil {
@@ -271,6 +272,7 @@ func (a *JEVAdapter) Review(ctx context.Context, req Request) (*model.Verdict, e
 	if verdict.Model == "" {
 		verdict.Model = req.Provider.Model
 	}
+	applyUsageToVerdict(verdict, usageFromMap(parsed.Usage))
 	normalizeVerdict(verdict)
 	return verdict, nil
 }
@@ -359,6 +361,7 @@ func jevClassificationVerdict(parsed jevResponse, choice jevChoiceAnswer, catego
 	if verdict.Model == "" {
 		verdict.Model = req.Provider.Model
 	}
+	applyUsageToVerdict(verdict, usageFromMap(parsed.Usage))
 	normalizeVerdict(verdict)
 	return verdict
 }
@@ -384,6 +387,7 @@ func (a *JEVAdapter) Test(ctx context.Context, req Request) (TestResult, error) 
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+req.APIKey)
+	ApplyCustomHeaders(httpReq, ParseConfig(req.Provider).Headers)
 	start := time.Now()
 	resp, err := a.client().Do(httpReq)
 	if err != nil {

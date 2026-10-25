@@ -1,12 +1,16 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import dayjs from 'dayjs'
+import { marked } from 'marked'
+import DOMPurify from 'dompurify'
 import {
   NButton,
   NDatePicker,
   NDrawer,
   NDrawerContent,
+  NImage,
+  NIcon,
   NSpin,
   NDropdown,
   NInput,
@@ -15,18 +19,23 @@ import {
   NSelect,
   useDialog,
   useMessage,
+  type InputInst,
 } from 'naive-ui'
 import {
   AddOutline,
+  CheckmarkCircleOutline,
   CloudOutline,
-  ChatbubbleEllipsesOutline,
+  CloseCircleOutline,
+  CloseOutline,
   CopyOutline,
   CreateOutline,
   DownloadOutline,
   EllipsisHorizontalOutline,
   FlashOutline,
+  PersonOutline,
   RefreshOutline,
   SearchOutline,
+  SendOutline,
   ShieldCheckmarkOutline,
   SparklesOutline,
   TextOutline,
@@ -37,11 +46,13 @@ import StatusTag from '@/components/StatusTag.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import TaskSubmitModal from '@/components/TaskSubmitModal.vue'
 import AuditIntegrationDrawer from '@/components/AuditIntegrationDrawer.vue'
+import AuditFieldAssistantModal from '@/components/AuditFieldAssistantModal.vue'
 import ResultRoutesEditor from '@/components/ResultRoutesEditor.vue'
 import TriggerManageModal from '@/components/TriggerManageModal.vue'
-import { auditApi, metaApi, providerApi } from '@/api'
+import ScriptLogsModal from '@/components/ScriptLogsModal.vue'
+import { analyticsApi, auditApi, metaApi, providerApi } from '@/api'
 import { copyText } from '@/utils/clipboard'
-import type { Audit, AuditAssistantConfig, AuditAssistantMessage, AuditCategory, Provider, RuleTemplate, TriggerSource } from '@/api/types'
+import type { Audit, AuditAssistantConfig, AuditAssistantMessage, AuditAssistantResult, AuditAssistantStep, AuditCategory, Provider, RuleTemplate, TriggerSource } from '@/api/types'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { useAuthStore } from '@/stores/auth'
 
@@ -54,6 +65,11 @@ const loading = ref(false)
 const saving = ref(false)
 const audits = ref<Audit[]>([])
 const providers = ref<Provider[]>([])
+const auditPage = ref(1)
+const auditTotal = ref(0)
+const auditPageSize = 50
+const loadingMore = ref(false)
+const hasMoreAudits = computed(() => audits.value.length < auditTotal.value)
 const templates = ref<RuleTemplate[]>([])
 const search = ref('')
 const statusFilter = ref<string | null>('ACTIVE')
@@ -88,10 +104,146 @@ const assistantChanges = ref<string[]>([])
 const assistantSaved = ref(false)
 const assistantPickShow = ref(false)
 const assistantPickId = ref<number | null>(null)
+const scriptLogsShow = ref(false)
+const scriptLogsAudit = ref<Audit | null>(null)
 const assistantChat = ref<HTMLElement | null>(null)
+const assistantInputRef = ref<InputInst | null>(null)
+const assistantImages = ref<AssistantImage[]>([])
+const fieldAssistantShow = ref(false)
+const fieldAssistantField = ref<'rules' | 'review_prompt'>('rules')
+const fieldAssistantCurrent = ref('')
+const fieldAssistantProviderId = ref<number | null>(null)
+const fieldAssistantContext = ref<Record<string, unknown>>({})
+let assistantAbort: AbortController | null = null
+
+interface AssistantImage {
+  id: string
+  name: string
+  dataUrl: string
+}
+
+function currentAssistantMessage(): AuditAssistantMessage | null {
+  for (let index = assistantMessages.value.length - 1; index >= 0; index -= 1) {
+    if (assistantMessages.value[index].role === 'assistant') {
+      return assistantMessages.value[index]
+    }
+  }
+  return null
+}
+
+function upsertAssistantStep(step: AuditAssistantStep) {
+  const target = currentAssistantMessage()
+  if (!target) return
+  target.steps ||= []
+  const index = target.steps.findIndex((item) => item.id === step.id)
+  if (index >= 0) target.steps[index] = step
+  else target.steps.push(step)
+}
+
+function dedupeAssistantSteps(steps: AuditAssistantStep[]) {
+  const result: AuditAssistantStep[] = []
+  for (const step of steps) {
+    const index = result.findIndex((item) => item.id === step.id)
+    if (index >= 0) result[index] = step
+    else result.push(step)
+  }
+  return result
+}
+
+function assistantStatusText(message: AuditAssistantMessage) {
+  const running = message.steps?.find((step) => step.status === 'running')
+  switch (running?.id) {
+    case 'context':
+      return 'AI 正在读取当前配置…'
+    case 'provider':
+      return 'AI 正在准备模型…'
+    case 'thinking':
+      return 'AI 正在思考…'
+    case 'draft':
+      return 'AI 正在整理配置…'
+    case 'save':
+      return assistantMode.value === 'edit' ? '正在保存修改…' : '正在添加审核配置…'
+    case 'access':
+      return '正在应用接入方式…'
+    default:
+      return assistantMode.value === 'edit' ? 'AI 正在编辑审核配置…' : 'AI 正在思考…'
+  }
+}
+
+function renderAssistantMarkdown(content: string) {
+  const html = marked.parse(content || '', { breaks: true, gfm: true })
+  return DOMPurify.sanitize(typeof html === 'string' ? html : '')
+}
+
+function readAssistantImage(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result || ''))
+    reader.onerror = () => reject(reader.error || new Error('读取图片失败'))
+    reader.readAsDataURL(file)
+  })
+}
+
+async function handleAssistantPaste(event: ClipboardEvent) {
+  const files = Array.from(event.clipboardData?.items || [])
+    .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+    .map((item) => item.getAsFile())
+    .filter((file): file is File => Boolean(file))
+  if (!files.length) return
+  event.preventDefault()
+  if (assistantImages.value.length + files.length > 4) {
+    message.warning('一次最多粘贴 4 张图片')
+    return
+  }
+  for (const file of files) {
+    if (file.size > 6 * 1024 * 1024) {
+      message.warning(`${file.name || '图片'} 超过 6MB，已跳过`)
+      continue
+    }
+    try {
+      const dataUrl = await readAssistantImage(file)
+      assistantImages.value.push({
+        id: `${Date.now()}-${assistantImages.value.length}-${file.name || 'pasted'}`,
+        name: file.name || '粘贴图片',
+        dataUrl,
+      })
+    } catch {
+      message.warning('图片读取失败，请重试')
+    }
+  }
+}
+
+function removeAssistantImage(id: string) {
+  assistantImages.value = assistantImages.value.filter((item) => item.id !== id)
+}
+
+onBeforeUnmount(() => {
+  assistantAbort?.abort()
+})
 const hasGeneralProvider = computed(() =>
   providers.value.some((p) => p.status === 'ACTIVE' && p.kind !== 'JEV'),
 )
+const assistantProviderOptions = computed(() =>
+  providers.value
+    .filter((p) => p.status === 'ACTIVE' && p.kind !== 'JEV')
+    .map((p) => ({
+      label: `${p.name} · ${p.model}${providerCooling(p) ? '（熔断中）' : ''}`,
+      value: p.id,
+    })),
+)
+const assistantStarters = computed(() =>
+  assistantMode.value === 'edit'
+    ? ['把规则改得更严格', '增加敏感信息检查', '把接入方式改成 Redis', '优化审核要求提示词']
+    : ['创建一条档案完整性合规审核', '按档案类型分类并低置信度转人工', '需要 Redis Stream 接入', '按合规审核创建并启用开放 API'],
+)
+const showAssistantStarters = computed(
+  () => !assistantBusy.value && !assistantMessages.value.some((item) => item.role === 'user'),
+)
+
+function useAssistantStarter(text: string) {
+  assistantInput.value = text
+  nextTick(() => assistantInputRef.value?.focus())
+}
 const isClassifyMode = computed(() =>
   form.decisionMode === 'CLASSIFY' || form.decisionMode === 'CLASSIFY_ONLY',
 )
@@ -202,7 +354,6 @@ const sourceOptions = [
   { label: '开放 API', value: 'OPENAPI' },
   { label: 'Redis Stream', value: 'REDIS' },
   { label: 'WebSocket', value: 'WEBSOCKET' },
-  { label: 'HTTP 轮询', value: 'POLLING' },
 ]
 const mediaFilterOptions = [
   { label: '纯文本', value: 'text' },
@@ -226,9 +377,13 @@ function providerKindLabel(kind?: string) {
   return '通用大模型 · OpenAI 协议'
 }
 
+function providerCooling(provider: Provider) {
+  return Boolean(provider.breaker_until)
+}
+
 const providerOptions = computed(() =>
   providers.value.map((p) => ({
-    label: `${p.name} · ${providerKindLabel(p.kind)}`,
+    label: `${p.name} · ${p.model}${providerCooling(p) ? '（熔断中）' : ''}`,
     value: p.id,
     disabled: p.status !== 'ACTIVE',
   })),
@@ -239,6 +394,7 @@ const templateOptions = computed(() => [
   ...templates.value
     .filter((t) => (t.kind || 'REVIEW') === form.decisionMode)
     .map((t) => ({ label: `${t.name} · ${t.description}`, value: t.key })),
+  { label: '自定义规则 · 直接编辑 JSON', value: 'custom' },
 ])
 
 function rulesTextForPreset(key: string) {
@@ -248,12 +404,13 @@ function rulesTextForPreset(key: string) {
 
 function applyRulesPreset(key: string) {
   form.rulesPreset = key
-  if (key !== 'keep') form.rulesText = rulesTextForPreset(key)
+  if (key !== 'keep' && key !== 'custom') form.rulesText = rulesTextForPreset(key)
 }
 
-const activeCount = computed(() => audits.value.filter((a) => a.status === 'ACTIVE').length)
-const classifyCount = computed(() => audits.value.filter((a) => a.decision_mode === 'CLASSIFY' || a.decision_mode === 'CLASSIFY_ONLY').length)
-const todayCount = computed(() => audits.value.reduce((sum, a) => sum + (a.today_tasks || 0), 0))
+const activeCount = ref(0)
+const classifyCount = ref(0)
+const todayCount = ref(0)
+const summaryLoaded = ref(false)
 const selectedProvider = computed(() => providers.value.find((p) => p.id === form.providerId))
 const jevProviders = computed(() => providers.value.filter((p) => p.kind === 'JEV' && p.status === 'ACTIVE'))
 const selectedTemplate = computed(() => templates.value.find((t) => t.key === form.rulesPreset))
@@ -568,6 +725,7 @@ function auditMoreOptions(audit: Audit) {
     options.push(
       { type: 'divider', key: 'd1' },
       { label: '编辑配置', key: 'edit' },
+      { label: '脚本日志', key: 'script-logs' },
       { label: audit.status === 'ACTIVE' ? '暂停审核' : '启用审核', key: 'status' },
       { label: '复制配置', key: 'clone' },
       { type: 'divider', key: 'd2' },
@@ -590,6 +748,10 @@ function handleAuditMore(key: string, audit: Audit) {
       break
     case 'edit':
       openEdit(audit)
+      break
+    case 'script-logs':
+      scriptLogsAudit.value = audit
+      scriptLogsShow.value = true
       break
     case 'status':
       toggleStatus(audit)
@@ -648,20 +810,74 @@ async function runExport() {
   }
 }
 
+async function loadSummary() {
+  const projectID = workspace.currentProjectId
+  if (!projectID) {
+    activeCount.value = 0
+    classifyCount.value = 0
+    todayCount.value = 0
+    summaryLoaded.value = true
+    return
+  }
+  try {
+    const [activeData, classifyData, classifierData, analyticsData] = await Promise.all([
+      auditApi.list({ project_id: projectID, status: 'ACTIVE', page: 1, page_size: 1 }),
+      auditApi.list({ project_id: projectID, decision_mode: 'CLASSIFY', page: 1, page_size: 1 }),
+      auditApi.list({ project_id: projectID, decision_mode: 'CLASSIFY_ONLY', page: 1, page_size: 1 }),
+      analyticsApi.get({ range: 'today', project_id: projectID }).catch(() => null),
+    ])
+    if (workspace.currentProjectId !== projectID) return
+    activeCount.value = activeData.total
+    classifyCount.value = classifyData.total + classifierData.total
+    todayCount.value = analyticsData?.overview?.total ?? 0
+    summaryLoaded.value = true
+  } catch {
+    // Optional summary counters must not block the audit list.
+  }
+}
+
+async function loadMoreAudits() {
+  if (!workspace.currentProjectId || loadingMore.value || !hasMoreAudits.value) return
+  loadingMore.value = true
+  try {
+    const data = await auditApi.list({
+      project_id: workspace.currentProjectId,
+      page: auditPage.value + 1,
+      page_size: auditPageSize,
+    })
+    audits.value.push(...data.items)
+    auditTotal.value = data.total
+    auditPage.value += 1
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : '加载更多审核配置失败')
+  } finally {
+    loadingMore.value = false
+  }
+}
+
 async function load() {
   if (!workspace.currentProjectId) {
     audits.value = []
     providers.value = []
+    auditTotal.value = 0
+    activeCount.value = 0
+    classifyCount.value = 0
+    todayCount.value = 0
+    summaryLoaded.value = true
     return
   }
   loading.value = true
   try {
     const [auditData, providerData] = await Promise.all([
-      auditApi.list({ project_id: workspace.currentProjectId, page: 1, page_size: 100 }),
+      auditApi.list({ project_id: workspace.currentProjectId, page: 1, page_size: auditPageSize }),
       providerApi.list({ project_id: workspace.currentProjectId }),
     ])
     audits.value = auditData.items
+    auditTotal.value = auditData.total
+    auditPage.value = 1
     providers.value = providerData.items
+    summaryLoaded.value = false
+    void loadSummary()
   } catch (error) {
     message.error(error instanceof Error ? error.message : '加载审核配置失败')
   } finally {
@@ -669,25 +885,25 @@ async function load() {
   }
 }
 
-async function save(): Promise<boolean> {
+async function save(openGuide = true): Promise<Audit | null> {
   errorText.value = ''
   if (!form.name.trim() || (!editing.value && !form.code.trim())) {
     errorText.value = '请填写审核名称与编码'
-    return false
+    return null
   }
   if (!form.providerId) {
     errorText.value = '请选择模型供应商'
-    return false
+    return null
   }
   if (!form.mediaTypes.length) {
     errorText.value = '至少选择一种媒体类型'
-    return false
+    return null
   }
   if (form.decisionMode === 'CLASSIFY' || form.decisionMode === 'CLASSIFY_ONLY') {
     const error = validateCategoryForm()
     if (error) {
       errorText.value = error
-      return false
+      return null
     }
   }
   let rules: unknown
@@ -697,14 +913,14 @@ async function save(): Promise<boolean> {
     if (!Array.isArray(rules)) throw new Error('规则组 JSON 必须是数组')
   } catch (error) {
     errorText.value = error instanceof Error ? `规则组 JSON 无效：${error.message}` : '规则组 JSON 无效'
-    return false
+    return null
   }
   try {
     routes = JSON.parse(form.routesText)
     if (!routes || typeof routes !== 'object' || Array.isArray(routes)) throw new Error('结果动作路由 JSON 必须是对象')
   } catch (error) {
     errorText.value = error instanceof Error ? `结果动作路由 JSON 无效：${error.message}` : '结果动作路由 JSON 无效'
-    return false
+    return null
   }
   const categories = form.categories.map((category) => ({
     code: category.code.trim(),
@@ -732,25 +948,27 @@ async function save(): Promise<boolean> {
   saving.value = true
   try {
     if (editing.value) {
-      await auditApi.update(editing.value.id, payload)
+      const updated = await auditApi.update(editing.value.id, payload)
       message.success('审核配置已更新')
       modalShow.value = false
       await load()
-    } else {
-      const created = await auditApi.create(payload)
-      message.success('审核配置已创建，请选择触发方式接入')
-      modalShow.value = false
-      await load()
+      return updated
+    }
+    const created = await auditApi.create(payload)
+    message.success('审核配置已创建')
+    modalShow.value = false
+    await load()
+    if (openGuide) {
       guideAuditId.value = created.id
       guideShow.value = true
     }
+    return created
   } catch (error) {
     errorText.value = error instanceof Error ? error.message : '保存失败'
-    return false
+    return null
   } finally {
     saving.value = false
   }
-  return true
 }
 
 function auditModeLabel(mode?: string) {
@@ -807,14 +1025,18 @@ function startAssistant(mode: 'create' | 'edit', audit?: Audit) {
     message.warning('AI 配置助手需要项目中至少有一个启用的通用大模型（OpenAI 兼容或 Anthropic 协议）')
     return
   }
-  const general = providers.value.find((p) => p.status === 'ACTIVE' && p.kind !== 'JEV')
-  assistantProviderId.value = general?.id || null
+  const candidates = providers.value.filter((p) => p.status === 'ACTIVE' && p.kind !== 'JEV')
+  const preferred = candidates.find((p) => p.id === assistantProviderId.value) || candidates[0]
+  assistantProviderId.value = preferred?.id || null
   assistantMode.value = mode
   assistantReadyConfig.value = null
   assistantChanges.value = []
   assistantSaved.value = false
   assistantError.value = ''
   assistantInput.value = ''
+  assistantImages.value = []
+  assistantAbort?.abort()
+  assistantAbort = null
   if (mode === 'create') {
     resetForm()
     editing.value = null
@@ -826,7 +1048,7 @@ function startAssistant(mode: 'create' | 'edit', audit?: Audit) {
   assistantMessages.value = [{
     role: 'assistant',
     content: mode === 'create'
-      ? '你好，我是审核配置助手。请告诉我：这次要审核什么类型的档案？哪些情况必须驳回？是否需要按类别分类？我会根据你的回答逐步确认并直接生成配置。'
+      ? '你好，我是审核配置助手。请告诉我：这次要审核什么类型的档案？哪些情况必须驳回？是否需要按类别分类？任务通过什么方式接入（开放 API / Redis Stream / WebSocket）？如果选 Redis，我会从当前项目已启用且测试成功的 Redis 连接中选择。'
       : `当前正在编辑「${audit?.name || form.name}」（${audit?.code || form.code}）。它现在是${audit ? describeAudit(audit) : '当前表单中的配置'}。请告诉我：目前哪里不符合要求、你希望改成什么？例如“把默认结论改成 REVIEW”“新增发票分类并映射为通过”。我会只修改你指定的部分，其余配置保持不变。`,
   }]
   assistantShow.value = true
@@ -891,7 +1113,28 @@ function applyAssistantDraft(config: AuditAssistantConfig) {
   if (form.decisionMode === 'CLASSIFY_ONLY') ensureClassifierUnknownCategory()
   form.defaultResult = form.decisionMode === 'CLASSIFY_ONLY' ? 'PASS' : config.default_result || 'REVIEW'
   form.onModelFail = config.on_model_fail || 'REVIEW'
-  form.dedupeWindowSec = config.dedupe_window_sec || 86400
+  form.dedupeWindowSec = config.dedupe_window_sec ?? 86400
+}
+
+function assistantTriggerText(triggers?: Record<string, string>): string {
+  const active = Object.entries(triggers || {})
+    .filter(([, status]) => status === 'ACTIVE')
+    .map(([type]) => triggerLabel(type))
+  return active.length ? active.join(' / ') : '全部关闭'
+}
+
+function summarizeAssistantTriggers(config: AuditAssistantConfig): string | null {
+  if (!config.triggers) return null
+  const beforeTypes = assistantMode.value === 'edit'
+    ? (editing.value?.active_triggers || [])
+    : ['OPENAPI']
+  const before = beforeTypes.map((type) => triggerLabel(type)).sort()
+  const after = Object.entries(config.triggers)
+    .filter(([, status]) => status === 'ACTIVE')
+    .map(([type]) => triggerLabel(type))
+    .sort()
+  if (before.join('|') === after.join('|')) return null
+  return `接入方式：${before.length ? before.join(' / ') : '全部关闭'} → ${after.length ? after.join(' / ') : '全部关闭'}`
 }
 
 function summarizeAssistantChanges(config: AuditAssistantConfig) {
@@ -912,24 +1155,120 @@ function summarizeAssistantChanges(config: AuditAssistantConfig) {
   if (Number(config.dedupe_window_sec) !== Number(before.dedupe_window_sec)) changes.push(`去重窗口：${before.dedupe_window_sec}s → ${config.dedupe_window_sec}s`)
   if (JSON.stringify(config.rules || []) !== JSON.stringify(before.rules || [])) changes.push('规则组已更新')
   if (JSON.stringify(config.routes || {}) !== JSON.stringify(before.routes || {})) changes.push('结果动作路由已更新')
+  const triggerChange = summarizeAssistantTriggers(config)
+  if (triggerChange) changes.push(triggerChange)
   return changes
 }
 
+async function applyAssistantTriggers(
+  auditId: number,
+  triggers: Record<string, string>,
+  redisTrigger?: AuditAssistantConfig['redis_trigger'],
+) {
+  const desired = Object.entries(triggers).filter(([type, status]) =>
+    ['OPENAPI', 'REDIS', 'WEBSOCKET'].includes(type)
+    && (status === 'ACTIVE' || status === 'DISABLED'))
+  if (!desired.length) return
+  const detail = await auditApi.get(auditId)
+  const failures: string[] = []
+  for (const [type, status] of desired) {
+    const trigger = detail.triggers.find((item) => item.type === type)
+    if (!trigger) continue
+    try {
+      if (type === 'REDIS') {
+        if (status === 'ACTIVE' && !redisTrigger) {
+          if (trigger.status === 'ACTIVE' && trigger.redis_connection_id && trigger.stream) continue
+          throw new Error('启用 Redis 接入需要先选择项目 Redis 连接并填写 Stream')
+        }
+        if (status === 'ACTIVE' && redisTrigger) {
+          const unchanged = trigger.status === 'ACTIVE'
+            && trigger.redis_connection_id === redisTrigger.connection_id
+            && trigger.redis_db === redisTrigger.db
+            && trigger.stream === redisTrigger.stream
+            && trigger.start_position === (redisTrigger.start_position || '$')
+          if (unchanged) continue
+          await auditApi.updateTrigger(trigger.id, {
+            status,
+            redis_connection_id: redisTrigger.connection_id,
+            redis_db: redisTrigger.db,
+            stream: redisTrigger.stream,
+            consumer_group: redisTrigger.consumer_group || '',
+            start_position: redisTrigger.start_position || '$',
+            batch_size: redisTrigger.batch_size || 16,
+            max_inflight: redisTrigger.max_inflight || 1,
+          })
+        } else {
+          if (trigger.status === status) continue
+          await auditApi.updateTrigger(trigger.id, { status })
+        }
+      } else {
+        if (trigger.status === status) continue
+        await auditApi.updateTrigger(trigger.id, { status })
+      }
+    } catch (error) {
+      failures.push(`${triggerLabel(type)}：${error instanceof Error ? error.message : '更新失败'}`)
+    }
+  }
+  if (failures.length) throw new Error(`审核配置已保存，但接入方式更新失败（${failures.join('；')}）`)
+}
+
 async function applyAssistantConfig(config: AuditAssistantConfig) {
-  assistantChanges.value = assistantMode.value === 'edit' ? summarizeAssistantChanges(config) : []
+  const target = currentAssistantMessage()
+  if (target) {
+    target.pending = true
+  }
+  assistantChanges.value = assistantMode.value === 'edit'
+    ? summarizeAssistantChanges(config)
+    : (() => {
+        const triggerChange = summarizeAssistantTriggers(config)
+        return triggerChange ? [triggerChange] : []
+      })()
   assistantReadyConfig.value = config
   applyAssistantDraft(config)
+  upsertAssistantStep({ id: 'save', label: '保存审核配置', status: 'running', at: Date.now() })
   await scrollAssistantToBottom()
-  const saved = await save()
-  if (saved) {
-    assistantSaved.value = true
-    if (assistantMode.value === 'create') {
-      assistantShow.value = false
-      assistantMessages.value = []
+  const saved = await save(false)
+  if (!saved) {
+    upsertAssistantStep({ id: 'save', label: '保存审核配置', status: 'error', detail: errorText.value, at: Date.now() })
+    if (target) {
+      target.pending = false
     }
-  } else {
     assistantError.value = errorText.value || '已应用配置，但保存失败，请检查表单后手动保存'
     modalShow.value = true
+    return
+  }
+  upsertAssistantStep({ id: 'save', label: '保存审核配置', status: 'done', detail: saved.name, at: Date.now() })
+  if (config.triggers && Object.keys(config.triggers).length) {
+    upsertAssistantStep({ id: 'access', label: '应用接入方式', status: 'running', at: Date.now() })
+    try {
+      await applyAssistantTriggers(saved.id, config.triggers, config.redis_trigger)
+      await load()
+      upsertAssistantStep({
+        id: 'access', label: '应用接入方式', status: 'done',
+        detail: assistantTriggerText(config.triggers), at: Date.now(),
+      })
+    } catch (error) {
+      upsertAssistantStep({
+        id: 'access', label: '应用接入方式', status: 'error',
+        detail: error instanceof Error ? error.message : '更新失败', at: Date.now(),
+      })
+      if (target) {
+        target.pending = false
+      }
+      assistantSaved.value = true
+      assistantError.value = error instanceof Error ? error.message : '接入方式更新失败，请到接入指南中手动调整'
+      return
+    }
+  }
+  assistantSaved.value = true
+  if (target) {
+    target.pending = false
+  }
+  if (assistantMode.value === 'create') {
+    assistantShow.value = false
+    assistantMessages.value = []
+    guideAuditId.value = saved.id
+    guideShow.value = true
   }
 }
 
@@ -941,32 +1280,70 @@ function handleAssistantKeydown(event: KeyboardEvent) {
 
 async function sendAssistant() {
   const text = assistantInput.value.trim()
-  if (!text || assistantBusy.value) return
+  const images = assistantImages.value.map((item) => item.dataUrl)
+  if ((!text && !images.length) || assistantBusy.value) return
   if (!assistantProviderId.value) {
     assistantError.value = '没有可用的通用大模型，请先到「模型接入」启用一个通用大模型'
     return
   }
   assistantInput.value = ''
+  assistantImages.value = []
   assistantError.value = ''
-  assistantMessages.value.push({ role: 'user', content: text })
-  await scrollAssistantToBottom()
   assistantBusy.value = true
+  assistantMessages.value.push({ role: 'user', content: text, images })
+  const assistantMessage: AuditAssistantMessage = {
+    role: 'assistant', content: '', pending: true, steps: [],
+  }
+  assistantMessages.value.push(assistantMessage)
+  await scrollAssistantToBottom()
+  const controller = new AbortController()
+  assistantAbort = controller
+  let result: AuditAssistantResult | null = null
   try {
-    const result = await auditApi.assistant({
+    await auditApi.assistantStream({
       project_id: workspace.currentProjectId,
       audit_id: editing.value?.id || 0,
       provider_id: assistantProviderId.value,
-      messages: assistantMessages.value,
+      messages: assistantMessages.value.map((item) => ({
+        role: item.role,
+        content: item.content,
+        images: item.images || [],
+      })),
       current_config: buildAssistantCurrentConfig(),
+    }, {
+      signal: controller.signal,
+      onEvent: (event, data) => {
+        const payload = data as Record<string, any>
+        if (event === 'step') {
+          upsertAssistantStep(payload as unknown as AuditAssistantStep)
+          void scrollAssistantToBottom()
+        } else if (event === 'reply') {
+          result = payload as unknown as AuditAssistantResult
+        } else if (event === 'error') {
+          throw new Error(String(payload?.message || 'AI 配置助手请求失败'))
+        }
+      },
     })
-    assistantMessages.value.push({ role: 'assistant', content: result.reply })
+    const finalResult = result as AuditAssistantResult | null
+    if (!finalResult) throw new Error('模型没有返回结果')
+    if (finalResult.steps?.length) {
+      assistantMessage.steps = dedupeAssistantSteps(finalResult.steps)
+    }
+    assistantMessage.content = finalResult.reply
+    assistantMessage.pending = false
     await scrollAssistantToBottom()
-    if (result.ready && result.config) {
-      await applyAssistantConfig(result.config)
+    if (finalResult.ready && finalResult.config) {
+      await applyAssistantConfig(finalResult.config)
     }
   } catch (error) {
+    if (controller.signal.aborted) return
+    assistantMessage.pending = false
+    if (!assistantMessage.content && !assistantMessage.steps?.length) {
+      assistantMessages.value = assistantMessages.value.filter((item) => item !== assistantMessage)
+    }
     assistantError.value = error instanceof Error ? error.message : 'AI 配置助手请求失败'
   } finally {
+    if (assistantAbort === controller) assistantAbort = null
     assistantBusy.value = false
     await scrollAssistantToBottom()
   }
@@ -974,13 +1351,52 @@ async function sendAssistant() {
 
 function closeAssistant() {
   if (assistantBusy.value || saving.value) return
+  assistantAbort?.abort()
+  assistantAbort = null
   assistantShow.value = false
   assistantMessages.value = []
+  assistantImages.value = []
   assistantReadyConfig.value = null
   assistantChanges.value = []
   assistantSaved.value = false
 }
 
+function openFieldAssistant(field: 'rules' | 'review_prompt') {
+  if (!hasGeneralProvider.value) {
+    message.warning('需要先在模型接入中配置并启用通用大模型')
+    return
+  }
+  if (!workspace.currentProjectId) {
+    message.warning('请先选择项目')
+    return
+  }
+  fieldAssistantField.value = field
+  fieldAssistantCurrent.value = field === 'rules' ? form.rulesText : form.reviewPrompt
+  fieldAssistantProviderId.value = assistantProviderId.value || assistantProviderOptions.value[0]?.value || null
+  fieldAssistantContext.value = {
+    name: form.name,
+    description: form.description,
+    decision_mode: form.decisionMode,
+    media_types: form.mediaTypes,
+    categories: form.categories.map((category) => ({
+      code: category.code,
+      name: category.name,
+      result: category.result,
+    })),
+  }
+  fieldAssistantShow.value = true
+}
+
+function applyFieldAssistant(text: string) {
+  if (fieldAssistantField.value === 'rules') {
+    form.rulesText = text
+    form.rulesPreset = 'custom'
+    message.success('AI 规则已应用，保存审核配置后生效')
+    return
+  }
+  form.reviewPrompt = text
+  message.success('AI 优化后的审核要求已应用，保存审核配置后生效')
+}
 
 async function toggleStatus(audit: Audit) {
   const next = audit.status === 'ACTIVE' ? 'PAUSED' : 'ACTIVE'
@@ -1092,7 +1508,7 @@ function categoryResultLabel(result: string) {
 }
 
 function triggerLabel(type: string) {
-  return { OPENAPI: '开放 API', REDIS: 'Redis', WEBSOCKET: 'WebSocket', POLLING: '轮询' }[type] || type
+  return { OPENAPI: '开放 API', REDIS: 'Redis', WEBSOCKET: 'WebSocket' }[type] || type
 }
 
 watch(() => workspace.currentProjectId, load)
@@ -1156,17 +1572,17 @@ onMounted(async () => {
     <div class="audit-summary">
       <div>
         <span>已启用流程</span>
-        <strong>{{ activeCount }}</strong>
+        <strong :class="{ 'summary-loading': !summaryLoaded }">{{ summaryLoaded ? activeCount : '—' }}</strong>
       </div>
       <div class="summary-divider"></div>
       <div>
         <span>分类流程</span>
-        <strong>{{ classifyCount }}</strong>
+        <strong :class="{ 'summary-loading': !summaryLoaded }">{{ summaryLoaded ? classifyCount : '—' }}</strong>
       </div>
       <div class="summary-divider"></div>
       <div>
         <span>今日执行任务</span>
-        <strong>{{ todayCount }}</strong>
+        <strong :class="{ 'summary-loading': !summaryLoaded }">{{ summaryLoaded ? todayCount : '—' }}</strong>
       </div>
       <div class="summary-divider"></div>
       <div>
@@ -1197,7 +1613,7 @@ onMounted(async () => {
         placeholder="审核类型"
         style="width: 135px"
       />
-      <span class="result-count">{{ filtered.length }} 条配置</span>
+      <span class="result-count">已显示 {{ filtered.length }} / 共 {{ auditTotal }} 条</span>
     </div>
 
     <div v-if="filtered.length" class="audit-list fade-list">
@@ -1277,6 +1693,12 @@ onMounted(async () => {
       <template #icon><ShieldCheckmarkOutline /></template>
     </EmptyState>
 
+    <div v-if="hasMoreAudits" class="load-more-row">
+      <n-button secondary :loading="loadingMore" @click="loadMoreAudits">
+        加载更多（已显示 {{ audits.length }} / 共 {{ auditTotal }} 条）
+      </n-button>
+    </div>
+
     <n-modal v-model:show="modalShow" :mask-closable="!saving">
       <div class="audit-modal">
         <div class="modal-head">
@@ -1285,7 +1707,10 @@ onMounted(async () => {
             <h2>{{ editing ? '编辑审核配置' : '新建审核配置' }}</h2>
             <p>配置会立即进入版本管理，启用后可被任务中心和开放 API 使用。</p>
           </div>
-          <span class="modal-icon"><ShieldCheckmarkOutline /></span>
+          <div class="modal-head-actions">
+            <span class="modal-icon"><ShieldCheckmarkOutline /></span>
+            <button class="modal-close" type="button" title="关闭" aria-label="关闭" @click="modalShow = false">×</button>
+          </div>
         </div>
         <div class="modal-body">
           <div class="two-col">
@@ -1346,7 +1771,19 @@ onMounted(async () => {
             </div>
           </div>
           <div class="field">
-            <label>审核要求</label>
+            <div class="field-label-row">
+              <label>审核要求</label>
+              <n-button
+                size="tiny"
+                secondary
+                :disabled="!hasGeneralProvider"
+                title="根据你的描述优化当前审核要求"
+                @click="openFieldAssistant('review_prompt')"
+              >
+                <template #icon><SparklesOutline /></template>
+                AI 优化提示词
+              </n-button>
+            </div>
             <n-input
               v-model:value="form.reviewPrompt"
               type="textarea"
@@ -1421,17 +1858,30 @@ onMounted(async () => {
                 <span v-else-if="form.decisionMode === 'CLASSIFY'">按分类映射结论，并对低置信度的通过结果转人工。仅支持多文本/多图片，不支持视频。</span>
                 <span v-else>决定模型输出后的 PASS / REJECT / REVIEW 阈值。仅支持多文本/多图片，不支持视频。</span>
               </div>
-              <n-select
-                :value="form.rulesPreset"
-                :options="templateOptions"
-                size="small"
-                style="width: 190px"
-                @update:value="applyRulesPreset"
-              />
+              <div class="rule-head-actions">
+                <n-button
+                  size="small"
+                  secondary
+                  :disabled="!hasGeneralProvider"
+                  title="根据需求生成可执行的规则 JSON"
+                  @click="openFieldAssistant('rules')"
+                >
+                  <template #icon><SparklesOutline /></template>
+                  AI 生成规则
+                </n-button>
+                <n-select
+                  :value="form.rulesPreset"
+                  :options="templateOptions"
+                  size="small"
+                  style="width: 190px"
+                  @update:value="applyRulesPreset"
+                />
+              </div>
             </div>
             <div class="template-desc">
               <span v-if="selectedTemplate">{{ selectedTemplate.description }}</span>
               <span v-else-if="form.rulesPreset === 'keep'">保持当前已有规则，不会覆盖自定义条件。</span>
+              <span v-else-if="form.rulesPreset === 'custom'">当前为自定义规则，下方 JSON 会直接保存。</span>
             </div>
             <div class="json-editor-grid">
               <div class="field">
@@ -1442,12 +1892,12 @@ onMounted(async () => {
                   :autosize="{ minRows: 6, maxRows: 14 }"
                   class="code-input"
                   spellcheck="false"
-                  placeholder='[{"name":"高风险驳回","priority":10,"logic":"OR","enabled":true,"conditions":[...],"result":"REJECT"}]'
+                  placeholder='[{"name":"高风险直接驳回","priority":10,"logic":"OR","stop_on_hit":true,"on_hit_result":"REJECT","items":[{"field":"model.score","operator":"gte","value":0.85}]}]'
                 />
               </div>
               <div class="field routes-field">
                 <label>结果动作回调 <span>按最终结论向业务系统推送结果</span></label>
-                <ResultRoutesEditor v-model="form.routesText" />
+                <ResultRoutesEditor v-model="form.routesText" :audit-id="editing?.id || 0" />
               </div>
             </div>
           </div>
@@ -1477,14 +1927,14 @@ onMounted(async () => {
               />
             </div>
             <div class="field">
-              <label>去重窗口（秒）</label>
+              <label>去重窗口（秒，0 表示不去重）</label>
               <n-input-number v-model:value="form.dedupeWindowSec" :min="0" :max="604800" :step="3600" style="width: 100%" />
             </div>
           </div>
           <div class="create-hint">
             <ShieldCheckmarkOutline />
-            <span v-if="editing">保存后可在「接入指南」中查看当前四种触发方式、接口参数和回调配置。</span>
-            <span v-else>创建后会自动生成 开放 API / Redis / WebSocket / HTTP 轮询 四种接入方式，并立即打开接入指南。</span>
+            <span v-if="editing">保存后可在「接入指南」中查看当前三种触发方式、接口参数和回调配置。</span>
+            <span v-else>创建后会自动生成 开放 API / Redis / WebSocket 三种接入方式，并立即打开接入指南。Redis 需要先在「数据连接」配置并测试连接。</span>
           </div>
           <div v-if="errorText" class="modal-error">{{ errorText }}</div>
         </div>
@@ -1494,7 +1944,7 @@ onMounted(async () => {
             AI 帮我修改
           </n-button>
           <n-button :disabled="saving" @click="modalShow = false">取消</n-button>
-          <n-button v-if="auth.can('audit:write')" type="primary" :loading="saving" @click="save">{{ editing ? '保存修改' : '创建并查看接入方式' }}</n-button>
+          <n-button v-if="auth.can('audit:write')" type="primary" :loading="saving" @click="save()">{{ editing ? '保存修改' : '创建并查看接入方式' }}</n-button>
         </div>
       </div>
     </n-modal>
@@ -1507,7 +1957,10 @@ onMounted(async () => {
             <h2>选择要编辑的审核配置</h2>
             <p>AI 会先读取这条配置的当前模型、分类、规则和 Prompt，再确认要改成什么。</p>
           </div>
-          <span class="modal-icon"><CreateOutline /></span>
+          <div class="modal-head-actions">
+            <span class="modal-icon"><CreateOutline /></span>
+            <button class="modal-close" type="button" title="关闭" aria-label="关闭" @click="assistantPickShow = false">×</button>
+          </div>
         </div>
         <div class="modal-body">
           <div class="field">
@@ -1538,15 +1991,33 @@ onMounted(async () => {
       </div>
     </n-modal>
 
+    <AuditFieldAssistantModal
+      v-model:show="fieldAssistantShow"
+      :field="fieldAssistantField"
+      :current="fieldAssistantCurrent"
+      :context="fieldAssistantContext"
+      :project-id="workspace.currentProjectId"
+      :provider-options="assistantProviderOptions"
+      :initial-provider-id="fieldAssistantProviderId"
+      @apply="applyFieldAssistant"
+    />
+
     <n-modal :show="assistantShow" :mask-closable="!assistantBusy && !saving" @update:show="(value: boolean) => { if (!value) closeAssistant() }">
       <div class="assistant-modal">
         <div class="modal-head assistant-head">
-          <div>
-            <div class="modal-kicker">AI CONFIG ASSISTANT</div>
-            <h2>{{ assistantMode === 'edit' ? 'AI 帮我修改审核配置' : 'AI 帮我创建审核配置' }}</h2>
-            <p>{{ assistantMode === 'edit' ? 'AI 会读取当前配置，确认“现在是什么、要改成什么”后只修改你指定的部分。' : '通用大模型会先向你提问，信息足够后自动生成并保存配置。' }}</p>
+          <div class="assistant-heading">
+            <span class="assistant-header-icon">
+              <n-icon :component="SparklesOutline" />
+            </span>
+            <div>
+              <div class="modal-kicker">AI CONFIG ASSISTANT</div>
+              <h2>{{ assistantMode === 'edit' ? 'AI 帮我修改审核配置' : 'AI 帮我创建审核配置' }}</h2>
+              <p>{{ assistantMode === 'edit' ? 'AI 会读取当前配置与接入方式，确认“现在是什么、要改成什么”后只修改你指定的部分。' : '通用大模型会先向你提问，信息足够后自动生成并保存配置，包括任务接入方式。' }}</p>
+            </div>
           </div>
-          <span class="modal-icon"><ChatbubbleEllipsesOutline /></span>
+          <n-button quaternary circle title="关闭" aria-label="关闭" :disabled="assistantBusy || saving" @click="closeAssistant">
+            <template #icon><n-icon :component="CloseOutline" /></template>
+          </n-button>
         </div>
         <div v-if="assistantMode === 'edit' && editing" class="assistant-target">
           <span class="assistant-target-label">正在编辑</span>
@@ -1559,41 +2030,105 @@ onMounted(async () => {
             v-for="(item, index) in assistantMessages"
             :key="index"
             class="assistant-message"
-            :class="item.role"
+            :class="[item.role, { pending: item.pending }]"
           >
-            <span class="assistant-avatar">{{ item.role === 'user' ? '我' : 'AI' }}</span>
-            <div class="assistant-bubble">{{ item.content }}</div>
+            <span class="assistant-avatar" :class="item.role">
+              <n-icon :component="item.role === 'user' ? PersonOutline : SparklesOutline" />
+            </span>
+            <div v-if="item.role === 'user'" class="assistant-bubble">
+              <div v-if="item.images?.length" class="assistant-message-images">
+                <n-image v-for="(src, imageIndex) in item.images" :key="imageIndex" :src="src" width="88" />
+              </div>
+              <span v-if="item.content">{{ item.content }}</span>
+            </div>
+            <div v-else class="assistant-content">
+              <div v-if="item.pending" class="assistant-progress">
+                <div class="assistant-progress-head">
+                  <n-spin :size="13" />
+                  <span>{{ assistantStatusText(item) }}</span>
+                </div>
+                <div v-if="item.steps?.length" class="assistant-trace-list">
+                  <div v-for="step in item.steps" :key="step.id" class="assistant-step" :class="step.status">
+                    <span class="assistant-step-icon">
+                      <n-spin v-if="step.status === 'running'" :size="11" />
+                      <n-icon v-else-if="step.status === 'error'" :component="CloseCircleOutline" />
+                      <n-icon v-else :component="CheckmarkCircleOutline" />
+                    </span>
+                    <span class="assistant-step-label">{{ step.label }}</span>
+                    <span v-if="step.detail" class="assistant-step-detail">{{ step.detail }}</span>
+                  </div>
+                </div>
+              </div>
+              <div v-if="item.content" class="assistant-answer markdown-body" v-html="renderAssistantMarkdown(item.content)"></div>
+              <div v-if="index === assistantMessages.length - 1 && assistantReadyConfig" class="assistant-ready">
+                <strong>{{ assistantMode === 'edit' ? '已按你的要求更新并保存' : '配置已生成并创建' }}：{{ assistantReadyConfig.name }}</strong>
+                <span>{{ auditModeLabel(assistantReadyConfig.decision_mode) }} · {{ assistantReadyConfig.categories.length }} 个分类 · {{ assistantReadyConfig.media_types.join(' + ') }}</span>
+                <span v-if="assistantReadyConfig.triggers">接入方式：{{ assistantTriggerText(assistantReadyConfig.triggers) }}</span>
+                <ul v-if="assistantMode === 'edit' && assistantChanges.length" class="assistant-changes">
+                  <li v-for="change in assistantChanges" :key="change">{{ change }}</li>
+                </ul>
+                <span v-else-if="assistantMode === 'edit'">未检测到与当前配置的字段差异。</span>
+              </div>
+            </div>
           </div>
-          <div v-if="assistantBusy" class="assistant-message assistant">
-            <span class="assistant-avatar">AI</span>
-            <div class="assistant-bubble assistant-thinking"><n-spin size="small" /> 正在理解并生成配置，请稍候…</div>
-          </div>
-          <div v-if="assistantReadyConfig" class="assistant-ready">
-            <strong>{{ assistantMode === 'edit' ? '已按你的要求更新并保存' : '配置已生成并创建' }}：{{ assistantReadyConfig.name }}</strong>
-            <span>{{ auditModeLabel(assistantReadyConfig.decision_mode) }} · {{ assistantReadyConfig.categories.length }} 个分类 · {{ assistantReadyConfig.media_types.join(' + ') }}</span>
-            <ul v-if="assistantMode === 'edit' && assistantChanges.length" class="assistant-changes">
-              <li v-for="change in assistantChanges" :key="change">{{ change }}</li>
-            </ul>
-            <span v-else-if="assistantMode === 'edit'">未检测到与当前配置的字段差异。</span>
+          <div v-if="showAssistantStarters" class="assistant-starters">
+            <span class="assistant-starters-title">可以这样开始</span>
+            <div class="assistant-starter-list">
+              <button
+                v-for="starter in assistantStarters"
+                :key="starter"
+                type="button"
+                @click="useAssistantStarter(starter)"
+              >
+                <n-icon :component="FlashOutline" />
+                {{ starter }}
+              </button>
+            </div>
           </div>
         </div>
         <div class="assistant-composer">
+          <div v-if="assistantImages.length" class="assistant-attachments">
+            <div v-for="image in assistantImages" :key="image.id" class="assistant-attachment">
+              <n-image :src="image.dataUrl" width="64" />
+              <button type="button" class="assistant-attachment-remove" title="移除图片" @click="removeAssistantImage(image.id)">
+                <CloseCircleOutline />
+              </button>
+              <span class="assistant-attachment-name">{{ image.name }}</span>
+            </div>
+          </div>
           <n-input
+            ref="assistantInputRef"
             v-model:value="assistantInput"
             type="textarea"
             :autosize="{ minRows: 2, maxRows: 5 }"
             :disabled="assistantBusy || saving"
-            placeholder="回答 AI 的问题，或直接说「按你的建议生成」；Enter 发送，Shift+Enter 换行"
-            :input-props="{ onKeydown: handleAssistantKeydown }"
+            placeholder="回答 AI 的问题，或直接说「按你的建议生成」；支持粘贴截图，Enter 发送，Shift+Enter 换行"
+            :input-props="{ onKeydown: handleAssistantKeydown, onPaste: handleAssistantPaste }"
+            class="assistant-input"
           />
-          <div class="assistant-actions">
-            <span class="assistant-note">
-              {{ assistantSaved && assistantMode === 'edit' ? '修改已保存；可以继续描述调整，或关闭窗口' : hasGeneralProvider ? '使用项目内启用的通用大模型，不会调用 JEV' : '需要先配置通用大模型' }}
-            </span>
-            <n-button :disabled="assistantBusy || saving" @click="closeAssistant">关闭</n-button>
-            <n-button type="primary" :loading="assistantBusy || saving" :disabled="!assistantInput.trim()" @click="sendAssistant">
-              发送
-            </n-button>
+          <div class="assistant-composer-bar">
+            <div class="assistant-model-row">
+              <span class="assistant-model-label">生成模型</span>
+              <n-select
+                v-model:value="assistantProviderId"
+                size="small"
+                :options="assistantProviderOptions"
+                :disabled="assistantBusy || saving"
+                placement="top-start"
+                placeholder="选择通用大模型"
+                class="assistant-model-select"
+              />
+            </div>
+            <div class="assistant-actions">
+              <span class="assistant-note">
+                {{ assistantImages.length ? `已附加 ${assistantImages.length} 张图片（最多 4 张）` : assistantSaved && assistantMode === 'edit' ? '修改已保存；可以继续描述调整，或关闭窗口' : hasGeneralProvider ? '使用项目内启用的通用大模型，不会调用 JEV' : '需要先配置通用大模型' }}
+              </span>
+              <n-button :disabled="assistantBusy || saving" @click="closeAssistant">关闭</n-button>
+              <n-button type="primary" :loading="assistantBusy || saving" :disabled="(!assistantInput.trim() && !assistantImages.length) || assistantBusy || saving" @click="sendAssistant">
+                <template #icon><n-icon :component="SendOutline" /></template>
+                发送
+              </n-button>
+            </div>
           </div>
           <div v-if="assistantError" class="modal-error">{{ assistantError }}</div>
         </div>
@@ -1608,7 +2143,10 @@ onMounted(async () => {
             <h2>复制审核配置</h2>
             <p>所有规则、路由与提示词会被复制，新配置为草稿状态。</p>
           </div>
-          <span class="modal-icon"><CopyOutline /></span>
+          <div class="modal-head-actions">
+            <span class="modal-icon"><CopyOutline /></span>
+            <button class="modal-close" type="button" title="关闭" aria-label="关闭" @click="cloneShow = false">×</button>
+          </div>
         </div>
         <div class="modal-body">
           <div class="field">
@@ -1635,7 +2173,10 @@ onMounted(async () => {
             <h2>导出审核记录</h2>
             <p>仅导出当前审核配置的任务；不选条件时导出全部记录，最多 100000 行。</p>
           </div>
-          <span class="modal-icon"><DownloadOutline /></span>
+          <div class="modal-head-actions">
+            <span class="modal-icon"><DownloadOutline /></span>
+            <button class="modal-close" type="button" title="关闭" aria-label="关闭" @click="exportShow = false">×</button>
+          </div>
         </div>
         <div class="modal-body">
           <div v-if="exportTarget" class="export-target">
@@ -1787,6 +2328,11 @@ onMounted(async () => {
       v-model:show="triggerModalShow"
       :trigger="activeTrigger"
       @updated="reloadDetail"
+    />
+    <ScriptLogsModal
+      v-model:show="scriptLogsShow"
+      :audit-id="scriptLogsAudit?.id || 0"
+      :audit-name="scriptLogsAudit?.name || ''"
     />
   </div>
 </template>
@@ -2098,6 +2644,18 @@ onMounted(async () => {
   font-weight: 550;
 }
 
+.field-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.field-label-row label {
+  margin-bottom: 0;
+}
+
 .required {
   color: var(--red);
 }
@@ -2151,6 +2709,13 @@ onMounted(async () => {
   font-size: 9.5px;
 }
 
+.rule-head-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+}
+
 .template-desc {
   margin-top: 8px;
   color: var(--muted);
@@ -2180,6 +2745,15 @@ onMounted(async () => {
 @media (max-width: 900px) {
   .json-editor-grid {
     grid-template-columns: 1fr;
+  }
+
+  .rule-template-head {
+    flex-wrap: wrap;
+  }
+
+  .rule-head-actions {
+    width: 100%;
+    justify-content: flex-end;
   }
 }
 
@@ -3504,6 +4078,684 @@ onMounted(async () => {
   .export-target {
     align-items: flex-start;
     flex-direction: column;
+  }
+}
+
+.assistant-message.assistant {
+  align-items: flex-start;
+}
+
+.assistant-content {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 7px;
+  padding-top: 2px;
+}
+
+.assistant-answer {
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1.8;
+  word-break: break-word;
+}
+
+.assistant-pending-line {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 10.5px;
+}
+
+.assistant-answer.markdown-body {
+  white-space: normal;
+}
+
+.assistant-answer.markdown-body p {
+  margin: 0 0 6px;
+}
+
+.assistant-answer.markdown-body p:last-child {
+  margin-bottom: 0;
+}
+
+.assistant-answer.markdown-body ul,
+.assistant-answer.markdown-body ol {
+  margin: 4px 0 6px;
+  padding-left: 18px;
+}
+
+.assistant-answer.markdown-body li {
+  margin: 2px 0;
+}
+
+.assistant-answer.markdown-body strong {
+  color: #1d4ed8;
+  font-weight: 600;
+}
+
+.assistant-answer.markdown-body code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: #eef2fa;
+  color: #334155;
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.assistant-answer.markdown-body pre {
+  margin: 6px 0;
+  padding: 8px 10px;
+  overflow-x: auto;
+  border: 1px solid #e3e9f4;
+  border-radius: 7px;
+  background: #f8fafd;
+}
+
+.assistant-answer.markdown-body pre code {
+  padding: 0;
+  background: transparent;
+  font-size: 9.5px;
+  line-height: 1.6;
+}
+
+.assistant-answer.markdown-body a {
+  color: #2b6cf6;
+}
+
+.assistant-answer.markdown-body table {
+  width: 100%;
+  margin: 6px 0;
+  border-collapse: collapse;
+  font-size: 10px;
+}
+
+.assistant-answer.markdown-body th,
+.assistant-answer.markdown-body td {
+  padding: 4px 6px;
+  border: 1px solid #e3e9f4;
+  text-align: left;
+}
+
+.assistant-answer.markdown-body blockquote {
+  margin: 6px 0;
+  padding-left: 8px;
+  border-left: 2px solid #cbd9f2;
+  color: var(--muted);
+}
+
+.assistant-message-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.assistant-message-images :deep(.n-image img) {
+  border-radius: 6px;
+}
+
+.assistant-trace {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 9px;
+  border: 1px solid #e8eef7;
+  border-radius: 9px;
+  background: #fff;
+}
+
+.assistant-trace-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 9.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.assistant-trace-toggle svg {
+  width: 12px;
+  height: 12px;
+}
+
+.assistant-trace-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 5px;
+  border-top: 1px solid #f0f3f8;
+}
+
+.assistant-step {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.assistant-step-icon {
+  display: flex;
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+}
+
+.assistant-step-icon svg {
+  width: 13px;
+  height: 13px;
+}
+
+.assistant-step.done .assistant-step-icon {
+  color: #16a34a;
+}
+
+.assistant-step.error .assistant-step-icon {
+  color: #dc2626;
+}
+
+.assistant-step.running .assistant-step-icon {
+  color: #2b6cf6;
+}
+
+.assistant-step-label {
+  flex-shrink: 0;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.assistant-step-detail {
+  overflow: hidden;
+  color: var(--muted-light);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assistant-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.assistant-attachment {
+  position: relative;
+  display: flex;
+  width: 72px;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.assistant-attachment :deep(.n-image) {
+  overflow: hidden;
+  border-radius: 6px;
+}
+
+.assistant-attachment-remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  display: flex;
+  width: 18px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid #fecaca;
+  border-radius: 50%;
+  background: #fff;
+  color: #dc2626;
+  cursor: pointer;
+}
+
+.assistant-attachment-remove svg {
+  width: 12px;
+  height: 12px;
+}
+
+.assistant-attachment-name {
+  overflow: hidden;
+  color: var(--muted-light);
+  font-size: 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assistant-model-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.assistant-model-label {
+  color: var(--muted-light);
+  font-size: 9.5px;
+  white-space: nowrap;
+}
+
+.assistant-model-select {
+  max-width: 360px;
+  flex: 1;
+}
+
+/* AI 配置助手：视觉与阅读体验升级 */
+.assistant-modal {
+  width: min(880px, calc(100vw - 40px));
+  max-height: min(860px, calc(100vh - 40px));
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: var(--card);
+  box-shadow: 0 34px 90px -24px rgba(15, 23, 42, 0.42);
+}
+
+.assistant-head {
+  align-items: flex-start;
+  padding: 22px 24px 18px;
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(130deg, #f7faff 0%, #fff 65%);
+}
+
+.assistant-heading {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.assistant-heading > div {
+  min-width: 0;
+  flex: 1;
+}
+
+.assistant-header-icon {
+  display: flex;
+  width: 42px;
+  height: 42px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #c7d9fb;
+  border-radius: 12px;
+  background: var(--brand-soft);
+  color: var(--brand);
+  box-shadow: 0 6px 16px -8px rgba(43, 108, 246, 0.45);
+}
+
+.assistant-header-icon :deep(svg) {
+  width: 21px;
+  height: 21px;
+}
+
+.assistant-heading h2 {
+  margin: 4px 0;
+  color: var(--ink);
+  font-size: 19px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.assistant-heading p {
+  max-width: 660px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.65;
+}
+
+.assistant-head :deep(.n-button) {
+  --n-text-color: var(--muted) !important;
+  --n-text-color-hover: var(--ink) !important;
+}
+
+.assistant-target {
+  padding: 10px 24px;
+  border-bottom: 1px solid var(--border);
+  background: var(--brand-softer);
+}
+
+.assistant-target-label {
+  padding: 3px 7px;
+  border-radius: 5px;
+  background: #e1ebff;
+  color: #1d55d8;
+  font-size: 9px;
+}
+
+.assistant-target strong {
+  font-size: 11.5px;
+}
+
+.assistant-target code {
+  font-size: 9.5px;
+}
+
+.assistant-target-current {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.assistant-chat {
+  min-height: 360px;
+  gap: 14px;
+  padding: 20px 24px;
+  background: linear-gradient(180deg, #f8fafd 0%, #f5f9ff 100%);
+}
+
+.assistant-message {
+  gap: 10px;
+}
+
+.assistant-avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-size: 0;
+}
+
+.assistant-avatar :deep(svg) {
+  width: 16px;
+  height: 16px;
+}
+
+.assistant-message.user .assistant-avatar {
+  background: var(--green-soft);
+  color: #15803d;
+}
+
+.assistant-bubble {
+  max-width: 76%;
+  padding: 10px 13px;
+  border: 1px solid #d9e8ff;
+  border-radius: 14px 4px 14px 14px;
+  background: var(--brand-soft);
+  color: #1e3a8a;
+  font-size: 12px;
+  line-height: 1.75;
+  box-shadow: var(--shadow-sm);
+}
+
+.assistant-message.user .assistant-bubble {
+  border-color: #d9e8ff;
+  border-radius: 14px 4px 14px 14px;
+  background: var(--brand-soft);
+  color: #1e3a8a;
+}
+
+.assistant-content {
+  display: flex;
+  min-width: 0;
+  max-width: 86%;
+  flex: 0 1 auto;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 4px 14px 14px 14px;
+  background: #fff;
+  box-shadow: var(--shadow-sm);
+}
+
+.assistant-answer {
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.8;
+}
+
+.assistant-answer.markdown-body strong {
+  color: var(--brand-strong);
+}
+
+.assistant-answer.markdown-body code {
+  font-size: 10.5px;
+}
+
+.assistant-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid #e1eaf8;
+  border-radius: 10px;
+  background: #f8fbff;
+}
+
+.assistant-progress-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.assistant-trace-list {
+  gap: 5px;
+  padding-top: 8px;
+  border-top: 1px solid #e8effa;
+}
+
+.assistant-step {
+  gap: 7px;
+  font-size: 10.5px;
+}
+
+.assistant-step-label {
+  color: var(--text);
+  font-weight: 550;
+}
+
+.assistant-step-detail {
+  color: var(--muted-light);
+  font-size: 10px;
+}
+
+.assistant-step-icon :deep(svg) {
+  width: 12px;
+  height: 12px;
+}
+
+.assistant-ready {
+  gap: 5px;
+  padding: 12px 13px;
+  border: 1px solid #cdebd9;
+  border-radius: 11px;
+  background: #f2fcf6;
+}
+
+.assistant-ready strong {
+  color: #166534;
+  font-size: 12px;
+}
+
+.assistant-ready span {
+  color: #4b7a5c;
+  font-size: 10.5px;
+}
+
+.assistant-changes {
+  font-size: 10.5px;
+  line-height: 1.8;
+}
+
+.assistant-starters {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 2px;
+  padding-left: 40px;
+}
+
+.assistant-starters-title {
+  color: var(--muted-light);
+  font-size: 9.5px;
+}
+
+.assistant-starter-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.assistant-starter-list button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 10px;
+  transition: border-color 0.16s ease, background 0.16s ease, color 0.16s ease;
+}
+
+.assistant-starter-list button:hover {
+  border-color: #c7d9fb;
+  background: var(--brand-soft);
+  color: var(--brand-strong);
+}
+
+.assistant-starter-list button :deep(svg) {
+  width: 13px;
+  height: 13px;
+}
+
+.assistant-composer {
+  padding: 14px 20px 18px;
+  border-top: 1px solid var(--border);
+  background: #fff;
+}
+
+.assistant-input :deep(textarea) {
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.assistant-composer-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.assistant-model-row {
+  display: flex;
+  flex: 0 1 340px;
+  align-items: center;
+  gap: 8px;
+  margin-top: 0;
+}
+
+.assistant-model-label {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.assistant-model-select {
+  max-width: 300px;
+  flex: 1;
+}
+
+.assistant-actions {
+  flex: 1;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 0;
+}
+
+.assistant-note {
+  flex: 1;
+  color: var(--muted-light);
+  font-size: 9.5px;
+  text-align: right;
+}
+
+@media (max-width: 720px) {
+  .assistant-modal {
+    width: calc(100vw - 16px);
+    max-height: calc(100vh - 16px);
+  }
+
+  .assistant-head {
+    padding: 16px;
+  }
+
+  .assistant-heading h2 {
+    font-size: 16px;
+  }
+
+  .assistant-heading p {
+    font-size: 10.5px;
+  }
+
+  .assistant-header-icon {
+    width: 36px;
+    height: 36px;
+  }
+
+  .assistant-target {
+    padding: 9px 16px;
+  }
+
+  .assistant-chat {
+    min-height: 280px;
+    gap: 12px;
+    padding: 14px 16px;
+  }
+
+  .assistant-avatar {
+    width: 26px;
+    height: 26px;
+  }
+
+  .assistant-content,
+  .assistant-bubble {
+    max-width: 88%;
+  }
+
+  .assistant-starters {
+    padding-left: 0;
+  }
+
+  .assistant-composer {
+    padding: 12px 14px 14px;
+  }
+
+  .assistant-composer-bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .assistant-model-row {
+    flex-basis: auto;
+  }
+
+  .assistant-model-select {
+    max-width: none;
+  }
+
+  .assistant-actions {
+    justify-content: flex-end;
+  }
+
+  .assistant-note {
+    display: none;
   }
 }
 </style>

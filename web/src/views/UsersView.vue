@@ -249,15 +249,24 @@ async function save() {
 }
 
 function resetMfa(user: User) {
+  if (user.id === auth.user?.id) {
+    message.warning('当前账号请在「个人中心」关闭或重新绑定两步验证')
+    return
+  }
+  if (!user.mfa_enabled) {
+    message.info('该账号未开启两步验证，无需重置；用户绑定验证器后才需要此操作')
+    return
+  }
   dialog.warning({
-    title: '重置动态验证码',
-    content: `确认清除「${user.username}」的两步验证配置？该账号现有登录会话也会失效，需使用密码重新登录。`,
-    positiveText: '重置',
+    title: '重置两步验证',
+    content: `确认清除「${user.display_name || user.username}」的两步验证绑定？清除后该账号可直接用密码登录，现有登录会话会立即失效，用户登录后可重新绑定验证器。`,
+    positiveText: '重置并解除',
     negativeText: '取消',
     onPositiveClick: async () => {
       try {
         await userApi.resetMfa(user.id)
-        message.success('动态验证码已重置')
+        if (editing.value?.id === user.id) editing.value.mfa_enabled = false
+        message.success(`已清除「${user.display_name || user.username}」的两步验证，现有会话已失效`)
         await load()
       } catch (error) {
         message.error(error instanceof Error ? error.message : '重置失败')
@@ -327,7 +336,7 @@ onMounted(load)
 
     <section class="panel">
       <div class="panel-head">
-        <div><h3 class="panel-title">后台账号</h3><p class="panel-subtitle">密码使用 bcrypt 存储；超级管理员可重置其他账号密码</p></div>
+        <div><h3 class="panel-title">后台账号</h3><p class="panel-subtitle">密码使用 bcrypt 存储；超级管理员可重置其他账号密码和两步验证</p></div>
         <n-button text type="primary" @click="openCreate">新建账号</n-button>
       </div>
       <div v-if="users.length" class="user-list">
@@ -339,17 +348,32 @@ onMounted(load)
               <span class="mono">@{{ user.username }}</span>
               <StatusTag :status="user.status" type="provider" />
               <span class="role-chip">{{ roles.find((r) => r.code === user.role)?.name || user.role }}</span>
-              <span v-if="user.mfa_enabled" class="mfa-chip">2FA</span>
+              <span v-if="user.mfa_enabled" class="mfa-chip" title="已开启两步验证">2FA</span>
               <span v-if="user.id === auth.user?.id" class="self-chip">当前账号</span>
             </div>
             <div class="user-meta">
               <span>项目范围：{{ user.role === 'SUPER_ADMIN' ? '全部项目' : (user.project_ids || []).map((id) => workspace.projects.find((p) => p.id === id)?.name || `#${id}`).join('、') || '无' }}</span>
+              <span :class="{ 'mfa-on': user.mfa_enabled }">两步验证：{{ user.mfa_enabled ? '已开启' : '未开启' }}</span>
               <span>最近登录：{{ user.last_login_at ? user.last_login_at.replace('T', ' ').slice(0, 19) : '从未登录' }}</span>
             </div>
           </div>
           <div class="user-actions">
             <n-button size="small" quaternary @click="openEdit(user)">编辑</n-button>
-            <n-button v-if="user.mfa_enabled" size="small" quaternary @click="resetMfa(user)">重置 2FA</n-button>
+            <n-button
+              size="small"
+              quaternary
+              type="warning"
+              :disabled="user.id === auth.user?.id || !user.mfa_enabled"
+              :title="user.id === auth.user?.id
+                ? '当前账号请在个人中心管理两步验证'
+                : user.mfa_enabled
+                  ? '清除该账号的两步验证绑定，帮助用户恢复登录'
+                  : '该账号未开启两步验证，用户绑定后才需要重置'"
+              @click="resetMfa(user)"
+            >
+              <template #icon><KeyOutline /></template>
+              重置 2FA
+            </n-button>
             <n-button size="small" quaternary @click="toggleStatus(user)">{{ user.status === 'ACTIVE' ? '停用' : '启用' }}</n-button>
           </div>
         </div>
@@ -399,7 +423,10 @@ onMounted(load)
             <h2>{{ editing ? '编辑后台账号' : '新建后台账号' }}</h2>
             <p>账号的角色决定菜单与操作权限，项目范围决定可操作的数据。</p>
           </div>
-          <span class="modal-icon"><KeyOutline /></span>
+          <div class="modal-head-actions">
+            <span class="modal-icon"><KeyOutline /></span>
+            <button class="modal-close" type="button" title="关闭" aria-label="关闭" @click="modalShow = false">×</button>
+          </div>
         </div>
         <div class="modal-body">
           <div class="two-col">
@@ -442,6 +469,28 @@ onMounted(load)
           <div v-if="selectedRole" class="role-preview">
             <div class="role-preview-head"><ShieldCheckmarkOutline /><strong>{{ selectedRole.name }} 的菜单权限</strong></div>
             <div class="role-menus"><span v-for="menu in selectedRole.menus" :key="menu">{{ menuLabels[menu] || menu }}</span></div>
+          </div>
+          <div v-if="editing" class="mfa-admin-panel" :class="{ enabled: editing.mfa_enabled }">
+            <span class="mfa-admin-icon"><KeyOutline /></span>
+            <div class="mfa-admin-copy">
+              <strong>两步验证（2FA）</strong>
+              <p v-if="editing.id === auth.user?.id">当前账号请在「个人中心」开启、关闭或重新绑定两步验证。</p>
+              <p v-else-if="editing.mfa_enabled">该账号已绑定验证器。用户丢失验证器无法登录时，可在此清除绑定帮助其恢复密码登录。</p>
+              <p v-else>该账号尚未绑定验证器，用户可在「个人中心」自行开启。</p>
+            </div>
+            <n-button
+              v-if="editing.mfa_enabled"
+              size="small"
+              type="warning"
+              secondary
+              :disabled="editing.id === auth.user?.id"
+              @click="resetMfa(editing)"
+            >
+              重置 2FA
+            </n-button>
+            <n-button v-else size="small" secondary disabled title="该账号尚未绑定验证器，无需重置">
+              重置 2FA
+            </n-button>
           </div>
           <div v-if="errorText" class="modal-error">{{ errorText }}</div>
         </div>
@@ -650,6 +699,10 @@ onMounted(load)
   margin-top: 3px;
   color: var(--muted-light);
   font-size: 8.5px;
+}
+
+.user-meta .mfa-on {
+  color: #15803d;
 }
 
 .user-actions {
@@ -924,6 +977,61 @@ onMounted(load)
 .role-preview-head strong {
   font-size: 9.5px;
   font-weight: 550;
+}
+
+.mfa-admin-panel {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface-soft);
+}
+
+.mfa-admin-panel.enabled {
+  border-color: rgba(21, 128, 61, 0.2);
+  background: #f6fdf9;
+}
+
+.mfa-admin-icon {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  place-items: center;
+  border-radius: 8px;
+  background: var(--surface-strong);
+  color: var(--muted);
+}
+
+.mfa-admin-panel.enabled .mfa-admin-icon {
+  background: #e9f9ef;
+  color: #15803d;
+}
+
+.mfa-admin-icon :deep(svg) {
+  width: 14px;
+  height: 14px;
+}
+
+.mfa-admin-copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.mfa-admin-copy strong {
+  color: var(--ink);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.mfa-admin-copy p {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.5;
 }
 
 .modal-error {

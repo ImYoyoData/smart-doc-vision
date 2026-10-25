@@ -1,7 +1,9 @@
 package api
 
 import (
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -76,14 +78,22 @@ func (s *Server) Router() *gin.Engine {
 	}
 	r := gin.New()
 	r.Use(gin.Logger(), gin.Recovery(), traceMiddleware(), metricsMiddleware(), bodyLimitMiddleware(40<<20))
-	r.Use(cors.New(cors.Config{
+	corsCfg := cors.Config{
 		AllowOrigins:     s.cfg.CORSOrigins,
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization", "X-Trace-Id", "Idempotency-Key"},
 		ExposeHeaders:    []string{"X-Trace-Id"},
 		AllowCredentials: true,
 		MaxAge:           12 * time.Hour,
-	}))
+	}
+	if s.cfg.AppEnv == "development" {
+		configured := append([]string(nil), s.cfg.CORSOrigins...)
+		corsCfg.AllowOrigins = nil
+		corsCfg.AllowOriginFunc = func(origin string) bool {
+			return originInList(origin, configured) || isDevFrontendOrigin(origin)
+		}
+	}
+	r.Use(cors.New(corsCfg))
 	r.GET("/health", s.health)
 	r.GET("/metrics", s.prometheusMetrics)
 	s.registerAdminUI(r)
@@ -120,6 +130,16 @@ func (s *Server) Router() *gin.Engine {
 			auth.POST("/projects/:id/restore", s.restoreProject)
 			auth.PATCH("/projects/:id/status", s.updateProjectStatus)
 			auth.GET("/projects/:id/credentials", s.listCredentials)
+			auth.GET("/projects/:id/redis-connections", s.listRedisConnections)
+			auth.POST("/projects/:id/redis-connections", s.createRedisConnection)
+			auth.PUT("/redis-connections/:id", s.updateRedisConnection)
+			auth.DELETE("/redis-connections/:id", s.deleteRedisConnection)
+			auth.POST("/redis-connections/:id/test", s.testRedisConnection)
+
+			auth.GET("/projects/:id/secrets", s.listProjectSecrets)
+			auth.PUT("/projects/:id/secrets/:name", s.putProjectSecret)
+			auth.DELETE("/projects/:id/secrets/:name", s.deleteProjectSecret)
+
 			auth.POST("/projects/:id/credentials", s.createCredential)
 			auth.PUT("/projects/:id/credentials/:credentialId", s.updateCredential)
 			auth.POST("/projects/:id/credentials/:credentialId/rotate", s.rotateCredential)
@@ -127,7 +147,9 @@ func (s *Server) Router() *gin.Engine {
 
 			auth.GET("/providers", s.listProviders)
 			auth.POST("/providers", s.createProvider)
+			auth.POST("/providers/models", s.listProviderModels)
 			auth.GET("/providers/:id", s.getProvider)
+			auth.GET("/providers/:id/usage", s.providerUsage)
 			auth.PUT("/providers/:id", s.updateProvider)
 			auth.DELETE("/providers/:id", s.deleteProvider)
 			auth.POST("/providers/:id/test", s.testProvider)
@@ -135,6 +157,10 @@ func (s *Server) Router() *gin.Engine {
 			auth.GET("/audits", s.listAudits)
 			auth.POST("/audits", s.createAudit)
 			auth.POST("/audits/assistant", s.auditAssistant)
+			auth.POST("/audits/assistant/stream", s.auditAssistantStream)
+			auth.POST("/audits/assistant/field", s.auditFieldAssistant)
+			auth.POST("/scripts/assistant/stream", s.scriptAssistantStream)
+			auth.POST("/scripts/simulate", s.simulateScript)
 			auth.GET("/audits/:id", s.getAudit)
 			auth.PUT("/audits/:id", s.updateAudit)
 			auth.DELETE("/audits/:id", s.deleteAudit)
@@ -142,6 +168,9 @@ func (s *Server) Router() *gin.Engine {
 			auth.POST("/audits/:id/clone", s.cloneAudit)
 			auth.PATCH("/audits/:id/status", s.updateAuditStatus)
 			auth.GET("/audits/:id/integration", s.integrationGuide)
+			auth.GET("/audits/:id/script-executions", s.listScriptExecutions)
+			auth.DELETE("/audits/:id/script-executions", s.clearAuditScriptExecutions)
+			auth.GET("/script-executions/:id", s.getScriptExecution)
 			auth.GET("/audits/:id/export", s.exportAuditTasks)
 			auth.GET("/reviews/summary", s.reviewSummary)
 			auth.PUT("/trigger-sources/:id", s.updateTrigger)
@@ -302,4 +331,30 @@ func parseUint(s string) (uint64, bool) {
 		v = v*10 + uint64(ch-'0')
 	}
 	return v, true
+}
+
+func originInList(origin string, allowed []string) bool {
+	origin = strings.TrimRight(strings.TrimSpace(origin), "/")
+	for _, item := range allowed {
+		if origin == strings.TrimRight(strings.TrimSpace(item), "/") {
+			return true
+		}
+	}
+	return false
+}
+
+// isDevFrontendOrigin keeps phone/LAN debugging usable when the machine IP
+// changes; production deployments still rely on the explicit CORS allowlist.
+func isDevFrontendOrigin(origin string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(origin))
+	if err != nil || parsed.Host == "" {
+		return false
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return false
+	}
+	if parsed.Port() != "5173" && parsed.Port() != "8080" {
+		return false
+	}
+	return net.ParseIP(parsed.Hostname()) != nil
 }

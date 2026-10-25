@@ -97,6 +97,9 @@ func PurgeAudit(db *gorm.DB, auditID uint64) error {
 		if err := tx.Where("audit_id = ?", auditID).Delete(&model.TriggerSource{}).Error; err != nil {
 			return err
 		}
+		if err := tx.Where("audit_id = ?", auditID).Delete(&model.ScriptExecution{}).Error; err != nil {
+			return err
+		}
 		if err := tx.Delete(&model.Audit{}, auditID).Error; err != nil {
 			return err
 		}
@@ -122,6 +125,15 @@ func PurgeProject(db *gorm.DB, projectID uint64) error {
 			return err
 		}
 		if err := tx.Where("project_id = ?", projectID).Delete(&model.APICredential{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("project_id = ?", projectID).Delete(&model.ScriptExecution{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("project_id = ?", projectID).Delete(&model.ProjectSecret{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("project_id = ?", projectID).Delete(&model.RedisConnection{}).Error; err != nil {
 			return err
 		}
 		if err := tx.Where("project_id = ?", projectID).Delete(&model.ProjectMember{}).Error; err != nil {

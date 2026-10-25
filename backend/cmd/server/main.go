@@ -55,7 +55,7 @@ func main() {
 	defer eng.Stop()
 
 	tasks := service.NewTaskService(db, cache, eng, cfg.AllowPrivate)
-	triggerManager := trigger.NewManager(db, cache, cipher, tasks)
+	triggerManager := trigger.NewManager(db, cipher, tasks)
 	triggerManager.Start()
 	defer triggerManager.Stop()
 

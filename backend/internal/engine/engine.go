@@ -64,6 +64,9 @@ type Engine struct {
 	rrIndex    int
 	pendingN   int
 	wake       chan struct{}
+
+	scriptMu    sync.Mutex
+	scriptSlots map[uint64]chan struct{}
 }
 
 func New(db *gorm.DB, cache *redis.Client, cipher *security.Cipher, cfg config.Config) *Engine {
@@ -91,6 +94,8 @@ func (e *Engine) Start() {
 		}
 		e.wg.Add(1)
 		go e.scheduler()
+		e.wg.Add(1)
+		go e.breakerRecovery()
 		for i := 0; i < e.cfg.WorkerCount; i++ {
 			e.wg.Add(1)
 			go e.worker(i + 1)
@@ -134,7 +139,7 @@ func (e *Engine) signal() {
 
 func (e *Engine) projectLimit(projectID uint64) int {
 	var project model.Project
-	if err := e.db.Select("id", "max_concurrent_tasks").First(&project, projectID).Error; err != nil {
+	if err := e.db.Select("id", "max_concurrent").First(&project, projectID).Error; err != nil {
 		return 1
 	}
 	value := project.MaxConcurrent
@@ -296,44 +301,19 @@ func (e *Engine) process(taskID uint64) {
 		e.fail(task, fmt.Errorf("模型供应商不存在: %w", err))
 		return
 	}
-	if provider.Status != model.ProviderActive {
-		e.fail(task, fmt.Errorf("模型供应商 %s 已停用", provider.Name))
-		return
-	}
-	apiKey, err := e.cipher.Decrypt(provider.APIKeyEnc)
-	if err != nil {
-		e.fail(task, fmt.Errorf("读取模型密钥失败: %w", err))
-		return
-	}
 	var input model.TaskInput
 	if err := model.DecodeJSON(task.InputJSON, &input); err != nil {
 		e.fail(task, fmt.Errorf("任务输入解析失败: %w", err))
 		return
 	}
-	adapter, err := ai.AdapterFor(provider.Kind)
-	if err != nil {
-		e.fail(task, err)
-		return
-	}
 
 	started := time.Now()
-	verdict, reviewErr := adapter.Review(ctx, ai.Request{
-		Provider: provider,
-		APIKey:   apiKey,
-		Audit:    audit,
-		Input:    input,
-	})
+	verdict, usedProvider, reviewErr := e.reviewWithFailover(ctx, task, audit, input, provider)
 	if verdict == nil {
 		verdict = &model.Verdict{}
 	}
-	if verdict.Provider == "" {
-		verdict.Provider = provider.Kind
-	}
-	if verdict.Model == "" {
-		verdict.Model = provider.Model
-	}
 	if reviewErr != nil {
-		log.Printf("task %s model review failed: %v", task.TaskNo, reviewErr)
+		log.Printf("task %s model review failed after all fallbacks: %v", task.TaskNo, reviewErr)
 		verdict.LatencyMS = time.Since(started).Milliseconds()
 		fallback := normalizeResult(audit.OnModelFail)
 		verdict.Result = fallback
@@ -343,13 +323,8 @@ func (e *Engine) process(taskID uint64) {
 		verdict.Reasons = []string{reviewErr.Error()}
 		verdict.Labels = []string{"模型异常兜底"}
 	}
-	verdict.Provider = provider.Kind
-	if verdict.Model == "" {
-		verdict.Model = provider.Model
-	}
-	if verdict.Provider == model.ProviderJEV && reviewErr != nil {
-		verdict.Provider = model.ProviderJEV
-	}
+	verdict.Provider = usedProvider.Kind
+	verdict.Model = usedProvider.Model
 	if reviewErr == nil && ai.IsClassification(audit) {
 		applyClassificationMapping(audit, verdict)
 	}
@@ -440,15 +415,14 @@ func (e *Engine) process(taskID uint64) {
 		"finished_at":   finished,
 		"updated_at":    time.Now(),
 	}
-	if err := e.db.Model(&model.Task{}).Where("id = ?", task.ID).Updates(updates).Error; err != nil {
-		log.Printf("update task %d: %v", task.ID, err)
-		return
-	}
 	message := fmt.Sprintf("审核完成，结论 %s（规则：%s）", finalResult, emptyDash(ruleResult.MatchedRule))
 	if reviewErr != nil {
 		message = fmt.Sprintf("模型异常，按兜底策略给出 %s", finalResult)
 	}
-	e.event(task, model.TaskProcessing, status, message, duration)
+	if err := e.updateTaskAndEvent(task, updates, model.TaskProcessing, status, message, duration); err != nil {
+		log.Printf("update task %d: %v", task.ID, err)
+		return
+	}
 	e.writeAudit(task, "TASK_COMPLETE", map[string]any{
 		"result": finalResult, "status": status, "provider": verdict.Provider, "model": verdict.Model,
 	})
@@ -474,6 +448,26 @@ func (e *Engine) fail(task model.Task, err error) {
 	}).Error
 	e.event(task, model.TaskProcessing, model.TaskFailed, msg, duration)
 	e.writeAudit(task, "TASK_FAILED", map[string]any{"error": msg})
+}
+
+// updateTaskAndEvent commits the status transition and its timeline event in
+// one transaction so API readers never observe a terminal status without the
+// matching event.
+func (e *Engine) updateTaskAndEvent(task model.Task, updates map[string]any, from, to, message string, cost int64) error {
+	ev := model.TaskEvent{
+		TaskID: task.ID, ProjectID: task.ProjectID,
+		FromStatus: from, ToStatus: to,
+		Message: truncate(message, 500), CostMS: cost,
+	}
+	return e.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&model.Task{}).Where("id = ?", task.ID).Updates(updates).Error; err != nil {
+			return err
+		}
+		if err := tx.Create(&ev).Error; err != nil {
+			log.Printf("write task event: %v", err)
+		}
+		return nil
+	})
 }
 
 func (e *Engine) event(task model.Task, from, to, message string, cost int64) {

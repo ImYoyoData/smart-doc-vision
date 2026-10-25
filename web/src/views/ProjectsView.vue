@@ -19,6 +19,7 @@ import {
   EllipsisHorizontalOutline,
   FolderOpenOutline,
   KeyOutline,
+  LockClosedOutline,
   PauseOutline,
   PlayOutline,
   RefreshOutline,
@@ -29,6 +30,7 @@ import {
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import EmptyState from '@/components/EmptyState.vue'
+import ProjectSecretsModal from '@/components/ProjectSecretsModal.vue'
 import { projectApi } from '@/api'
 import type { Project } from '@/api/types'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -47,6 +49,8 @@ const editing = ref<Project | null>(null)
 const errorText = ref('')
 const keyword = ref('')
 const statusFilter = ref<string | null>(null)
+const secretsShow = ref(false)
+const secretsProject = ref<Project | null>(null)
 
 const form = reactive({
   name: '',
@@ -57,6 +61,14 @@ const form = reactive({
   maxTasksPerDay: 0,
   maxConcurrentTasks: 2,
   openapiRateLimit: 120,
+  jsMaxMemoryMB: 64,
+  jsTimeoutMS: 5000,
+  jsMaxLogBytes: 32768,
+  jsMaxResultBytes: 65536,
+  jsMaxHTTPRequests: 20,
+  jsMaxHTTPResponseBytes: 2097152,
+  jsMaxDBRows: 1000,
+  jsMaxConcurrency: 2,
 })
 
 const filtered = computed(() => {
@@ -89,6 +101,14 @@ function openCreate() {
     maxTasksPerDay: 0,
     maxConcurrentTasks: 2,
     openapiRateLimit: 120,
+    jsMaxMemoryMB: 64,
+    jsTimeoutMS: 5000,
+    jsMaxLogBytes: 32768,
+    jsMaxResultBytes: 65536,
+    jsMaxHTTPRequests: 20,
+    jsMaxHTTPResponseBytes: 2097152,
+    jsMaxDBRows: 1000,
+    jsMaxConcurrency: 2,
   })
   errorText.value = ''
   modalShow.value = true
@@ -105,6 +125,14 @@ function openEdit(project: Project) {
     maxTasksPerDay: project.max_tasks_per_day || 0,
     maxConcurrentTasks: project.max_concurrent_tasks ?? 2,
     openapiRateLimit: project.openapi_rate_limit ?? 120,
+    jsMaxMemoryMB: project.js_max_memory_mb ?? 64,
+    jsTimeoutMS: project.js_timeout_ms ?? 5000,
+    jsMaxLogBytes: project.js_max_log_bytes ?? 32768,
+    jsMaxResultBytes: project.js_max_result_bytes ?? 65536,
+    jsMaxHTTPRequests: project.js_max_http_requests ?? 20,
+    jsMaxHTTPResponseBytes: project.js_max_http_response_bytes ?? 2097152,
+    jsMaxDBRows: project.js_max_db_rows ?? 1000,
+    jsMaxConcurrency: project.js_max_concurrency ?? 2,
   })
   errorText.value = ''
   modalShow.value = true
@@ -142,6 +170,14 @@ async function save() {
         max_tasks_per_day: form.maxTasksPerDay,
         max_concurrent_tasks: form.maxConcurrentTasks,
         openapi_rate_limit: form.openapiRateLimit,
+        js_max_memory_mb: form.jsMaxMemoryMB,
+        js_timeout_ms: form.jsTimeoutMS,
+        js_max_log_bytes: form.jsMaxLogBytes,
+        js_max_result_bytes: form.jsMaxResultBytes,
+        js_max_http_requests: form.jsMaxHTTPRequests,
+        js_max_http_response_bytes: form.jsMaxHTTPResponseBytes,
+        js_max_db_rows: form.jsMaxDBRows,
+        js_max_concurrency: form.jsMaxConcurrency,
       })
       message.success('项目已更新')
     } else {
@@ -154,6 +190,14 @@ async function save() {
         max_tasks_per_day: form.maxTasksPerDay,
         max_concurrent_tasks: form.maxConcurrentTasks,
         openapi_rate_limit: form.openapiRateLimit,
+        js_max_memory_mb: form.jsMaxMemoryMB,
+        js_timeout_ms: form.jsTimeoutMS,
+        js_max_log_bytes: form.jsMaxLogBytes,
+        js_max_result_bytes: form.jsMaxResultBytes,
+        js_max_http_requests: form.jsMaxHTTPRequests,
+        js_max_http_response_bytes: form.jsMaxHTTPResponseBytes,
+        js_max_db_rows: form.jsMaxDBRows,
+        js_max_concurrency: form.jsMaxConcurrency,
       })
       message.success('项目创建成功')
       workspace.setCurrentProject(created.id)
@@ -175,6 +219,11 @@ function selectProject(project: Project) {
 function goCredentials(project: Project) {
   workspace.setCurrentProject(project.id)
   router.push({ name: 'credentials' })
+}
+
+function openSecrets(project: Project) {
+  secretsProject.value = project
+  secretsShow.value = true
 }
 
 async function setStatus(project: Project, status: string) {
@@ -216,7 +265,18 @@ watch(
   { immediate: true },
 )
 
-onMounted(load)
+onMounted(async () => {
+  await load()
+  if (route.query.secrets === '1') {
+    const projectId = Number(route.query.project)
+    const project = workspace.projects.find((item) => item.id === projectId)
+    if (project) {
+      workspace.setCurrentProject(project.id)
+      openSecrets(project)
+    }
+    router.replace({ name: 'projects' })
+  }
+})
 </script>
 
 <template>
@@ -308,6 +368,7 @@ onMounted(load)
         <div class="project-foot">
           <span class="project-created">创建于 {{ project.created_at?.slice(0, 10) }}</span>
           <div class="project-actions">
+            <n-button v-if="canUpdateProject" size="tiny" secondary @click="openEdit(project)">项目设置</n-button>
             <template v-if="project.id === workspace.currentProjectId">
               <span class="current-badge"><CheckmarkCircleOutline /> 当前项目</span>
             </template>
@@ -321,6 +382,10 @@ onMounted(load)
             </n-button>
             <n-button size="tiny" quaternary title="项目接入凭证" @click="goCredentials(project)">
               <template #icon><KeyOutline /></template>
+            </n-button>
+            <n-button v-if="canUpdateProject" size="tiny" quaternary title="项目密钥" @click="openSecrets(project)">
+              <template #icon><LockClosedOutline /></template>
+              密钥
             </n-button>
             <n-button v-if="canUpdateProject && project.status === 'ACTIVE'" size="tiny" quaternary @click="setStatus(project, 'PAUSED')">
               <template #icon><PauseOutline /></template>
@@ -358,7 +423,10 @@ onMounted(load)
             <h2>{{ editing ? '编辑项目' : '新建项目空间' }}</h2>
             <p>项目编码创建后不可修改，并会作为配置与队列的隔离前缀。</p>
           </div>
-          <span class="modal-icon"><FolderOpenOutline /></span>
+          <div class="modal-head-actions">
+            <span class="modal-icon"><FolderOpenOutline /></span>
+            <button class="modal-close" type="button" title="关闭" aria-label="关闭" @click="modalShow = false">×</button>
+          </div>
         </div>
         <div class="modal-body">
           <div class="field">
@@ -419,6 +487,49 @@ onMounted(load)
               <div class="form-hint">0 表示不限制；仅限制开放 API 提交。</div>
             </div>
           </div>
+          <div class="form-section-title">JS 脚本动作限制</div>
+          <div class="two-col">
+            <div class="field">
+              <label>单次最大内存（MB）</label>
+              <n-input-number v-model:value="form.jsMaxMemoryMB" :min="8" :max="512" style="width: 100%" />
+              <div class="form-hint">只限制 JS 分配；DB/HTTP 响应另有字节上限。</div>
+            </div>
+            <div class="field">
+              <label>单次最大时长（ms）</label>
+              <n-input-number v-model:value="form.jsTimeoutMS" :min="500" :max="60000" :step="500" style="width: 100%" />
+              <div class="form-hint">超时强制中断，动作按失败处理。</div>
+            </div>
+          </div>
+          <div class="two-col">
+            <div class="field">
+              <label>单次最大日志（字节）</label>
+              <n-input-number v-model:value="form.jsMaxLogBytes" :min="1024" :max="1048576" :step="1024" style="width: 100%" />
+            </div>
+            <div class="field">
+              <label>单次最大返回值（字节）</label>
+              <n-input-number v-model:value="form.jsMaxResultBytes" :min="1024" :max="1048576" :step="1024" style="width: 100%" />
+            </div>
+          </div>
+          <div class="two-col">
+            <div class="field">
+              <label>单次最大 HTTP 请求数</label>
+              <n-input-number v-model:value="form.jsMaxHTTPRequests" :min="0" :max="100" style="width: 100%" />
+            </div>
+            <div class="field">
+              <label>单次最大 HTTP 响应（字节）</label>
+              <n-input-number v-model:value="form.jsMaxHTTPResponseBytes" :min="1024" :max="16777216" :step="1024" style="width: 100%" />
+            </div>
+          </div>
+          <div class="two-col">
+            <div class="field">
+              <label>单次最大 DB 行数</label>
+              <n-input-number v-model:value="form.jsMaxDBRows" :min="1" :max="10000" style="width: 100%" />
+            </div>
+            <div class="field">
+              <label>项目并发脚本数</label>
+              <n-input-number v-model:value="form.jsMaxConcurrency" :min="1" :max="16" style="width: 100%" />
+            </div>
+          </div>
           <div v-if="form.env === 'prod'" class="prod-warning">
             <span></span>
             当前为生产环境，项目内的配置变更将影响线上审核流程，建议启用二次确认与灰度发布。
@@ -432,6 +543,11 @@ onMounted(load)
       </div>
     </n-modal>
 
+    <ProjectSecretsModal
+      v-model:show="secretsShow"
+      :project-id="secretsProject?.id || 0"
+      :project-name="secretsProject?.name || ''"
+    />
   </div>
 </template>
 
@@ -770,7 +886,11 @@ onMounted(load)
 }
 
 .project-modal {
+  display: flex;
   width: min(540px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  flex-direction: column;
+  overflow: hidden;
   border-radius: 18px;
   background: #fff;
   box-shadow: 0 30px 80px -20px rgba(15, 23, 42, 0.35);
@@ -778,6 +898,7 @@ onMounted(load)
 
 .modal-head {
   display: flex;
+  flex-shrink: 0;
   align-items: flex-start;
   justify-content: space-between;
   gap: 18px;
@@ -828,6 +949,8 @@ onMounted(load)
 }
 
 .modal-body {
+  min-height: 0;
+  overflow-y: auto;
   padding: 20px 26px;
 }
 
@@ -892,6 +1015,7 @@ onMounted(load)
 
 .modal-footer {
   display: flex;
+  flex-shrink: 0;
   justify-content: flex-end;
   gap: 8px;
   padding: 15px 26px;
@@ -918,6 +1042,15 @@ onMounted(load)
     flex-wrap: wrap;
     justify-content: flex-end;
   }
+}
+
+.form-section-title {
+  margin: 18px 0 10px;
+  padding-top: 14px;
+  border-top: 1px solid #eef2f8;
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 600;
 }
 
 @media (max-width: 520px) {

@@ -16,12 +16,14 @@ import (
 	"smartdoc-vision/backend/internal/catalog"
 	"smartdoc-vision/backend/internal/model"
 	"smartdoc-vision/backend/internal/security"
+	"smartdoc-vision/backend/internal/usage"
 )
 
 type providerView struct {
 	model.AIProvider
-	APIKeyMasked string `json:"api_key_masked"`
-	HasAPIKey    bool   `json:"has_api_key"`
+	APIKeyMasked string        `json:"api_key_masked"`
+	HasAPIKey    bool          `json:"has_api_key"`
+	Usage        usage.Summary `json:"usage"`
 }
 
 type providerInput struct {
@@ -34,6 +36,7 @@ type providerInput struct {
 	Prompt    string          `json:"prompt"`
 	Config    json.RawMessage `json:"config"`
 	Status    string          `json:"status"`
+	Priority  *int            `json:"priority"`
 }
 
 func (s *Server) listProviders(c *gin.Context) {
@@ -58,15 +61,58 @@ func (s *Server) listProviders(c *gin.Context) {
 		q = q.Where("status = ?", status)
 	}
 	var providers []model.AIProvider
-	if err := q.Order("id asc").Find(&providers).Error; err != nil {
+	if err := q.Order("priority asc, id asc").Find(&providers).Error; err != nil {
 		serverError(c, err)
 		return
 	}
 	views := make([]providerView, 0, len(providers))
+	ids := make([]uint64, 0, len(providers))
 	for _, p := range providers {
-		views = append(views, s.toProviderView(p))
+		ids = append(ids, p.ID)
+	}
+	summaries, err := usage.Summaries(s.db, ids)
+	if err != nil {
+		serverError(c, err)
+		return
+	}
+	for _, p := range providers {
+		view := s.toProviderView(p)
+		view.Usage = summaries[p.ID]
+		views = append(views, view)
 	}
 	ok(c, gin.H{"items": views, "total": len(views)})
+}
+
+// providerUsage returns recent request details plus lifetime totals for one
+// model. JEV only reports input tokens because its output is not billed.
+func (s *Server) providerUsage(c *gin.Context) {
+	provider, err := s.findProvider(c)
+	if err != nil {
+		return
+	}
+	limit := 50
+	if raw := c.Query("limit"); raw != "" {
+		if parsed, okLimit := parseUint(raw); okLimit && parsed > 0 {
+			limit = int(parsed)
+		}
+	}
+	rows, err := usage.Recent(s.db, provider.ID, limit)
+	if err != nil {
+		serverError(c, err)
+		return
+	}
+	summaries, err := usage.Summaries(s.db, []uint64{provider.ID})
+	if err != nil {
+		serverError(c, err)
+		return
+	}
+	ok(c, gin.H{
+		"items":   rows,
+		"total":   len(rows),
+		"summary": summaries[provider.ID],
+		"kind":    provider.Kind,
+		"model":   provider.Model,
+	})
 }
 
 func (s *Server) getProvider(c *gin.Context) {
@@ -104,6 +150,11 @@ func (s *Server) createProvider(c *gin.Context) {
 		badRequest(c, err.Error())
 		return
 	}
+	priority, err := providerPriority(req.Priority, 100)
+	if err != nil {
+		badRequest(c, err.Error())
+		return
+	}
 	var count int64
 	_ = s.db.Model(&model.AIProvider{}).Where("project_id = ? AND name = ?", req.ProjectID, req.Name).Count(&count).Error
 	if count > 0 {
@@ -134,6 +185,7 @@ func (s *Server) createProvider(c *gin.Context) {
 		ProjectID: req.ProjectID, Name: req.Name, Kind: req.Kind,
 		BaseURL: strings.TrimRight(req.BaseURL, "/"), Model: req.Model,
 		APIKeyEnc: keyEnc, Prompt: req.Prompt, ConfigJSON: model.JSONText(config), Status: status,
+		Priority: priority,
 	}
 	if err := s.db.Create(&provider).Error; err != nil {
 		serverError(c, err)
@@ -201,6 +253,14 @@ func (s *Server) updateProvider(c *gin.Context) {
 	if oneOf(req.Status, model.ProviderActive, model.ProviderDisabled) {
 		provider.Status = req.Status
 	}
+	if req.Priority != nil {
+		priority, err := providerPriority(req.Priority, provider.Priority)
+		if err != nil {
+			badRequest(c, err.Error())
+			return
+		}
+		provider.Priority = priority
+	}
 	if err := s.db.Save(provider).Error; err != nil {
 		serverError(c, err)
 		return
@@ -255,14 +315,22 @@ func (s *Server) testProvider(c *gin.Context) {
 		serverError(c, err)
 		return
 	}
+	// Connection tests must not reuse a fixed gateway session ID, because some
+	// OpenCode-compatible gateways reject an already-seen session.
+	testProvider := ai.WithRandomSessionHeader(*provider)
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 150*time.Second)
 	defer cancel()
-	result, testErr := adapter.Test(ctx, ai.Request{Provider: *provider, APIKey: key})
+	result, testErr := adapter.Test(ctx, ai.Request{Provider: testProvider, APIKey: key})
 	updates := map[string]any{
 		"last_test_at":  time.Now(),
 		"last_test_ok":  result.OK,
 		"last_test_ms":  result.LatencyMS,
 		"last_test_msg": truncateText(result.Message, 500),
+	}
+	if result.OK {
+		updates["breaker_until"] = nil
+		updates["breaker_reason"] = ""
+		updates["failure_count"] = 0
 	}
 	message := result.Message
 	if message == "" && testErr != nil {
@@ -312,6 +380,16 @@ func (s *Server) toProviderView(p model.AIProvider) providerView {
 		APIKeyMasked: security.MaskSecret(key),
 		HasAPIKey:    key != "",
 	}
+}
+
+func providerPriority(value *int, fallback int) (int, error) {
+	if value == nil {
+		return fallback, nil
+	}
+	if *value < 1 || *value > 999 {
+		return 0, fmt.Errorf("优先级需在 1~999 之间，数字越小越优先")
+	}
+	return *value, nil
 }
 
 func validateProviderInput(req *providerInput, creating bool) error {

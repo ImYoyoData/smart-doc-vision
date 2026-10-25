@@ -5,6 +5,7 @@ import {
   NInput,
   NInputNumber,
   NModal,
+  NPopover,
   NSelect,
   NSwitch,
   useDialog,
@@ -15,7 +16,9 @@ import {
   CheckmarkCircleOutline,
   CloudOutline,
   CloseCircleOutline,
+  CloseOutline,
   FlashOutline,
+  HelpCircleOutline,
   ImagesOutline,
   LinkOutline,
   RefreshOutline,
@@ -27,7 +30,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import { providerApi } from '@/api'
-import type { Provider } from '@/api/types'
+import type { Provider, ProviderModel, ProviderUsageLog, ProviderUsageSummary } from '@/api/types'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 const workspace = useWorkspaceStore()
@@ -36,10 +39,17 @@ const dialog = useDialog()
 const loading = ref(false)
 const saving = ref(false)
 const testingId = ref<number | null>(null)
+const testingAll = ref(false)
+const testAllDone = ref(0)
+const testAllTotal = ref(0)
+const PROVIDER_TEST_TIMEOUT_MS = 30_000
 const modalShow = ref(false)
 const editing = ref<Provider | null>(null)
 const errorText = ref('')
 const providers = ref<Provider[]>([])
+const modelOptions = ref<ProviderModel[]>([])
+const modelsLoading = ref(false)
+const modelsError = ref('')
 
 const form = reactive({
   name: '',
@@ -49,14 +59,24 @@ const form = reactive({
   apiKey: '',
   prompt: '',
   supportsVision: false,
-  maxTokens: 2400,
+  supportsThinking: false,
+  preferReasoning: false,
+  contextWindow: null as number | null,
+  maxTokens: null as number | null,
   maxImages: 6,
   temperature: 0.1,
+  headersText: '',
   status: 'ACTIVE',
+  priority: 100,
 })
 
 const isJEV = computed(() => form.kind === 'JEV')
 const isAnthropic = computed(() => form.kind === 'ANTHROPIC')
+const selectedModel = computed(() => modelOptions.value.find((item) => item.id === form.model))
+const modelSelectOptions = computed(() => modelOptions.value.map((item) => ({
+  label: modelOptionLabel(item),
+  value: item.id,
+})))
 const activeProvider = computed(() => providers.value.find((p) => p.id === testingId.value))
 const baseUrlHint = computed(() => {
   if (form.kind === 'JEV') return 'JEV 会追加 /systemone（若 BaseURL 已含 /v1）。'
@@ -66,8 +86,239 @@ const baseUrlHint = computed(() => {
 
 function providerKindLabel(kind?: string) {
   if (kind === 'JEV') return 'JEV 决策模型'
-  if (kind === 'ANTHROPIC') return '通用大模型 · Anthropic 协议'
-  return '通用大模型 · OpenAI 协议'
+  return '通用大模型'
+}
+
+function providerProtocolLabel(kind?: string) {
+  if (kind === 'JEV') return 'JEV System One'
+  return kind === 'ANTHROPIC' ? 'Anthropic 协议' : 'OpenAI 兼容协议'
+}
+
+function providerBreakerOpen(provider: Provider) {
+  return Boolean(provider.breaker_until)
+}
+
+function providerBreakerLabel(provider: Provider) {
+  if (!provider.breaker_until) return ''
+  const remaining = new Date(provider.breaker_until).getTime() - Date.now()
+  if (remaining <= 0) return '等待恢复探测'
+  const minutes = Math.ceil(remaining / 60000)
+  return minutes <= 1 ? '即将重试' : `${minutes} 分钟后重试`
+}
+
+type ProviderStatusFilter = 'all' | 'active' | 'available' | 'unavailable' | 'disabled'
+type ProviderKindFilter = 'all' | 'general' | 'JEV'
+
+const statusFilter = ref<ProviderStatusFilter>('all')
+const kindFilter = ref<ProviderKindFilter>('all')
+const kindFilterOptions = [
+  { label: '全部类型', value: 'all' },
+  { label: '通用大模型', value: 'general' },
+  { label: 'JEV 决策模型', value: 'JEV' },
+]
+
+function providerAvailable(provider: Provider) {
+  return provider.status === 'ACTIVE' && provider.last_test_ok && !providerBreakerOpen(provider)
+}
+
+function providerUnavailable(provider: Provider) {
+  return provider.status === 'ACTIVE' && !providerAvailable(provider)
+}
+
+function providerRank(provider: Provider) {
+  if (provider.status === 'ACTIVE' && providerAvailable(provider)) return 0
+  if (provider.status === 'ACTIVE') return 1
+  return 2
+}
+
+const sortedProviders = computed(() =>
+  [...providers.value].sort((a, b) => {
+    const rank = providerRank(a) - providerRank(b)
+    if (rank !== 0) return rank
+    return (a.priority ?? 100) - (b.priority ?? 100)
+  }),
+)
+
+const statusFilters = computed(() => {
+  const list = providers.value
+  return [
+    { key: 'all' as const, label: '全部', count: list.length, tone: 'all' },
+    { key: 'active' as const, label: '已启用', count: list.filter((provider) => provider.status === 'ACTIVE').length, tone: 'enabled' },
+    { key: 'available' as const, label: '可用', count: list.filter(providerAvailable).length, tone: 'available' },
+    {
+      key: 'unavailable' as const,
+      label: '不可用',
+      count: list.filter(providerUnavailable).length,
+      tone: 'unavailable',
+      hint: '已启用但测试失败、尚未测试或熔断中',
+    },
+    { key: 'disabled' as const, label: '已停用', count: list.filter((provider) => provider.status !== 'ACTIVE').length, tone: 'disabled' },
+  ]
+})
+
+const filteredProviders = computed(() => sortedProviders.value.filter((provider) => {
+  if (kindFilter.value === 'general' && provider.kind === 'JEV') return false
+  if (kindFilter.value === 'JEV' && provider.kind !== 'JEV') return false
+  if (statusFilter.value === 'active') return provider.status === 'ACTIVE'
+  if (statusFilter.value === 'available') return providerAvailable(provider)
+  if (statusFilter.value === 'unavailable') return providerUnavailable(provider)
+  if (statusFilter.value === 'disabled') return provider.status !== 'ACTIVE'
+  return true
+}))
+
+const batchTestTargets = computed(() =>
+  filteredProviders.value.filter((provider) => provider.status === 'ACTIVE'),
+)
+
+function resetProviderFilters() {
+  statusFilter.value = 'all'
+  kindFilter.value = 'all'
+}
+
+watch(() => form.supportsThinking, (value) => {
+  if (!value) form.preferReasoning = false
+})
+
+const usageShow = ref(false)
+const usageLoading = ref(false)
+const usageError = ref('')
+const usageProvider = ref<Provider | null>(null)
+const usageRows = ref<ProviderUsageLog[]>([])
+const usageSummary = ref<ProviderUsageSummary | null>(null)
+const usageJEV = computed(() => usageProvider.value?.kind === 'JEV')
+
+async function openUsage(provider: Provider) {
+  usageProvider.value = provider
+  usageRows.value = []
+  usageSummary.value = provider.usage || null
+  usageError.value = ''
+  usageShow.value = true
+  usageLoading.value = true
+  try {
+    const data = await providerApi.usage(provider.id, { limit: 80 })
+    usageRows.value = data.items
+    usageSummary.value = data.summary
+  } catch (error) {
+    usageError.value = error instanceof Error ? error.message : '加载请求明细失败'
+  } finally {
+    usageLoading.value = false
+  }
+}
+
+function usageSourceLabel(source: string) {
+  if (source === 'REVIEW') return '审核任务'
+  if (source === 'SCRIPT_ASSISTANT') return '脚本助手'
+  if (source === 'AUDIT_ASSISTANT') return '配置助手'
+  return source || '—'
+}
+
+function usageCardTokens(provider: Provider) {
+  if (provider.kind === 'JEV') return provider.usage?.input_tokens || 0
+  return provider.usage?.total_tokens || 0
+}
+
+function formatCount(value?: number) {
+  if (!value || value <= 0) return '0'
+  return value.toLocaleString('en-US')
+}
+
+function formatUsageTokens(value?: number) {
+  if (!value || value <= 0) return '0'
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`
+  if (value >= 100_000) return `${Math.round(value / 1_000)}K`
+  return value.toLocaleString('en-US')
+}
+
+function formatTokenCount(value?: number) {
+  if (!value || value <= 0) return '—'
+  if (value >= 1_000_000) {
+    const millions = value / 1_000_000
+    return `${Number.isInteger(millions) ? millions : millions.toFixed(1)}M`
+  }
+  if (value >= 1_000) return `${Math.round(value / 1_000)}K`
+  return String(value)
+}
+
+function modelOptionLabel(model: ProviderModel) {
+  const parts = [model.id]
+  if (model.context_window > 0) parts.push(`${formatTokenCount(model.context_window)} 上下文`)
+  if (model.supports_vision) parts.push('图片')
+  if (model.supports_thinking) parts.push('思考')
+  return parts.join(' · ')
+}
+
+function modelSourceLabel(source?: string) {
+  return source === 'metadata' ? '接口返回' : '能力未提供，请手动填写'
+}
+
+function parseProviderHeaders(text: string) {
+  const headers: Record<string, string> = {}
+  for (const line of text.split(/\r?\n/)) {
+    const index = line.indexOf(':')
+    if (index <= 0) continue
+    const key = line.slice(0, index).trim()
+    const value = line.slice(index + 1).trim()
+    if (key) headers[key] = value
+  }
+  return headers
+}
+
+function headersToText(headers?: Record<string, string>) {
+  return Object.entries(headers || {})
+    .map(([key, value]) => `${key}: ${value}`)
+    .join('\n')
+}
+
+function applySelectedModel() {
+  const model = selectedModel.value
+  if (!model) return
+  form.supportsVision = model.vision_known ? model.supports_vision : false
+  form.supportsThinking = model.thinking_known ? model.supports_thinking : false
+  if (!model.thinking_known || !model.supports_thinking) form.preferReasoning = false
+  form.contextWindow = model.context_window_known && model.context_window > 0 ? model.context_window : null
+  form.maxTokens = model.max_output_known && model.max_output_tokens > 0 ? model.max_output_tokens : null
+}
+
+const kindDefaults: Record<string, {
+  baseUrl: string
+  model: string
+  name: string
+  prompt: string
+  supportsVision: boolean
+  maxTokens: number | null
+  maxImages: number
+  temperature: number
+}> = {
+  OPENAI_COMPATIBLE: {
+    baseUrl: 'https://api.openai.com/v1',
+    model: 'gpt-4o-mini',
+    name: '通用大模型',
+    prompt: '',
+    supportsVision: false,
+    maxTokens: null,
+    maxImages: 6,
+    temperature: 0.1,
+  },
+  ANTHROPIC: {
+    baseUrl: 'https://api.anthropic.com/v1',
+    model: 'claude-sonnet-4-5',
+    name: '通用大模型',
+    prompt: '',
+    supportsVision: true,
+    maxTokens: null,
+    maxImages: 6,
+    temperature: 0.1,
+  },
+  JEV: {
+    baseUrl: 'https://api.typesafe.ai/v1',
+    model: 'jev-latest',
+    name: 'JEV 决策模型',
+    prompt: '使用 TypeSafe Jev System One 进行结构化裁决，输出 Choice/Noul 概率，不生成自由文本。',
+    supportsVision: true,
+    maxTokens: null,
+    maxImages: 8,
+    temperature: 0,
+  },
 }
 
 function resetForm() {
@@ -78,45 +329,44 @@ function resetForm() {
   form.apiKey = ''
   form.prompt = ''
   form.supportsVision = false
-  form.maxTokens = 2400
+  form.supportsThinking = false
+  form.preferReasoning = false
+  form.contextWindow = null
+  form.maxTokens = null
   form.maxImages = 6
   form.temperature = 0.1
+  form.headersText = ''
   form.status = 'ACTIVE'
+  form.priority = 100
+  modelOptions.value = []
+  modelsError.value = ''
+  modelsLoading.value = false
   errorText.value = ''
   editing.value = null
 }
 
 function chooseKind(kind: string) {
   if (editing.value) return
+  const previous = kindDefaults[form.kind] || kindDefaults.OPENAI_COMPATIBLE
+  const next = kindDefaults[kind] || kindDefaults.OPENAI_COMPATIBLE
+  const keepBase = form.baseUrl && form.baseUrl !== previous.baseUrl
+  const keepModel = form.model && form.model !== previous.model
+  const keepName = form.name && form.name !== previous.name
+  const keepPrompt = form.prompt && form.prompt !== previous.prompt
   form.kind = kind
-  if (kind === 'JEV') {
-    form.baseUrl = 'https://api.typesafe.ai/v1'
-    form.model = 'jev-latest'
-    form.supportsVision = true
-    form.maxImages = 8
-    form.maxTokens = 0
-    form.temperature = 0
-    form.name = form.name || 'JEV 决策模型'
-    form.prompt = form.prompt || '使用 TypeSafe Jev System One 进行结构化裁决，输出 Choice/Noul 概率，不生成自由文本。'
-  } else if (kind === 'ANTHROPIC') {
-    form.baseUrl = 'https://api.anthropic.com/v1'
-    form.model = 'claude-sonnet-4-5'
-    form.supportsVision = true
-    form.maxImages = 6
-    form.maxTokens = 2400
-    form.temperature = 0.1
-    form.name = form.name || 'Anthropic Claude'
-    form.prompt = form.prompt || '使用 Anthropic Messages API 进行档案图档审核，按要求的 JSON 结构返回结论。'
-  } else {
-    form.baseUrl = 'https://api.openai.com/v1'
-    form.model = 'gpt-4o-mini'
-    form.supportsVision = false
-    form.maxTokens = 2400
-    form.temperature = 0.1
-    form.maxImages = 6
-    form.name = ['JEV 决策模型', 'Anthropic Claude'].includes(form.name) ? '' : form.name
-    form.prompt = form.prompt.startsWith('使用 TypeSafe') || form.prompt.startsWith('使用 Anthropic') ? '' : form.prompt
-  }
+  if (!keepBase) form.baseUrl = next.baseUrl
+  if (!keepModel) form.model = next.model
+  if (!keepName) form.name = next.name
+  if (!keepPrompt) form.prompt = next.prompt
+  form.supportsVision = next.supportsVision
+  form.supportsThinking = false
+  form.preferReasoning = false
+  form.contextWindow = null
+  form.maxTokens = next.maxTokens
+  form.maxImages = next.maxImages
+  form.temperature = next.temperature
+  modelOptions.value = []
+  modelsError.value = ''
 }
 
 function openCreate() {
@@ -137,11 +387,18 @@ function openEdit(provider: Provider) {
   form.model = provider.model
   form.apiKey = ''
   form.prompt = provider.prompt || ''
-  form.supportsVision = Boolean(provider.config?.supports_vision)
-  form.maxTokens = provider.config?.max_tokens ?? (provider.kind === 'JEV' ? 0 : 2400)
+  form.supportsVision = provider.kind === 'JEV' ? true : Boolean(provider.config?.supports_vision)
+  form.supportsThinking = Boolean(provider.config?.supports_thinking)
+  form.preferReasoning = Boolean(provider.config?.prefer_reasoning)
+  form.contextWindow = provider.config?.context_window ?? null
+  form.maxTokens = provider.config?.max_tokens && provider.config.max_tokens > 0 ? provider.config.max_tokens : null
   form.maxImages = provider.config?.max_images ?? 6
   form.temperature = provider.config?.temperature ?? 0.1
+  form.headersText = headersToText(provider.config?.headers)
   form.status = provider.status
+  form.priority = provider.priority ?? 100
+  modelOptions.value = []
+  modelsError.value = ''
   errorText.value = ''
   modalShow.value = true
 }
@@ -182,9 +439,13 @@ async function save() {
   }
   const config = {
     supports_vision: form.supportsVision,
-    max_tokens: form.maxTokens,
+    supports_thinking: form.supportsThinking,
+    prefer_reasoning: form.supportsThinking && form.preferReasoning,
+    context_window: form.contextWindow ?? 0,
+    max_tokens: form.maxTokens ?? 0,
     temperature: form.temperature,
     max_images: form.maxImages,
+    headers: parseProviderHeaders(form.headersText),
   }
   const payload: Record<string, unknown> = {
     project_id: workspace.currentProjectId,
@@ -195,6 +456,7 @@ async function save() {
     prompt: form.prompt,
     config,
     status: form.status || (form.apiKey ? 'ACTIVE' : 'DISABLED'),
+    priority: form.priority,
   }
   if (form.apiKey.trim()) payload.api_key = form.apiKey.trim()
 
@@ -216,16 +478,120 @@ async function save() {
   }
 }
 
+async function fetchModels() {
+  if (isJEV.value) return
+  if (!workspace.currentProjectId) {
+    modelsError.value = '请先选择项目'
+    return
+  }
+  if (!form.baseUrl.trim()) {
+    modelsError.value = '请先填写 BaseURL'
+    return
+  }
+  if (!editing.value && !form.apiKey.trim()) {
+    modelsError.value = '请先填写 API Key'
+    return
+  }
+  modelsLoading.value = true
+  modelsError.value = ''
+  try {
+    const data = await providerApi.models({
+      project_id: workspace.currentProjectId,
+      provider_id: editing.value?.id,
+      kind: form.kind,
+      base_url: form.baseUrl.trim(),
+      api_key: form.apiKey.trim() || undefined,
+      headers: parseProviderHeaders(form.headersText),
+    })
+    modelOptions.value = data.items
+    if (!data.items.length) {
+      modelsError.value = '供应商没有返回可用模型'
+      return
+    }
+    if (!data.items.some((item) => item.id === form.model)) {
+      form.model = data.items[0].id
+    }
+    applySelectedModel()
+    message.success(`已获取 ${data.items.length} 个模型`)
+  } catch (error) {
+    modelsError.value = error instanceof Error ? error.message : '获取模型列表失败'
+  } finally {
+    modelsLoading.value = false
+  }
+}
+
+async function runProviderTest(providerId: number) {
+  const controller = new AbortController()
+  const timer = window.setTimeout(() => controller.abort(), PROVIDER_TEST_TIMEOUT_MS)
+  try {
+    return await providerApi.test(providerId, controller.signal)
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error(`连接测试超时（${Math.round(PROVIDER_TEST_TIMEOUT_MS / 1000)} 秒），请检查网络或模型服务`)
+    }
+    throw error
+  } finally {
+    window.clearTimeout(timer)
+  }
+}
+
 async function test(provider: Provider) {
   testingId.value = provider.id
   try {
-    const result = await providerApi.test(provider.id)
+    const result = await runProviderTest(provider.id)
     message.success(`连接成功 · ${result.latency_ms} ms${result.model ? ` · ${result.model}` : ''}`)
   } catch (error) {
     message.error(error instanceof Error ? error.message : '连接测试失败', { duration: 6000 })
   } finally {
     testingId.value = null
     await load()
+  }
+}
+
+async function testAllProviders() {
+  if (testingAll.value || testingId.value !== null) return
+  const targets = batchTestTargets.value.slice()
+  if (!targets.length) return
+  testingAll.value = true
+  testAllDone.value = 0
+  testAllTotal.value = targets.length
+  let success = 0
+  let failed = 0
+  let timedOut = 0
+  let cursor = 0
+
+  async function worker() {
+    while (true) {
+      const index = cursor
+      cursor += 1
+      if (index >= targets.length) return
+      try {
+        await runProviderTest(targets[index].id)
+        success += 1
+      } catch (error) {
+        failed += 1
+        if (error instanceof Error && error.message.includes('超时')) timedOut += 1
+      } finally {
+        testAllDone.value += 1
+      }
+    }
+  }
+
+  try {
+    await Promise.all(
+      Array.from({ length: Math.min(4, targets.length) }, () => worker()),
+    )
+    await load()
+    const timeoutNote = timedOut > 0 ? `（其中 ${timedOut} 个超时）` : ''
+    if (failed === 0) {
+      message.success(`连接测试完成：${success} 个已启用模型全部正常`)
+    } else if (success === 0) {
+      message.error(`连接测试完成：${failed} 个已启用模型全部失败${timeoutNote}`, { duration: 6000 })
+    } else {
+      message.warning(`连接测试完成：${success} 个正常，${failed} 个失败${timeoutNote}`, { duration: 6000 })
+    }
+  } finally {
+    testingAll.value = false
   }
 }
 
@@ -275,7 +641,10 @@ function formatTime(value?: string | null) {
   return value.replace('T', ' ').slice(0, 19)
 }
 
-watch(() => workspace.currentProjectId, load)
+watch(() => workspace.currentProjectId, () => {
+  resetProviderFilters()
+  void load()
+})
 onMounted(load)
 </script>
 
@@ -284,12 +653,36 @@ onMounted(load)
     <PageHeader
       eyebrow="MODEL GATEWAY"
       title="模型接入"
-      subtitle="统一管理通用大模型（OpenAI 兼容 / Anthropic 协议）与 JEV 决策模型，为审核流程提供可切换、可审计的推理能力。"
+      subtitle="统一管理通用大模型与 JEV 决策模型。通用大模型是一个业务分类，OpenAI 兼容 / Anthropic 只是两种 API 协议。"
     >
       <template #actions>
-        <n-button quaternary circle :loading="loading" @click="load">
+        <n-button quaternary circle :loading="loading" :disabled="testingAll" @click="load">
           <template #icon><RefreshOutline /></template>
         </n-button>
+        <n-popover trigger="click" placement="bottom-end" :width="440" :show-arrow="false">
+          <template #trigger>
+            <n-button quaternary>
+              <template #icon><HelpCircleOutline /></template>
+              类型说明
+            </n-button>
+          </template>
+          <div class="mode-help">
+            <div class="mode-card generic">
+              <span class="mode-icon"><CloudOutline /></span>
+              <div>
+                <div class="mode-title">通用大模型 <span>OpenAI 兼容 · Anthropic</span></div>
+                <p>统一的大模型分类，协议只是不同的 API 接入方式；按模型能力决定是否支持图片理解与思考。</p>
+              </div>
+            </div>
+            <div class="mode-card jev">
+              <span class="mode-icon"><SparklesOutline /></span>
+              <div>
+                <div class="mode-title">JEV 决策模型 <span>TypeSafe System One</span></div>
+                <p>结构化裁决引擎，原生支持文本 + 图片，输出 Choice / Score / Noul 与置信度，不生成自由文本。</p>
+              </div>
+            </div>
+          </div>
+        </n-popover>
         <n-button type="primary" @click="openCreate">
           <template #icon><AddOutline /></template>
           新增模型接入
@@ -297,41 +690,57 @@ onMounted(load)
       </template>
     </PageHeader>
 
-    <section class="mode-banner">
-      <div class="mode-card generic">
-        <span class="mode-icon"><CloudOutline /></span>
-        <div>
-          <div class="mode-title">通用大模型 <span>OpenAI 协议 · Chat Completions</span></div>
-          <p>适合文本审核、文档语义分析与多模态视觉模型。按模型能力决定是否开启图片理解。</p>
-        </div>
-        <span class="mode-badge">CHAT COMPLETIONS</span>
-      </div>
-      <div class="mode-card anthropic">
-        <span class="mode-icon"><LinkOutline /></span>
-        <div>
-          <div class="mode-title">通用大模型 <span>Anthropic 协议 · Messages API</span></div>
-          <p>原生兼容 Claude 的 /v1/messages 协议，文本与 base64 图片块一起提交，适合多模态审核。</p>
-        </div>
-        <span class="mode-badge">/v1/messages</span>
-      </div>
-      <div class="mode-card jev">
-        <span class="mode-icon"><SparklesOutline /></span>
-        <div>
-          <div class="mode-title">JEV 决策模型 <span>TypeSafe System One</span></div>
-          <p>结构化裁决引擎，输出 Choice / Score / Noul 与置信度，原生支持图片资产，不生成自由文本。</p>
-        </div>
-        <span class="mode-badge">/v1/systemone</span>
-      </div>
-    </section>
-
     <div v-if="!workspace.currentProjectId" class="panel">
       <EmptyState title="请选择项目" description="模型接入按项目隔离，先在左上角选择一个项目。" action="前往项目空间" @action="$router.push({ name: 'projects' })" />
     </div>
 
     <template v-else>
-      <div class="provider-grid fade-list">
+      <div v-if="providers.length" class="provider-summary">
+        <div class="summary-chips">
+          <span class="summary-title">状态概览</span>
+          <button
+            v-for="filter in statusFilters"
+            :key="filter.key"
+            type="button"
+            class="summary-chip"
+            :class="[filter.tone, { 'is-selected': statusFilter === filter.key }]"
+            :title="filter.hint"
+            :aria-pressed="statusFilter === filter.key"
+            @click="statusFilter = filter.key"
+          >
+            <span class="summary-dot"></span>
+            <span>{{ filter.label }}</span>
+            <strong>{{ filter.count }}</strong>
+          </button>
+        </div>
+        <div class="summary-actions">
+          <n-button
+            size="small"
+            secondary
+            :loading="testingAll"
+            :disabled="loading || !batchTestTargets.length || testingId !== null"
+            :title="batchTestTargets.length ? `仅测试当前筛选中的 ${batchTestTargets.length} 个已启用连接` : '当前筛选没有已启用的连接'"
+            @click="testAllProviders"
+          >
+            <template #icon><FlashOutline /></template>
+            {{ testingAll ? `测试中 ${testAllDone}/${testAllTotal}` : `测试已启用连接（${batchTestTargets.length}）` }}
+          </n-button>
+          <n-button
+            v-if="statusFilter !== 'all' || kindFilter !== 'all'"
+            text
+            size="tiny"
+            type="primary"
+            @click="resetProviderFilters"
+          >
+            重置筛选
+          </n-button>
+          <n-select v-model:value="kindFilter" :options="kindFilterOptions" size="small" class="summary-kind-select" />
+        </div>
+      </div>
+
+      <div v-if="filteredProviders.length" class="provider-grid fade-list">
         <article
-          v-for="provider in providers"
+          v-for="provider in filteredProviders"
           :key="provider.id"
           class="provider-card"
           :class="provider.kind === 'JEV' ? 'jev' : provider.kind === 'ANTHROPIC' ? 'anthropic' : 'generic'"
@@ -339,15 +748,20 @@ onMounted(load)
           <div class="provider-top">
             <span class="provider-icon">
               <SparklesOutline v-if="provider.kind === 'JEV'" />
-              <LinkOutline v-else-if="provider.kind === 'ANTHROPIC'" />
               <CloudOutline v-else />
             </span>
             <div class="provider-heading">
               <div class="provider-name-row">
                 <h3>{{ provider.name }}</h3>
                 <StatusTag :status="provider.kind" type="kind" />
+                <StatusTag :status="provider.status" type="provider" />
+                <span v-if="providerBreakerOpen(provider)" class="provider-breaker" :title="provider.breaker_reason">
+                  熔断中 · {{ providerBreakerLabel(provider) }}
+                </span>
               </div>
               <span class="provider-model mono">{{ provider.model }}</span>
+              <span class="provider-protocol">{{ providerProtocolLabel(provider.kind) }}</span>
+              <span class="provider-priority" title="同类模型回落顺序，数字越小越优先">优先级 {{ provider.priority ?? 100 }}</span>
             </div>
             <n-switch
               :value="provider.status === 'ACTIVE'"
@@ -364,7 +778,19 @@ onMounted(load)
           <div class="provider-capabilities">
             <span :class="{ on: provider.kind === 'JEV' || provider.config?.supports_vision }">
               <ImagesOutline />
-              {{ provider.kind === 'JEV' || provider.config?.supports_vision ? '支持图片' : '纯文本' }}
+              {{ provider.kind === 'JEV' ? '文本 + 图片' : provider.config?.supports_vision ? '支持图片' : '纯文本' }}
+            </span>
+            <span v-if="provider.config?.context_window">
+              <CloudOutline />
+              {{ formatTokenCount(provider.config.context_window) }} 上下文
+            </span>
+            <span v-if="provider.config?.supports_thinking" class="on">
+              <SparklesOutline />
+              支持思考
+            </span>
+            <span v-if="provider.config?.prefer_reasoning" class="on">
+              <SparklesOutline />
+              优先推理
             </span>
             <span v-if="provider.kind !== 'JEV'">
               <FlashOutline />
@@ -374,6 +800,24 @@ onMounted(load)
               <FlashOutline />
               Choice · Noul
             </span>
+          </div>
+
+          <div class="provider-usage">
+            <div class="usage-stat">
+              <span>累计请求</span>
+              <strong>{{ formatCount(provider.usage?.requests) }}</strong>
+            </div>
+            <div class="usage-stat">
+              <span>{{ provider.kind === 'JEV' ? '输入 Token' : '总 Token' }}</span>
+              <strong>{{ provider.usage ? formatUsageTokens(usageCardTokens(provider)) : '—' }}</strong>
+            </div>
+            <div class="usage-meta">
+              <span v-if="provider.kind === 'JEV'">决策模型输出免费，仅统计输入</span>
+              <span v-else>
+                输入 {{ formatUsageTokens(provider.usage?.input_tokens) }} · 命中 {{ formatUsageTokens(provider.usage?.cached_tokens) }} · 输出 {{ formatUsageTokens(provider.usage?.output_tokens) }}
+              </span>
+              <button type="button" class="usage-link" @click="openUsage(provider)">请求明细</button>
+            </div>
           </div>
 
           <div class="provider-health">
@@ -404,7 +848,7 @@ onMounted(load)
             <n-button
               size="small"
               :loading="testingId === provider.id"
-              :disabled="testingId !== null"
+              :disabled="testingId !== null || testingAll"
               @click="test(provider)"
             >
               <template #icon><FlashOutline /></template>
@@ -416,13 +860,15 @@ onMounted(load)
             </n-button>
           </div>
         </article>
-
-        <button class="provider-add-card" type="button" @click="openCreate">
-          <span class="add-circle"><AddOutline /></span>
-          <strong>接入新的模型</strong>
-          <span>OpenAI / Anthropic / JEV System One</span>
-        </button>
       </div>
+
+      <EmptyState
+        v-else-if="!loading && providers.length > 0"
+        title="没有符合条件的模型接入"
+        description="调整状态或类型筛选后再试，或清除筛选查看全部模型。"
+        action="清除筛选"
+        @action="resetProviderFilters"
+      />
 
       <EmptyState
         v-if="!loading && providers.length === 0"
@@ -441,7 +887,12 @@ onMounted(load)
             <h2>{{ editing ? '编辑模型接入' : '新增模型接入' }}</h2>
             <p>密钥会使用 AES-256-GCM 加密后存储，接口仅返回脱敏值。</p>
           </div>
-          <span class="modal-icon"><LinkOutline /></span>
+          <div class="modal-head-actions">
+            <span class="modal-icon"><LinkOutline /></span>
+            <n-button quaternary circle class="modal-close" title="关闭" @click="modalShow = false">
+              <template #icon><CloseOutline /></template>
+            </n-button>
+          </div>
         </div>
 
         <div class="modal-body">
@@ -449,28 +900,15 @@ onMounted(load)
             <button
               type="button"
               class="kind-card"
-              :class="{ active: form.kind === 'OPENAI_COMPATIBLE', disabled: Boolean(editing) }"
+              :class="{ active: !isJEV, disabled: Boolean(editing) }"
               @click="chooseKind('OPENAI_COMPATIBLE')"
             >
               <span class="kind-icon generic"><CloudOutline /></span>
               <span>
-                <strong>通用大模型 · OpenAI 协议</strong>
-                <small>兼容 /v1/chat/completions</small>
+                <strong>通用大模型</strong>
+                <small>OpenAI 兼容 / Anthropic Messages，协议可切换</small>
               </span>
-              <span v-if="form.kind === 'OPENAI_COMPATIBLE'" class="kind-check">✓</span>
-            </button>
-            <button
-              type="button"
-              class="kind-card"
-              :class="{ active: form.kind === 'ANTHROPIC', disabled: Boolean(editing) }"
-              @click="chooseKind('ANTHROPIC')"
-            >
-              <span class="kind-icon anthropic"><LinkOutline /></span>
-              <span>
-                <strong>通用大模型 · Anthropic 协议</strong>
-                <small>Messages API · /v1/messages</small>
-              </span>
-              <span v-if="form.kind === 'ANTHROPIC'" class="kind-check">✓</span>
+              <span v-if="!isJEV" class="kind-check">✓</span>
             </button>
             <button
               type="button"
@@ -487,11 +925,34 @@ onMounted(load)
             </button>
           </div>
 
+          <div v-if="!isJEV" class="protocol-row">
+            <span class="protocol-label">API 协议</span>
+            <button
+              type="button"
+              class="protocol-option"
+              :class="{ active: form.kind === 'OPENAI_COMPATIBLE' }"
+              :disabled="Boolean(editing)"
+              @click="chooseKind('OPENAI_COMPATIBLE')"
+            >
+              OpenAI 兼容 · /chat/completions
+            </button>
+            <button
+              type="button"
+              class="protocol-option"
+              :class="{ active: form.kind === 'ANTHROPIC' }"
+              :disabled="Boolean(editing)"
+              @click="chooseKind('ANTHROPIC')"
+            >
+              Anthropic · /messages
+            </button>
+            <span v-if="editing" class="protocol-locked">协议创建后不可变更</span>
+          </div>
+
           <div v-if="isJEV" class="jev-note">
             <SparklesOutline />
             <div>
-              <strong>JEV 采用结构化问题而非提示词生成</strong>
-              <p>平台会向 <code>/v1/systemone</code> 发送一个 Choice 裁决问题与两个 Noul 风险问题，并自动把图片转成 base64 资产；结果由概率和置信度归一化为风险分。</p>
+              <strong>JEV 原生支持文本 + 图片，采用结构化问题而非提示词生成</strong>
+              <p>平台会向 <code>/v1/systemone</code> 发送一个 Choice 裁决问题与两个 Noul 风险问题，文本与图片资产可同时提交；结果由概率和置信度归一化为风险分。</p>
             </div>
           </div>
 
@@ -512,26 +973,87 @@ onMounted(load)
             </div>
           </div>
 
+          <div class="two-col">
+            <div class="field">
+              <label>优先级</label>
+              <n-input-number v-model:value="form.priority" :min="1" :max="999" :step="1" style="width: 100%" />
+            </div>
+            <div class="field">
+              <label>回落顺序</label>
+              <div class="priority-hint">
+                数字越小越优先。审核绑定的模型始终最先调用；失败或熔断后，同类型模型按优先级依次回落。
+              </div>
+            </div>
+          </div>
+
           <div class="field">
             <label>BaseURL <span class="required">*</span></label>
             <n-input v-model:value="form.baseUrl" placeholder="https://api.example.com/v1" />
             <div class="form-hint">{{ baseUrlHint }}</div>
           </div>
 
-          <div class="two-col">
-            <div class="field">
-              <label>模型 ID <span class="required">*</span></label>
-              <n-input v-model:value="form.model" placeholder="gpt-4o-mini / jev-latest" />
-            </div>
-            <div class="field">
-              <label>API Key <span v-if="!editing" class="required">*</span></label>
-              <n-input
-                v-model:value="form.apiKey"
-                type="password"
-                show-password-on="click"
-                :placeholder="editing && editing.has_api_key ? `留空保留现有密钥（${editing.api_key_masked}）` : '输入供应商 API Key'"
+          <div class="field">
+            <label>模型 ID <span class="required">*</span></label>
+            <div class="model-picker">
+              <n-select
+                v-if="modelOptions.length"
+                v-model:value="form.model"
+                filterable
+                tag
+                :options="modelSelectOptions"
+                placeholder="选择或输入模型 ID"
+                @update:value="applySelectedModel"
               />
+              <n-input v-else v-model:value="form.model" placeholder="gpt-4o-mini / claude-sonnet-4-5 / jev-latest" />
+              <n-button v-if="!isJEV" secondary :loading="modelsLoading" @click="fetchModels">
+                <template #icon><RefreshOutline /></template>
+                获取模型
+              </n-button>
             </div>
+            <div v-if="modelsError" class="form-hint model-picker-error">{{ modelsError }}</div>
+            <div v-if="selectedModel" class="model-caps">
+              <span>上下文 <strong>{{ selectedModel.context_window_known ? formatTokenCount(selectedModel.context_window) : '未提供' }}</strong></span>
+              <span>最大输出 <strong>{{ selectedModel.max_output_known ? formatTokenCount(selectedModel.max_output_tokens) : '未提供' }}</strong></span>
+              <span :class="{ on: selectedModel.vision_known && selectedModel.supports_vision }">
+                <ImagesOutline /> 图片 {{ selectedModel.vision_known ? (selectedModel.supports_vision ? '支持' : '不支持') : '未提供' }}
+              </span>
+              <span :class="{ on: selectedModel.thinking_known && selectedModel.supports_thinking }">
+                <SparklesOutline /> 思考 {{ selectedModel.thinking_known ? (selectedModel.supports_thinking ? '支持' : '不支持') : '未提供' }}
+              </span>
+              <span class="model-caps-source">{{ modelSourceLabel(selectedModel.source) }}</span>
+            </div>
+            <div v-else-if="!isJEV" class="model-caps">
+              <span>上下文 <strong>{{ form.contextWindow != null ? formatTokenCount(form.contextWindow) : '未填写' }}</strong></span>
+              <span>最大输出 <strong>{{ form.maxTokens != null ? formatTokenCount(form.maxTokens) : '未填写' }}</strong></span>
+              <span :class="{ on: form.supportsVision }">
+                <ImagesOutline /> 图片 {{ form.supportsVision ? '支持' : '不支持' }}
+              </span>
+              <span :class="{ on: form.supportsThinking }">
+                <SparklesOutline /> 思考 {{ form.supportsThinking ? '支持' : '不支持' }}
+              </span>
+            </div>
+            <div class="form-hint">选择模型后自动带入上下文、最大输出、图片理解与思考能力，仍可手动调整。</div>
+          </div>
+
+          <div class="field">
+            <label>API Key <span v-if="!editing" class="required">*</span></label>
+            <n-input
+              v-model:value="form.apiKey"
+              type="password"
+              show-password-on="click"
+              :placeholder="editing && editing.has_api_key ? `留空保留现有密钥（${editing.api_key_masked}）` : '输入供应商 API Key'"
+            />
+          </div>
+
+          <div class="field">
+            <label>自定义请求头</label>
+            <n-input
+              v-model:value="form.headersText"
+              type="textarea"
+              :autosize="{ minRows: 2, maxRows: 4 }"
+              placeholder="x-opencode-session: {{random}}"
+            />
+            <div class="form-hint">系统会默认附带 <code>x-opencode-session</code> 随机会话 ID；如需固定值或补充其他 Header，可按每行一个填写。测试连接会强制使用随机值，且不会覆盖 Authorization / x-api-key。</div>
           </div>
 
           <div class="field">
@@ -550,9 +1072,23 @@ onMounted(load)
               <div class="switch-field">
                 <div>
                   <strong>图片理解</strong>
-                  <span>通用模型需模型本身支持视觉输入</span>
+                  <span>{{ isJEV ? 'JEV 原生支持文本 + 图片' : '通用模型需模型本身支持视觉输入' }}</span>
                 </div>
                 <n-switch v-model:value="form.supportsVision" :disabled="isJEV" />
+              </div>
+              <div class="switch-field">
+                <div>
+                  <strong>支持推理</strong>
+                  <span>模型本身支持推理 / 思考时开启</span>
+                </div>
+                <n-switch v-model:value="form.supportsThinking" :disabled="isJEV" />
+              </div>
+              <div class="switch-field">
+                <div>
+                  <strong>优先使用推理</strong>
+                  <span>失败切换时优先选择支持推理的模型</span>
+                </div>
+                <n-switch v-model:value="form.preferReasoning" :disabled="!form.supportsThinking" />
               </div>
               <div class="switch-field">
                 <div>
@@ -563,10 +1099,17 @@ onMounted(load)
               </div>
               <div class="switch-field">
                 <div>
-                  <strong>最大输出 Token</strong>
-                  <span>JEV 无需设置</span>
+                  <strong>上下文窗口</strong>
+                  <span>模型可接收的上下文长度</span>
                 </div>
-                <n-input-number v-model:value="form.maxTokens" :min="0" :max="8000" :step="200" size="small" style="width: 100px" />
+                <n-input-number v-model:value="form.contextWindow" :min="0" :max="10000000" :step="1000" size="small" style="width: 120px" />
+              </div>
+              <div class="switch-field">
+                <div>
+                  <strong>最大输出 Token</strong>
+                  <span>按所选模型规格填写，JEV 无需设置</span>
+                </div>
+                <n-input-number v-model:value="form.maxTokens" :min="0" :max="200000" :step="1000" size="small" style="width: 120px" />
               </div>
               <div class="switch-field">
                 <div>
@@ -590,25 +1133,103 @@ onMounted(load)
         </div>
       </div>
     </n-modal>
+
+    <n-modal v-model:show="usageShow" preset="card" class="usage-modal">
+      <template #header>
+        <div class="usage-modal-title">
+          <span>模型请求明细</span>
+          <span v-if="usageProvider" class="usage-modal-sub">{{ usageProvider.name }} · {{ usageProvider.model }}</span>
+        </div>
+      </template>
+      <div class="usage-modal-body">
+        <div class="usage-summary-grid">
+          <div class="usage-summary-item">
+            <span>请求量</span>
+            <strong>{{ formatCount(usageSummary?.requests) }}</strong>
+          </div>
+          <div class="usage-summary-item">
+            <span>输入 Token</span>
+            <strong>{{ formatCount(usageSummary?.input_tokens) }}</strong>
+          </div>
+          <div v-if="!usageJEV" class="usage-summary-item">
+            <span>缓存命中</span>
+            <strong>{{ formatCount(usageSummary?.cached_tokens) }}</strong>
+          </div>
+          <div v-if="!usageJEV" class="usage-summary-item">
+            <span>输出 Token</span>
+            <strong>{{ formatCount(usageSummary?.output_tokens) }}</strong>
+          </div>
+          <div v-if="!usageJEV" class="usage-summary-item">
+            <span>总 Token</span>
+            <strong>{{ formatCount(usageSummary?.total_tokens) }}</strong>
+          </div>
+          <div v-else class="usage-summary-note">决策模型输出免费，只统计输入 Token。</div>
+        </div>
+
+        <div v-if="usageError" class="usage-modal-error">{{ usageError }}</div>
+
+        <div class="usage-table-wrap">
+          <table class="usage-table">
+            <thead>
+              <tr>
+                <th>时间</th>
+                <th>来源</th>
+                <th>模型</th>
+                <th class="num">输入</th>
+                <th v-if="!usageJEV" class="num">缓存</th>
+                <th v-if="!usageJEV" class="num">输出</th>
+                <th v-if="!usageJEV" class="num">总计</th>
+                <th class="num">耗时</th>
+                <th>状态</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-if="usageLoading">
+                <td :colspan="usageJEV ? 7 : 9" class="usage-empty">加载中…</td>
+              </tr>
+              <tr v-else-if="!usageRows.length">
+                <td :colspan="usageJEV ? 7 : 9" class="usage-empty">还没有请求记录。审核任务或 AI 助手调用后会自动累计。</td>
+              </tr>
+              <tr v-for="row in usageRows" :key="row.id">
+                <td class="mono usage-time">{{ formatTime(row.created_at) }}</td>
+                <td><span class="usage-source" :class="row.source.toLowerCase()">{{ usageSourceLabel(row.source) }}</span></td>
+                <td class="mono usage-model" :title="row.model">{{ row.model }}</td>
+                <td class="num">{{ formatCount(row.input_tokens) }}</td>
+                <td v-if="!usageJEV" class="num">{{ formatCount(row.cached_tokens) }}</td>
+                <td v-if="!usageJEV" class="num">{{ formatCount(row.output_tokens) }}</td>
+                <td v-if="!usageJEV" class="num strong">{{ formatCount(row.total_tokens) }}</td>
+                <td class="num">{{ row.duration_ms }}ms</td>
+                <td>
+                  <span class="usage-status" :class="row.status.toLowerCase()">{{ row.status === 'SUCCESS' ? '成功' : '失败' }}</span>
+                  <span v-if="row.error_message" class="usage-row-error" :title="row.error_message">{{ row.error_message }}</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </n-modal>
   </div>
 </template>
 
 <style scoped>
-.mode-banner {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-  margin-bottom: 18px;
+.mode-help {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
-.mode-card.anthropic {
-  border-color: #dff3ec;
-  background: linear-gradient(120deg, #f7fffc, #fff);
+.mode-help .mode-card {
+  padding: 12px 14px;
+  box-shadow: none;
 }
 
-.mode-card.anthropic .mode-icon {
-  background: #e8f8f2;
-  color: #0f766e;
+.mode-help .mode-title {
+  font-size: 12px;
+}
+
+.mode-help .mode-card p {
+  font-size: 10px;
 }
 
 .provider-modal {
@@ -677,15 +1298,99 @@ onMounted(load)
   line-height: 1.65;
 }
 
-.mode-badge {
+.provider-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.summary-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.summary-title {
+  margin-right: 2px;
+  color: var(--muted-light);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.summary-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
+  transition: border-color 0.16s ease, background 0.16s ease, color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.summary-chip strong {
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.summary-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #cbd5e1;
+}
+
+.summary-chip.enabled .summary-dot {
+  background: var(--brand);
+}
+
+.summary-chip.available .summary-dot {
+  background: var(--green);
+}
+
+.summary-chip.unavailable .summary-dot {
+  background: var(--red);
+}
+
+.summary-chip.disabled .summary-dot {
+  background: var(--muted-light);
+}
+
+.summary-chip:hover {
+  border-color: #c7d9fb;
+  background: #f8fbff;
+}
+
+.summary-chip.is-selected {
+  border-color: var(--brand);
+  background: var(--brand-soft);
+  color: var(--brand-strong);
+  box-shadow: 0 0 0 3px rgba(43, 108, 246, 0.08);
+}
+
+.summary-chip.is-selected strong {
+  color: var(--brand-strong);
+}
+
+.summary-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
   margin-left: auto;
-  padding: 2px 7px;
-  border-radius: 6px;
-  background: #f8fafc;
-  color: #94a3b8;
-  font-family: var(--mono);
-  font-size: 8px;
-  white-space: nowrap;
+}
+
+.summary-kind-select {
+  width: 150px;
 }
 
 .provider-grid {
@@ -758,6 +1463,7 @@ onMounted(load)
 
 .provider-name-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
 }
@@ -779,6 +1485,50 @@ onMounted(load)
   color: var(--muted-light);
   font-size: 9.5px;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.provider-priority {
+  display: inline-block;
+  margin-top: 3px;
+  padding: 1px 6px;
+  border: 1px solid #dbeafe;
+  border-radius: 99px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-family: var(--mono);
+  font-size: 8.5px;
+  white-space: nowrap;
+}
+
+.priority-hint {
+  padding: 8px 10px;
+  border: 1px dashed #dbeafe;
+  border-radius: 8px;
+  background: #f8fbff;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.provider-protocol {
+  display: inline-block;
+  margin-top: 3px;
+  padding: 1px 6px;
+  border-radius: 99px;
+  background: #eef3fc;
+  color: #4b6a9b;
+  font-size: 8.5px;
+}
+
+.provider-breaker {
+  padding: 1px 6px;
+  border: 1px solid #fecaca;
+  border-radius: 99px;
+  background: #fef2f2;
+  color: #b91c1c;
+  font-size: 8.5px;
+  font-weight: 600;
   white-space: nowrap;
 }
 
@@ -831,6 +1581,236 @@ onMounted(load)
 .provider-capabilities :deep(svg) {
   width: 11px;
   height: 11px;
+}
+
+.provider-usage {
+  display: flex;
+  align-items: flex-end;
+  gap: 18px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed #edf1f7;
+}
+
+.usage-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.usage-stat span {
+  color: var(--muted-light);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+}
+
+.usage-stat strong {
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.usage-meta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.usage-meta > span {
+  color: var(--muted-light);
+  font-size: 8.5px;
+}
+
+.usage-link {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--brand);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.usage-link:hover {
+  text-decoration: underline;
+}
+
+.usage-modal {
+  width: min(1040px, calc(100vw - 32px));
+}
+
+.usage-modal-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.usage-modal-title > span:first-child {
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.usage-modal-sub {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.usage-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.usage-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+  gap: 10px;
+}
+
+.usage-summary-item {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-soft);
+}
+
+.usage-summary-item span {
+  display: block;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.usage-summary-item strong {
+  display: block;
+  margin-top: 4px;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 16px;
+}
+
+.usage-summary-note {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.usage-modal-error {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #fef2f2;
+  color: #b91c1c;
+  font-size: 11px;
+}
+
+.usage-table-wrap {
+  max-height: 52vh;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.usage-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.usage-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-weight: 600;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.usage-table td {
+  padding: 9px 10px;
+  border-bottom: 1px solid #edf1f7;
+  color: var(--ink);
+  vertical-align: top;
+}
+
+.usage-table tr:last-child td {
+  border-bottom: none;
+}
+
+.usage-table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.usage-table .strong {
+  font-weight: 650;
+}
+
+.usage-time {
+  color: var(--muted-light);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.usage-model {
+  max-width: 190px;
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.usage-source {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 99px;
+  background: #eef3fc;
+  color: #4b6a9b;
+  font-size: 9.5px;
+  white-space: nowrap;
+}
+
+.usage-source.script_assistant {
+  background: #f0fdf4;
+  color: #15803d;
+}
+
+.usage-source.audit_assistant {
+  background: #f5f1ff;
+  color: #7c3aed;
+}
+
+.usage-status {
+  color: var(--green);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.usage-status.error {
+  color: #b91c1c;
+}
+
+.usage-row-error {
+  display: block;
+  max-width: 220px;
+  overflow: hidden;
+  color: #b91c1c;
+  font-size: 9.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.usage-empty {
+  padding: 26px 10px !important;
+  color: var(--muted);
+  text-align: center;
 }
 
 .provider-health {
@@ -933,59 +1913,6 @@ onMounted(load)
   color: var(--muted-light);
 }
 
-.provider-add-card {
-  display: flex;
-  min-height: 250px;
-  align-items: center;
-  justify-content: center;
-  flex-direction: column;
-  gap: 6px;
-  border: 1px dashed #d5ddea;
-  border-radius: 17px;
-  background: rgba(255, 255, 255, 0.55);
-  color: var(--muted);
-  cursor: pointer;
-  transition: all 0.18s ease;
-}
-
-.provider-add-card:hover {
-  border-color: #aac4f8;
-  background: #f9fbff;
-  color: var(--brand);
-}
-
-.add-circle {
-  display: flex;
-  width: 40px;
-  height: 40px;
-  align-items: center;
-  justify-content: center;
-  margin-bottom: 4px;
-  border-radius: 50%;
-  background: #f1f5fb;
-  color: var(--muted);
-}
-
-.provider-add-card:hover .add-circle {
-  background: var(--brand-soft);
-  color: var(--brand);
-}
-
-.add-circle :deep(svg) {
-  width: 18px;
-  height: 18px;
-}
-
-.provider-add-card strong {
-  font-size: 12.5px;
-  font-weight: 550;
-}
-
-.provider-add-card > span:last-child {
-  color: var(--muted-light);
-  font-size: 10px;
-}
-
 .modal-head {
   display: flex;
   align-items: flex-start;
@@ -1019,6 +1946,17 @@ onMounted(load)
   font-size: 11.5px;
 }
 
+.modal-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+.modal-close {
+  color: var(--muted);
+}
+
 .modal-icon {
   display: flex;
   width: 40px;
@@ -1045,9 +1983,109 @@ onMounted(load)
 
 .kind-selector {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.protocol-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 8px;
   margin-bottom: 18px;
+  padding: 8px 10px;
+  border: 1px dashed #dfe7f3;
+  border-radius: 9px;
+  background: #fafcff;
+}
+
+.protocol-label {
+  color: var(--muted-light);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.protocol-option {
+  padding: 4px 9px;
+  border: 1px solid #e3e9f4;
+  border-radius: 7px;
+  background: #fff;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 9.5px;
+  cursor: pointer;
+}
+
+.protocol-option.active {
+  border-color: #aac6fb;
+  background: #f2f7ff;
+  color: #2b6cf6;
+}
+
+.protocol-option:disabled {
+  cursor: default;
+  opacity: 0.75;
+}
+
+.protocol-locked {
+  color: var(--muted-light);
+  font-size: 9px;
+}
+
+.model-picker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.model-picker > :first-child {
+  min-width: 0;
+  flex: 1;
+}
+
+.model-caps {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 7px;
+}
+
+.model-caps > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 99px;
+  background: #f4f7fc;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.model-caps > span.on {
+  background: #eefbf3;
+  color: #15803d;
+}
+
+.model-caps svg {
+  width: 11px;
+  height: 11px;
+}
+
+.model-caps strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.model-caps-source {
+  background: #f7f5ff !important;
+  color: #6d5bb5 !important;
+}
+
+.model-picker-error {
+  color: #dc2626;
 }
 
 .kind-card {
@@ -1258,15 +2296,8 @@ onMounted(load)
   flex-shrink: 0;
 }
 
-@media (max-width: 1400px) {
-  .mode-badge {
-    display: none;
-  }
-}
-
 @media (max-width: 1100px) {
-  .provider-grid,
-  .mode-banner {
+  .provider-grid {
     grid-template-columns: 1fr;
   }
 }
@@ -1278,17 +2309,51 @@ onMounted(load)
     grid-template-columns: 1fr;
   }
 
+  .provider-summary {
+    align-items: stretch;
+  }
+
+  .summary-actions {
+    width: 100%;
+    margin-left: 0;
+    justify-content: space-between;
+  }
+
+  .summary-kind-select {
+    width: auto;
+    flex: 1;
+  }
+
   .provider-modal {
-    width: calc(100vw - 16px);
-    max-height: calc(100vh - 16px);
+    display: flex;
+    width: 100vw;
+    max-width: 100vw;
+    height: 100vh;
+    height: 100dvh;
+    max-height: 100vh;
+    max-height: 100dvh;
+    flex-direction: column;
+    overflow: hidden;
+    border-radius: 0;
   }
 
-  .modal-body {
+  .provider-modal .modal-head {
+    flex: none;
+    border-radius: 0;
+    padding-top: max(18px, env(safe-area-inset-top));
+  }
+
+  .provider-modal .modal-body {
+    flex: 1;
+    min-height: 0;
     max-height: none;
+    overflow-y: auto;
   }
 
-  .modal-footer {
+  .provider-modal .modal-footer {
+    flex: none;
     flex-wrap: wrap;
+    padding-bottom: max(14px, env(safe-area-inset-bottom));
   }
 
   .footer-buttons {

@@ -1,6 +1,6 @@
 import type { AuditCategory } from '@/api/types'
 
-export type IntegrationMethod = 'OPENAPI' | 'REDIS' | 'WEBSOCKET' | 'POLLING'
+export type IntegrationMethod = 'OPENAPI' | 'REDIS' | 'WEBSOCKET'
 
 export interface IntegrationMethodMeta {
   key: IntegrationMethod
@@ -13,7 +13,6 @@ export const INTEGRATION_METHODS: IntegrationMethodMeta[] = [
   { key: 'OPENAPI', label: '开放 API', short: 'HMAC 主动提交', docsAnchor: 'openapi' },
   { key: 'REDIS', label: 'Redis Stream', short: '队列写入消息', docsAnchor: 'redis' },
   { key: 'WEBSOCKET', label: 'WebSocket', short: '长连接提交与推送', docsAnchor: 'websocket' },
-  { key: 'POLLING', label: 'HTTP 定时轮询', short: '提供查询接口', docsAnchor: 'polling' },
 ]
 
 export interface IntegrationPromptContext {
@@ -35,8 +34,6 @@ export interface IntegrationPromptContext {
   websocketEnabled?: boolean
   websocketPath?: string
   websocketURL?: string
-  pollingEnabled?: boolean
-  pollingConfig?: Record<string, unknown>
   callback?: {
     enabled: boolean
     url?: string
@@ -54,7 +51,7 @@ function methodLabel(method: IntegrationMethod): string {
 
 function scopeLine(methods: IntegrationMethod[]): string {
   if (!methods.length) {
-    return '开始前必须先询问业务方：要接入哪一种或哪几种触发方式（开放 API / Redis Stream / WebSocket / HTTP 定时轮询）？是否还需要结果回调？在得到明确选择前不要编写代码。'
+    return '开始前必须先询问业务方：要接入哪一种或哪几种触发方式（开放 API / Redis Stream / WebSocket）？是否还需要结果回调？在得到明确选择前不要编写代码。'
   }
   if (methods.length === 1) {
     return `本次只实现【${methodLabel(methods[0])}】这一种接入方式，不要生成其他触发方式的提交代码。`
@@ -226,39 +223,6 @@ function websocketSection(ctx: IntegrationPromptContext): string {
 7. 交付：连接鉴权函数、帧编解码、ack/result 关联表、超时和重连测试。`
 }
 
-function pollingSection(ctx: IntegrationPromptContext): string {
-  const config = ctx.pollingConfig || {}
-  const itemsPath = String(config.items_path || 'items')
-  const cursorPath = String(config.cursor_path || 'next_cursor')
-  const cursorParam = String(config.cursor_param || 'cursor')
-  const authHeader = String(config.auth_header || 'Authorization')
-  return `## HTTP 定时轮询实现要求
-
-注意：这一方式的实现方是业务系统。平台定时调用你方提供的只读查询接口，而不是由你方调用平台。
-
-1. 提供一个只读接口，返回未审核记录和下一页游标；平台使用 ${authHeader} 认证（认证值由业务方配置并妥善保存）。
-2. 响应结构必须满足：
-~~~json
-{
-  "${itemsPath}": [
-    {
-      "biz_key": "archive:2026:0001",
-      "media": [
-        {"type": "text", "name": "page-1.txt", "content": "第一页文本"},
-        {"type": "image", "name": "page-1.jpg", "url": "https://your-domain.example.com/page-1.jpg"}
-      ],
-      "ext": {"scene": "archive_review"}
-    }
-  ],
-  "${cursorPath}": "opaque-cursor"
-}
-~~~
-3. 首次请求不传游标，或传空 ${cursorParam}；后续按上次响应的 ${cursorPath} 传递。游标必须稳定、可持久化，不能使用页码导致漏单。
-4. 每条记录都必须是完整 TaskInput；不要返回视频/音频；图片 URL 必须可被平台访问。
-5. 接口要支持幂等读取：同一条记录在业务侧确认被平台取走后才能推进游标，避免平台超时导致漏审。平台连续失败 5 次会自动暂停轮询，请提供健康检查/日志便于排查。
-6. 交付：只读查询接口、游标分页、鉴权校验、空列表返回、异常与超时处理，以及模拟平台轮询的集成测试。`
-}
-
 function methodSection(method: IntegrationMethod, ctx: IntegrationPromptContext): string {
   switch (method) {
     case 'OPENAPI':
@@ -267,8 +231,6 @@ function methodSection(method: IntegrationMethod, ctx: IntegrationPromptContext)
       return redisSection(ctx)
     case 'WEBSOCKET':
       return websocketSection(ctx)
-    case 'POLLING':
-      return pollingSection(ctx)
     default:
       return ''
   }
@@ -291,18 +253,17 @@ export function buildSkillPrompt(ctx: IntegrationPromptContext, methods: Integra
   const intro = methods.length
     ? commonHeader(ctx, methods, title)
     : `${commonHeader(ctx, [], title)}
-> 这是一个统一 Skill，包含四种触发方式。请先向用户确认选择一种或多种方式，再只阅读和执行对应章节；也支持同时实现多种方式。`
+> 这是一个统一 Skill，包含三种触发方式。请先向用户确认选择一种或多种方式，再只阅读和执行对应章节；也支持同时实现多种方式。`
   const sections = selected.map((method) => methodSection(method, ctx)).join('\n')
   const selectionHints = !methods.length
     ? `
 ## 选择向导（必须先执行）
 
-1. 先问用户：“你要接入哪种方式？开放 API / Redis Stream / WebSocket / HTTP 定时轮询，可多选。是否需要结果回调？”
+1. 先问用户：“你要接入哪种方式？开放 API / Redis Stream / WebSocket，可多选。是否需要结果回调？”
 2. 如果用户选择开放 API：实现 HMAC 签名提交客户端。
 3. 如果用户选择 Redis：实现消息生产端；不要创建平台消费组。
 4. 如果用户选择 WebSocket：实现带签名 URL 的长连接客户端和 ack/result 关联。
-5. 如果用户选择 HTTP 轮询：实现业务侧只读查询接口和游标分页。
-6. 如果用户多选：为每种方式提供独立适配器，并共用 TaskInput 和结果处理层。
+5. 如果用户多选：为每种方式提供独立适配器，并共用 TaskInput 和结果处理层。
 `
     : ''
   return `${intro}${selectionHints}

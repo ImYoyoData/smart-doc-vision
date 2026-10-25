@@ -2,27 +2,40 @@ package trigger
 
 import (
 	"testing"
-	"time"
 
 	"smartdoc-vision/backend/internal/model"
 )
 
-func TestFingerprintIgnoresUpdatedAt(t *testing.T) {
+func TestFingerprintTracksRoutingFields(t *testing.T) {
+	connectionID := uint64(9)
 	base := model.TriggerSource{
 		ID: 3, Type: model.TriggerRedis, Status: "ACTIVE",
-		ConfigJSON: model.JSONText(`{"stream":"sdv:demo:audit:review","group":"sdv-cg-3"}`),
+		RedisConnectionID: &connectionID, RedisDB: 2,
+		Stream: "sdv:demo:audit:review", ConsumerGroup: "sdv-cg-3",
+		StartPosition: "$", BatchSize: 16, MaxInflight: 1,
 	}
-	first := base
-	first.UpdatedAt = time.Now()
-	second := base
-	second.UpdatedAt = time.Now().Add(time.Hour)
-	if fingerprint(first) != fingerprint(second) {
-		t.Fatalf("heartbeat updates must not recycle the worker: %q != %q", fingerprint(first), fingerprint(second))
-	}
-
 	changed := base
-	changed.ConfigJSON = model.JSONText(`{"stream":"sdv:demo:audit:review","group":"sdv-cg-3","batch_size":8}`)
-	if fingerprint(first) == fingerprint(changed) {
-		t.Fatal("config changes must restart the worker")
+	changed.BatchSize = 8
+	changed.Stream = "sdv:demo:audit:other"
+	if fingerprint(base) == fingerprint(changed) {
+		t.Fatal("stream/batch changes must restart the worker")
+	}
+	otherDB := base
+	otherDB.RedisDB = 3
+	if fingerprint(base) == fingerprint(otherDB) {
+		t.Fatal("DB changes must restart the worker")
+	}
+	if clientKey(9, 2) == clientKey(9, 3) {
+		t.Fatal("clients must be isolated per Redis DB")
+	}
+}
+
+func TestClientFingerprintChangesWithConnectionConfig(t *testing.T) {
+	connection := model.RedisConnection{Addr: "127.0.0.1:6379", Username: "u"}
+	first := clientFingerprint(connection, "p")
+	connection.Addr = "127.0.0.1:6380"
+	second := clientFingerprint(connection, "p")
+	if first == second {
+		t.Fatal("address changes must rebuild the Redis client")
 	}
 }

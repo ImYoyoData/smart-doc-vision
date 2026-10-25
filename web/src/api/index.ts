@@ -1,4 +1,4 @@
-import { del, get, patch, post, put, requestBlob } from './http'
+import { del, get, patch, post, postSSE, put, request, requestBlob, type SSEHandlers } from './http'
 import type {
   AnalyticsData,
   APICredential,
@@ -7,6 +7,7 @@ import type {
   AuditLog,
   AuditAssistantResult,
   AuditAssistantMessage,
+  AuditFieldAssistantResult,
   CaptchaChallenge,
   DashboardData,
   IntegrationGuide,
@@ -18,7 +19,14 @@ import type {
   Paged,
   Project,
   Provider,
+  ProviderModel,
+  ProviderUsageLog,
+  ProviderUsageSummary,
+  ProjectSecret,
   RecycleItem,
+  RedisConnection,
+  ScriptExecution,
+  ScriptSimulationResult,
   ReviewSummary,
   RoleDefinition,
   RuleTemplate,
@@ -64,6 +72,11 @@ export const projectApi = {
   setStatus: (id: number, status: string, reason?: string) => patch<Project>(`/projects/${id}/status`, { status, reason }),
   remove: (id: number) => del<{ deleted: boolean }>(`/projects/${id}`),
   restore: (id: number) => post<unknown>(`/projects/${id}/restore`),
+  secrets: (id: number) => get<{ items: ProjectSecret[]; total: number }>(`/projects/${id}/secrets`),
+  setSecret: (id: number, name: string, value: string) =>
+    put<{ name: string; updated: boolean }>(`/projects/${id}/secrets/${encodeURIComponent(name)}`, { value }),
+  deleteSecret: (id: number, name: string) =>
+    del<{ deleted: boolean }>(`/projects/${id}/secrets/${encodeURIComponent(name)}`),
 }
 
 export const credentialApi = {
@@ -81,11 +94,40 @@ export const credentialApi = {
 export const providerApi = {
   list: (params?: Record<string, unknown>) => get<{ items: Provider[]; total: number }>('/providers', params),
   get: (id: number) => get<Provider>(`/providers/${id}`),
+  usage: (id: number, params?: Record<string, unknown>) =>
+    get<{ items: ProviderUsageLog[]; total: number; summary: ProviderUsageSummary; kind: string; model: string }>(
+      `/providers/${id}/usage`,
+      params,
+    ),
   create: (payload: Record<string, unknown>) => post<Provider>('/providers', payload),
   update: (id: number, payload: Record<string, unknown>) => put<Provider>(`/providers/${id}`, payload),
   remove: (id: number) => del<{ deleted: boolean }>(`/providers/${id}`),
+  test: (id: number, signal?: AbortSignal) =>
+    request<{ ok: boolean; latency_ms: number; message: string; model: string }>({
+      method: 'POST',
+      url: `/providers/${id}/test`,
+      signal,
+    }),
+  models: (payload: {
+    project_id: number
+    provider_id?: number
+    kind: string
+    base_url: string
+    api_key?: string
+    headers?: Record<string, string>
+  }) => post<{ items: ProviderModel[]; total: number }>('/providers/models', payload),
+}
+
+export const redisConnectionApi = {
+  list: (projectId: number) =>
+    get<{ items: RedisConnection[]; total: number }>(`/projects/${projectId}/redis-connections`),
+  create: (projectId: number, payload: Record<string, unknown>) =>
+    post<RedisConnection>(`/projects/${projectId}/redis-connections`, payload),
+  update: (id: number, payload: Record<string, unknown>) =>
+    put<RedisConnection>(`/redis-connections/${id}`, payload),
+  remove: (id: number) => del<{ deleted: boolean }>(`/redis-connections/${id}`),
   test: (id: number) =>
-    post<{ ok: boolean; latency_ms: number; message: string; model: string }>(`/providers/${id}/test`),
+    post<{ ok: boolean; latency_ms: number; health: string; message: string }>(`/redis-connections/${id}/test`),
 }
 
 export const auditApi = {
@@ -93,6 +135,10 @@ export const auditApi = {
   get: (id: number) => get<{ audit: Audit; triggers: TriggerSource[] }>(`/audits/${id}`),
   create: (payload: Record<string, unknown>) => post<Audit>('/audits', payload),
   assistant: (payload: Record<string, unknown>) => post<AuditAssistantResult>('/audits/assistant', payload),
+  assistantStream: (payload: Record<string, unknown>, handlers: SSEHandlers) =>
+    postSSE('/audits/assistant/stream', payload, handlers),
+  assistantField: (payload: Record<string, unknown>) =>
+    post<AuditFieldAssistantResult>('/audits/assistant/field', payload),
   update: (id: number, payload: Record<string, unknown>) => put<Audit>(`/audits/${id}`, payload),
   setStatus: (id: number, status: string) => patch<{ status: string }>(`/audits/${id}/status`, { status }),
   clone: (id: number, payload: { name: string; code: string }) => post<Audit>(`/audits/${id}/clone`, payload),
@@ -104,6 +150,16 @@ export const auditApi = {
     requestBlob({ method: 'GET', url: `/audits/${id}/export`, params }),
   updateTrigger: (id: number, payload: TriggerUpdate) => put<TriggerSource>(`/trigger-sources/${id}`, payload),
   testTrigger: (id: number) => post<Record<string, unknown>>(`/trigger-sources/${id}/test`),
+  scriptExecutions: (id: number, params?: Record<string, unknown>) =>
+    get<Paged<ScriptExecution>>(`/audits/${id}/script-executions`, params),
+  scriptExecution: (id: number) => get<ScriptExecution>(`/script-executions/${id}`),
+  clearScriptExecutions: (id: number) => del<unknown>(`/audits/${id}/script-executions`),
+}
+
+export const scriptApi = {
+  assistantStream: (payload: Record<string, unknown>, handlers: SSEHandlers) =>
+    postSSE('/scripts/assistant/stream', payload, handlers),
+  simulate: (payload: Record<string, unknown>) => post<ScriptSimulationResult>('/scripts/simulate', payload),
 }
 
 export const taskApi = {
