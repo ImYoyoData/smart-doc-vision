@@ -3,6 +3,7 @@ package ai
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,11 +11,13 @@ import (
 	"strings"
 	"time"
 
+	"smartdoc-vision/backend/internal/media"
 	"smartdoc-vision/backend/internal/model"
 )
 
 type OpenAIAdapter struct {
-	Client *http.Client
+	Client  *http.Client
+	Fetcher *media.Fetcher
 }
 
 type openAIMessage struct {
@@ -122,11 +125,26 @@ func (a *OpenAIAdapter) Review(ctx context.Context, req Request) (*model.Verdict
 
 	userContent := any(userPrompt)
 	if cfg.SupportsVision && len(images) > 0 {
+		// 平台先下载图片转 base64：既统一走 SSRF 防护，也避免上游模型
+		// 服务器无法访问外链图片（返回 400）被误判为模型故障。
+		fetcher := a.Fetcher
+		if fetcher == nil {
+			fetcher = media.NewFetcher(false)
+		}
 		parts := []map[string]any{{"type": "text", "text": userPrompt}}
-		for _, img := range images {
+		for i, img := range images {
+			prepared, err := fetcher.FetchImage(ctx, img.URL)
+			if err != nil {
+				return nil, fmt.Errorf("准备第 %d 张图片失败: %w", i+1, err)
+			}
+			mime := "image/jpeg"
+			if prepared.Format == "png" {
+				mime = "image/png"
+			}
+			dataURL := "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(prepared.Data)
 			parts = append(parts, map[string]any{
 				"type":      "image_url",
-				"image_url": map[string]any{"url": img.URL},
+				"image_url": map[string]any{"url": dataURL},
 			})
 		}
 		userContent = parts

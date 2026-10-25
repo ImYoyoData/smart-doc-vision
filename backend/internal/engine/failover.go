@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"sort"
+	"strings"
 	"time"
 
 	"smartdoc-vision/backend/internal/ai"
@@ -18,7 +19,26 @@ func reviewAttemptTimeout(kind string) time.Duration {
 	if kind == model.ProviderJEV {
 		return 60 * time.Second
 	}
-	return 30 * time.Second
+	// 通用模型带图审核（vision）真实响应常在 30s 以上，给足单次尝试时间。
+	return 45 * time.Second
+}
+
+// taskScopedFailure reports whether a review error is caused by the task's own
+// content — an unfetchable image or an upstream 4xx about the request payload.
+// Another provider cannot fix such a failure (the same content fails the same
+// way), so it must not trip the provider breaker and bench healthy models.
+func taskScopedFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "张图片失败") {
+		return true
+	}
+	if strings.Contains(msg, "Failed to download image") {
+		return true
+	}
+	return false
 }
 
 // providerCandidates returns the models that may serve this audit, in the order
@@ -143,6 +163,13 @@ func (e *Engine) reviewWithFailover(
 		}
 		lastErr = reviewErr
 		e.recordReviewUsage(candidate, task, audit, nil, started, reviewErr)
+		if taskScopedFailure(reviewErr) {
+			// 任务内容自身的问题（图片拉不到、上游拒收请求体）：换模型也会
+			// 同样失败，直接终止并走任务兜底，不记熔断以免连坐健康模型。
+			log.Printf("task %s content-scoped failure on %s(%s), skip fallback: %v",
+				task.TaskNo, candidate.Name, candidate.Model, reviewErr)
+			return nil, candidate, reviewErr
+		}
 		e.recordProviderFailure(candidate, reviewErr)
 		log.Printf("task %s model %s(%s) failed, trying next provider: %v",
 			task.TaskNo, candidate.Name, candidate.Model, reviewErr)
