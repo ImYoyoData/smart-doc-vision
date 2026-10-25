@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { NButton, NIcon, NInput, NModal, NSelect, NSpin, type InputInst } from 'naive-ui'
 import { CloseOutline, SparklesOutline } from '@vicons/ionicons5'
+import VoiceInputButton from '@/components/VoiceInputButton.vue'
 import { auditApi } from '@/api'
 import type { AuditFieldAssistantResult } from '@/api/types'
 
@@ -109,6 +110,11 @@ function handleKeydown(event: KeyboardEvent) {
   }
 }
 
+function applyVoiceInput(text: string) {
+  instruction.value = instruction.value ? `${instruction.value} ${text}` : text
+  nextTick(() => instructionRef.value?.focus())
+}
+
 async function generate() {
   const text = instruction.value.trim()
   if (!text || busy.value) return
@@ -193,6 +199,7 @@ function apply() {
             >
               {{ example }}
             </button>
+            <VoiceInputButton :disabled="busy" @transcript="applyVoiceInput" />
           </div>
           <div class="field-ai-model">
             <span>生成模型</span>

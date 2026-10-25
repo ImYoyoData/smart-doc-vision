@@ -29,6 +29,7 @@ import {
 } from '@vicons/ionicons5'
 import { providerApi, scriptApi } from '@/api'
 import type { Provider, ScriptSimulationResult } from '@/api/types'
+import VoiceInputButton from '@/components/VoiceInputButton.vue'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 const props = defineProps<{
@@ -940,6 +941,10 @@ function handleAiKeydown(event: KeyboardEvent) {
   event.preventDefault()
   void sendAi()
 }
+
+function applyVoiceInput(text: string) {
+  aiInput.value = aiInput.value ? `${aiInput.value} ${text}` : text
+}
 </script>
 
 <template>
@@ -1121,6 +1126,7 @@ function handleAiKeydown(event: KeyboardEvent) {
                     placeholder="选择通用大模型"
                     class="script-ai-model-select"
                   />
+                  <VoiceInputButton :disabled="aiBusy" @transcript="applyVoiceInput" />
                   <div class="script-ai-composer-actions">
                     <n-popover trigger="click" placement="top-end" :show-arrow="false" raw>
                       <template #trigger>

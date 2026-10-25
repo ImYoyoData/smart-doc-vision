@@ -51,6 +51,7 @@ import AuditFieldAssistantModal from '@/components/AuditFieldAssistantModal.vue'
 import ResultRoutesEditor from '@/components/ResultRoutesEditor.vue'
 import TriggerManageModal from '@/components/TriggerManageModal.vue'
 import ScriptLogsModal from '@/components/ScriptLogsModal.vue'
+import VoiceInputButton from '@/components/VoiceInputButton.vue'
 import { analyticsApi, auditApi, metaApi, providerApi } from '@/api'
 import { copyText } from '@/utils/clipboard'
 import type { Audit, AuditAssistantConfig, AuditAssistantMessage, AuditAssistantResult, AuditAssistantStep, AuditCategory, Provider, RuleTemplate, TriggerSource } from '@/api/types'
@@ -1390,6 +1391,11 @@ function handleAssistantKeydown(event: KeyboardEvent) {
   void sendAssistant()
 }
 
+function applyVoiceInput(text: string) {
+  assistantInput.value = assistantInput.value ? `${assistantInput.value} ${text}` : text
+  nextTick(() => assistantInputRef.value?.focus())
+}
+
 async function sendAssistant() {
   const text = assistantInput.value.trim()
   const images = assistantImages.value.map((item) => item.dataUrl)
@@ -2244,6 +2250,7 @@ onMounted(async () => {
                 placeholder="选择通用大模型"
                 class="assistant-model-select"
               />
+              <VoiceInputButton :disabled="assistantBusy || saving" @transcript="applyVoiceInput" />
             </div>
             <div class="assistant-actions">
               <span class="assistant-note">
