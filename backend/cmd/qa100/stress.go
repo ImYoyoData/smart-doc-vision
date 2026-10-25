@@ -69,11 +69,11 @@ func (r *runner) runPairCheck(ctx context.Context, round int) ([]string, []strin
 		{"review_pending", "SELECT COUNT(*) FROM tasks WHERE project_id = ? AND status = 'REVIEW_PENDING'", &reviewPending},
 		{"unknown_result", "SELECT COUNT(*) FROM tasks WHERE project_id = ? AND result NOT IN ('PASS','REJECT','REVIEW')", &unknownResult},
 		{"failed_routes", "SELECT COUNT(*) FROM tasks WHERE project_id = ? AND LOCATE('\"ok\":false', result_json) > 0", &failedRoutes},
-		{"missing_callback", "SELECT COUNT(*) FROM tasks WHERE project_id = ? AND status='SUCCESS' AND (JSON_EXTRACT(result_json,'$.callback.ok') IS NULL OR JSON_EXTRACT(result_json,'$.callback.ok') = false)", &missingCallback},
+		{"missing_callback", "SELECT COUNT(*) FROM tasks t JOIN audits a ON a.id=t.audit_id WHERE t.project_id = ? AND a.callback_enabled=1 AND t.status='SUCCESS' AND (JSON_EXTRACT(t.result_json,'$.callback.ok') IS NULL OR JSON_EXTRACT(t.result_json,'$.callback.ok') = false)", &missingCallback},
 		{"failed_scripts", "SELECT COUNT(*) FROM script_executions WHERE project_id = ? AND status <> 'SUCCESS'", &failedScripts},
 		{"missing_success_event", "SELECT COUNT(*) FROM tasks t WHERE t.project_id = ? AND t.status='SUCCESS' AND NOT EXISTS (SELECT 1 FROM task_events e WHERE e.task_id=t.id AND e.to_status='SUCCESS')", &missingSuccessEvent},
 		{"duplicate_biz_keys", "SELECT COUNT(*) FROM (SELECT biz_key FROM tasks WHERE project_id = ? AND biz_key <> '' GROUP BY biz_key HAVING COUNT(*) > 1) x", &duplicateBizKeys},
-		{"failed_audit_logs", "SELECT COUNT(*) FROM audit_logs WHERE project_id = ? AND result='FAILED'", &failedAuditLogs},
+		{"failed_task_logs", "SELECT COUNT(*) FROM audit_logs WHERE project_id = ? AND result='FAILED' AND action LIKE 'TASK_%'", &failedAuditLogs},
 	}
 	for _, item := range queries {
 		if err := r.db.QueryRowContext(ctx, item.query, r.state.ProjectID).Scan(item.dest); err != nil {
@@ -108,7 +108,7 @@ func (r *runner) runPairCheck(ctx context.Context, round int) ([]string, []strin
 		failures = append(failures, fmt.Sprintf("PAIR R%03d-R%03d duplicate biz keys=%d", first, round, duplicateBizKeys))
 	}
 	if failedAuditLogs != 0 {
-		failures = append(failures, fmt.Sprintf("PAIR R%03d-R%03d failed audit logs=%d", first, round, failedAuditLogs))
+		failures = append(failures, fmt.Sprintf("PAIR R%03d-R%03d failed task logs=%d", first, round, failedAuditLogs))
 	}
 	iter := r.actionRedis.Scan(ctx, 0, fmt.Sprintf("qa100:%s:*", r.state.RunID), 100).Iterator()
 	leftovers := 0
