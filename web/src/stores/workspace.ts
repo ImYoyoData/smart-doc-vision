@@ -45,7 +45,13 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       projects.value = data.items
       loaded.value = true
       if (!currentProjectId.value && projects.value.length > 0) {
-        setCurrentProject(projects.value[0].id)
+        // New browsers should land on the original/default project, not the
+        // most recently updated QA project.
+        const preferred = projects.value.reduce(
+          (oldest, project) => (project.id < oldest.id ? project : oldest),
+          projects.value[0],
+        )
+        setCurrentProject(preferred.id)
       }
       if (currentProjectId.value && !projects.value.some((p) => p.id === currentProjectId.value)) {
         setCurrentProject(projects.value[0]?.id ?? null)
