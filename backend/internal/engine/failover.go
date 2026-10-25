@@ -59,13 +59,23 @@ func (e *Engine) providerCandidates(primary model.AIProvider, preferReasoning bo
 	}
 
 	available := make([]model.AIProvider, 0, len(providers))
+	cooling := make([]string, 0)
 	for _, provider := range providers {
 		// A tripped breaker is only cleared by a successful health probe or a
 		// manual connection test, never merely by the cooldown elapsing.
 		if provider.BreakerUntil != nil {
+			reason := provider.BreakerReason
+			if len([]rune(reason)) > 60 {
+				reason = string([]rune(reason)[:60]) + "…"
+			}
+			cooling = append(cooling, fmt.Sprintf("%s（冷却至 %s：%s）",
+				provider.Name, provider.BreakerUntil.Local().Format("15:04:05"), reason))
 			continue
 		}
 		available = append(available, provider)
+	}
+	if len(available) == 0 && len(cooling) > 0 {
+		return nil, fmt.Errorf("项目内没有可用的同类模型，正在熔断冷却：%s；可在「模型接入」执行测试连接提前恢复", strings.Join(cooling, "；"))
 	}
 	return orderProviderCandidates(available, primary.ID, preferReasoning), nil
 }
