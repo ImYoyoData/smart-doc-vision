@@ -342,7 +342,7 @@ onMounted(async () => {
           <template #icon><TimeOutline /></template>
           待复核 {{ overview?.pending }}
         </n-button>
-        <n-button quaternary circle :loading="loading" @click="load">
+        <n-button quaternary circle :loading="loading" title="刷新" aria-label="刷新" @click="load">
           <template #icon><RefreshOutline /></template>
         </n-button>
       </template>

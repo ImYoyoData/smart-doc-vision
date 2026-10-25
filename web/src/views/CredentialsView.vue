@@ -202,7 +202,7 @@ onMounted(load)
           <template #icon><HelpCircleOutline /></template>
           对接文档
         </n-button>
-        <n-button quaternary circle :loading="loading" @click="load">
+        <n-button quaternary circle :loading="loading" title="刷新" aria-label="刷新" @click="load">
           <template #icon><RefreshOutline /></template>
         </n-button>
         <n-button type="primary" @click="openCreate">

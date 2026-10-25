@@ -372,7 +372,7 @@ onBeforeUnmount(() => {
       subtitle="查看每一次图档审核的状态、结论、规则命中与完整链路事件。"
     >
       <template #actions>
-        <n-button quaternary circle :loading="loading" @click="load">
+        <n-button quaternary circle :loading="loading" title="刷新" aria-label="刷新" @click="load">
           <template #icon><RefreshOutline /></template>
         </n-button>
         <n-button v-if="auth.can('task:submit')" type="primary" @click="openSubmit">

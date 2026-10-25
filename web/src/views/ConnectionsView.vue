@@ -207,7 +207,7 @@ onMounted(() => {
       subtitle="项目级 Redis 连接，供审核触发和结果动作复用。平台自身缓存使用的 Redis 与这里配置的业务 Redis 相互独立。"
     >
       <template #actions>
-        <n-button quaternary circle :loading="loading" @click="load">
+        <n-button quaternary circle :loading="loading" title="刷新" aria-label="刷新" @click="load">
           <template #icon><RefreshOutline /></template>
         </n-button>
         <n-button type="primary" @click="openCreate">

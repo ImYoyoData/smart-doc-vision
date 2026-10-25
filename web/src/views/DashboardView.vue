@@ -167,7 +167,7 @@ onMounted(async () => {
       subtitle="聚焦今天要处理的任务：人工复核、最近任务、审核配置与模型状态。"
     >
       <template #actions>
-        <n-button quaternary circle :loading="loading" @click="load">
+        <n-button quaternary circle :loading="loading" title="刷新" aria-label="刷新" @click="load">
           <template #icon><RefreshOutline /></template>
         </n-button>
         <n-button secondary @click="goReport">

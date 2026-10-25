@@ -366,6 +366,15 @@ function acceptLeaveConfirm() {
 }
 
 function requestCloseModal() {
+  if (assistantBusyNow.value) {
+    openLeaveConfirm(
+      'AI 正在执行，确认离开？',
+      '当前 AI 配置助手仍在生成内容，关闭会停止请求，尚未保存的结果不会保留。',
+      '停止 AI 并关闭',
+      { action: () => { modalShow.value = false } },
+    )
+    return
+  }
   if (!formDirty.value) {
     modalShow.value = false
     return
@@ -1636,7 +1645,7 @@ onMounted(async () => {
       subtitle="把媒体类型、模型、审核要求与规则阈值编排成可复用的审核流程。"
     >
       <template #actions>
-        <n-button quaternary circle :loading="loading" @click="load">
+        <n-button quaternary circle :loading="loading" title="刷新" aria-label="刷新" @click="load">
           <template #icon><RefreshOutline /></template>
         </n-button>
         <n-button

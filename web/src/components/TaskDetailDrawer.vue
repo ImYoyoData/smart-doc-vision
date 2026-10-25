@@ -215,10 +215,10 @@ watch(
             <CopyButton v-if="task" :text="task.task_no" size="tiny" label="" title="复制任务号" />
           </div>
           <div v-if="task" class="header-actions">
-            <n-button size="small" quaternary circle @click="exportJSON">
+            <n-button size="small" quaternary circle title="导出 JSON" aria-label="导出 JSON" @click="exportJSON">
               <template #icon><DownloadOutline /></template>
             </n-button>
-            <n-button size="small" quaternary circle :loading="loading" @click="load">
+            <n-button size="small" quaternary circle :loading="loading" title="刷新任务" aria-label="刷新任务" @click="load">
               <template #icon><RefreshOutline /></template>
             </n-button>
             <n-button v-if="task.status === 'REVIEW_PENDING'" size="small" type="primary" @click="openReview">

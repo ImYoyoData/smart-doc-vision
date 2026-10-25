@@ -187,7 +187,7 @@ onMounted(load)
       subtitle="记录登录、配置变更、模型测试、任务流转与人工复核等全部敏感操作。"
     >
       <template #actions>
-        <n-button quaternary circle :loading="loading" @click="load">
+        <n-button quaternary circle :loading="loading" title="刷新" aria-label="刷新" @click="load">
           <template #icon><RefreshOutline /></template>
         </n-button>
       </template>

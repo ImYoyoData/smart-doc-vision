@@ -30,6 +30,7 @@ const pageSize = ref(20)
 const objectType = ref<string | null>(null)
 const keyword = ref('')
 const loading = ref(false)
+const loadError = ref('')
 const restoringId = ref<string | null>(null)
 const purgingId = ref<string | null>(null)
 const canPurge = computed(() => auth.user?.role === 'SUPER_ADMIN')
@@ -164,12 +165,14 @@ async function load() {
     })
     items.value = data.items
     total.value = data.total
+    loadError.value = ''
     // 清掉已不在任何页里的选中项
     const valid = new Set<string>()
     for (const key of selectedKeys.value) valid.add(key)
     selectedKeys.value = valid
   } catch (error) {
-    message.error(error instanceof Error ? error.message : '加载回收站失败')
+    loadError.value = error instanceof Error ? error.message : '加载回收站失败'
+    message.error(loadError.value)
   } finally {
     loading.value = false
   }
@@ -253,7 +256,7 @@ onMounted(load)
       subtitle="项目与审核配置删除后进入回收站，保留期内可恢复；到期自动永久清理，超级管理员也可立即永久删除。"
     >
       <template #actions>
-        <n-button quaternary circle :loading="loading" @click="load">
+        <n-button quaternary circle :loading="loading" title="刷新" aria-label="刷新" @click="load">
           <template #icon><RefreshOutline /></template>
         </n-button>
       </template>
@@ -291,7 +294,7 @@ onMounted(load)
           <template #prefix><SearchOutline /></template>
         </n-input>
         <n-button type="primary" secondary @click="load">查询</n-button>
-        <span class="total-count">共 {{ total }} 条</span>
+        <span v-if="!loadError" class="total-count">共 {{ total }} 条</span>
       </div>
 
       <div v-if="total > 0" class="batch-bar">
@@ -404,6 +407,15 @@ onMounted(load)
           </tbody>
         </table>
       </div>
+
+      <EmptyState
+        v-else-if="loadError"
+        compact
+        :title="`回收站加载失败：${loadError}`"
+        description="请检查网络或后端服务后点击右上角刷新重试。"
+      >
+        <template #icon><WarningOutline /></template>
+      </EmptyState>
 
       <EmptyState
         v-else-if="!loading"
