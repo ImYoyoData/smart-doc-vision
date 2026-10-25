@@ -34,23 +34,25 @@ type configSpec struct {
 }
 
 type caseSpec struct {
-	Round       int
-	ConfigKey   string
-	AuditID     uint64
-	Secret      string
-	Kind        string
-	Expected    string
-	Marker      string
-	Text        string
-	BizKey      string
-	TaskID      uint64
-	TaskNo      string
-	Task        *task
-	Events      []map[string]any
-	FinalResult string
-	Conclusion  string
-	Failures    []string
-	Warnings    []string
+	Round          int
+	ConfigKey      string
+	AuditID        uint64
+	Secret         string
+	Kind           string
+	Expected       string
+	Marker         string
+	Text           string
+	BizKey         string
+	TaskID         uint64
+	TaskNo         string
+	Task           *task
+	Events         []map[string]any
+	FinalResult    string
+	Conclusion     string
+	SubmittedAt    time.Time
+	LatencyChecked bool
+	Failures       []string
+	Warnings       []string
 }
 
 func (c *caseSpec) fail(format string, args ...any) {
@@ -93,6 +95,16 @@ type runner struct {
 	actionRedis *redis.Client
 	db          *sql.DB
 	roundStart  int
+	multiplier  int
+	stormEvery  int
+	stormSize   int
+	pairCheck   bool
+
+	latencyMu       sync.Mutex
+	submitLatencies []time.Duration
+	taskLatencies   []time.Duration
+	expectedTasks   int
+	baselineTasks   int
 }
 
 func setupTestProject(ctx context.Context, c *apiClient, te *testEnv) (state, error) {
@@ -156,6 +168,9 @@ func (r *runner) runRounds(ctx context.Context, start, end int) error {
 	defer reportFile.Close()
 	var totalCases, totalReviews, totalFailures, totalWarnings int
 	var totalDuration time.Duration
+	if err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM tasks WHERE project_id = ?", r.state.ProjectID).Scan(&r.baselineTasks); err != nil {
+		return fmt.Errorf("baseline tasks: %w", err)
+	}
 	for round := start; round <= end; round++ {
 		report := r.runRound(ctx, round)
 		totalDuration += time.Duration(report.DurationMS) * time.Millisecond
@@ -180,6 +195,7 @@ func (r *runner) runRounds(ctx context.Context, start, end int) error {
 		fmt.Printf("BATCH %d-%d rounds=%d cases=%d reviews=%d failures=%d warnings=%d avg=%.1fs\n",
 			start, end, rounds, totalCases, totalReviews, totalFailures, totalWarnings,
 			totalDuration.Seconds()/float64(rounds))
+		r.printLatencySummary()
 	}
 	return nil
 }
@@ -240,6 +256,25 @@ func (r *runner) runRound(ctx context.Context, round int) roundReport {
 	if _, err := r.client.reviewSummary(ctx, r.state.ProjectID); err != nil {
 		report.Warnings = append(report.Warnings, fmt.Sprintf("R%03d review summary: %v", round, err))
 	}
+	if r.stormEvery > 0 && round%r.stormEvery == 0 && len(active) > 0 {
+		storm := r.makeStormCases(round, active)
+		r.submitCases(ctx, storm)
+		r.waitCases(ctx, storm)
+		r.reviewCases(ctx, round, storm)
+		r.verifyCases(ctx, storm)
+		for _, c := range storm {
+			report.Cases++
+			if c.Conclusion != "" {
+				report.Reviews++
+			}
+			for _, failure := range c.Failures {
+				report.Failures = append(report.Failures, fmt.Sprintf("R%03d STORM %s/%s %s: %s", round, c.ConfigKey, c.Kind, c.TaskNo, failure))
+			}
+			for _, warning := range c.Warnings {
+				report.Warnings = append(report.Warnings, fmt.Sprintf("R%03d STORM %s/%s %s: %s", round, c.ConfigKey, c.Kind, c.TaskNo, warning))
+			}
+		}
+	}
 	if round%20 == 0 {
 		if cfgC := findConfig(active, "c"); cfgC != nil {
 			edgeCases := r.makeEdgeCases(round, cfgC)
@@ -263,6 +298,11 @@ func (r *runner) runRound(ctx context.Context, round int) roundReport {
 	}
 
 	r.cleanupRoundRedis(ctx, round)
+	if r.pairCheck && round%2 == 0 {
+		failures, warnings := r.runPairCheck(ctx, round)
+		report.Failures = append(report.Failures, failures...)
+		report.Warnings = append(report.Warnings, warnings...)
+	}
 	report.DurationMS = time.Since(started).Milliseconds()
 	return report
 }
@@ -402,22 +442,57 @@ return {ok: resp.ok, status: resp.status, hash: ctx.crypto.sha256(payload)};
 
 func (r *runner) makeCases(round int, cfg *configSpec) []*caseSpec {
 	kinds := []string{"PASS", "REJECT", "REVIEW"}
-	out := make([]*caseSpec, 0, len(kinds))
-	for _, kind := range kinds {
+	repeat := r.multiplier
+	if repeat < 1 {
+		repeat = 1
+	}
+	out := make([]*caseSpec, 0, len(kinds)*repeat)
+	for variant := 0; variant < repeat; variant++ {
+		for _, kind := range kinds {
+			marker := "QA_" + kind
+			if cfg.Mode == "CLASSIFY" {
+				marker = "QA_CLASSIFY_" + kind
+			}
+			nonce := time.Now().UnixNano() + int64(variant)
+			label := kind
+			if variant > 0 {
+				label = fmt.Sprintf("%s#%d", kind, variant+1)
+			}
+			c := &caseSpec{
+				Round: round, ConfigKey: cfg.Key, AuditID: cfg.AuditID, Secret: cfg.CallbackSecret,
+				Kind: label, Expected: kind, Marker: marker,
+				Text:   fmt.Sprintf("%s round=%d config=%s case=%s nonce=%d\n合同编号 QA100-%d-%s，金额 123 万元，请审核。", marker, round, cfg.Key, label, nonce, round, cfg.Key),
+				BizKey: fmt.Sprintf("qa100:%s:r%03d:%s:%s:%d", r.state.RunID, round, cfg.Key, strings.ToLower(kind), nonce),
+			}
+			out = append(out, c)
+		}
+	}
+	cfg.Cases = out
+	return out
+}
+
+func (r *runner) makeStormCases(round int, configs []*configSpec) []*caseSpec {
+	outcomes := []string{"PASS", "REJECT", "REVIEW"}
+	size := r.stormSize
+	if size <= 0 {
+		size = 18
+	}
+	out := make([]*caseSpec, 0, size)
+	for i := 0; i < size; i++ {
+		cfg := configs[i%len(configs)]
+		kind := outcomes[i%len(outcomes)]
 		marker := "QA_" + kind
 		if cfg.Mode == "CLASSIFY" {
 			marker = "QA_CLASSIFY_" + kind
 		}
-		nonce := time.Now().UnixNano()
-		c := &caseSpec{
+		nonce := time.Now().UnixNano() + int64(i)
+		out = append(out, &caseSpec{
 			Round: round, ConfigKey: cfg.Key, AuditID: cfg.AuditID, Secret: cfg.CallbackSecret,
-			Kind: kind, Expected: kind, Marker: marker,
-			Text:   fmt.Sprintf("%s round=%d config=%s case=%s nonce=%d\n合同编号 QA100-%d-%s，金额 123 万元，请审核。", marker, round, cfg.Key, kind, nonce, round, cfg.Key),
-			BizKey: fmt.Sprintf("qa100:%s:r%03d:%s:%s:%d", r.state.RunID, round, cfg.Key, strings.ToLower(kind), nonce),
-		}
-		out = append(out, c)
+			Kind: "STORM_" + kind, Expected: kind, Marker: marker,
+			Text:   fmt.Sprintf("%s STORM round=%d config=%s seq=%d nonce=%d", marker, round, cfg.Key, i, nonce),
+			BizKey: fmt.Sprintf("qa100:%s:r%03d:%s:storm:%d:%d", r.state.RunID, round, cfg.Key, i, nonce),
+		})
 	}
-	cfg.Cases = out
 	return out
 }
 
@@ -443,14 +518,21 @@ func (r *runner) submitCases(ctx context.Context, cases []*caseSpec) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			start := time.Now()
 			t, duplicated, err := r.client.submitTask(ctx, r.state.ProjectID, c.AuditID, c.BizKey, c.Text,
 				map[string]any{"round": c.Round, "config": c.ConfigKey, "kind": c.Kind}, nil)
+			c.SubmittedAt = time.Now()
+			r.recordSubmitLatency(time.Since(start))
 			if err != nil {
 				c.fail("submit: %v", err)
 				return
 			}
 			if duplicated {
 				c.fail("unexpected duplicate on first submit")
+			} else {
+				r.latencyMu.Lock()
+				r.expectedTasks++
+				r.latencyMu.Unlock()
 			}
 			c.Task = t
 			c.TaskID = t.ID
@@ -607,6 +689,10 @@ func (r *runner) verifyCase(ctx context.Context, c *caseSpec) {
 	r.verifyEvents(c)
 	if c.Task.DurationMS > 5000 {
 		c.warn("slow task duration=%dms", c.Task.DurationMS)
+	}
+	if !c.LatencyChecked && !c.SubmittedAt.IsZero() {
+		r.recordTaskLatency(time.Since(c.SubmittedAt))
+		c.LatencyChecked = true
 	}
 }
 
@@ -865,11 +951,16 @@ func (r *runner) runDuplicateTest(ctx context.Context, round int, cfg *configSpe
 	}
 	if duplicated {
 		failures = append(failures, fmt.Sprintf("R%03d duplicate first submit marked duplicated", round))
+	} else {
+		r.latencyMu.Lock()
+		r.expectedTasks++
+		r.latencyMu.Unlock()
 	}
 	c := &caseSpec{
 		Round: round, ConfigKey: "a", AuditID: cfg.AuditID, Secret: cfg.CallbackSecret,
 		Kind: "DUPLICATE", Expected: "PASS", Marker: "QA_PASS",
 		Task: first, TaskID: first.ID, TaskNo: first.TaskNo, FinalResult: "PASS",
+		SubmittedAt: time.Now(),
 	}
 	r.waitCase(ctx, c)
 	r.verifyCase(ctx, c)

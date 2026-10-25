@@ -48,6 +48,10 @@ func main() {
 	actionAddr := flag.String("actions", "127.0.0.1:18081", "HTTP/WS action receiver listen address")
 	statePath := flag.String("state", "", "state file path")
 	reportPath := flag.String("report", "", "JSONL report path")
+	multiplier := flag.Int("multiplier", 1, "task variants per config/outcome per round")
+	stormEvery := flag.Int("storm-every", 0, "extra concurrent burst every N rounds (0 disables)")
+	stormSize := flag.Int("storm-size", 18, "tasks per burst")
+	pairCheck := flag.Bool("pair-check", true, "run consistency check every 2 rounds")
 	flag.Parse()
 
 	root := repoRoot()
@@ -154,7 +158,8 @@ func main() {
 			env: te, client: client, state: st,
 			mock: mock, actions: actions, appRedis: appRedis,
 			actionRedis: actionRedis, db: db,
-			roundStart: *start,
+			roundStart: *start, multiplier: *multiplier,
+			stormEvery: *stormEvery, stormSize: *stormSize, pairCheck: *pairCheck,
 		}
 		if err := runner.runRounds(ctx, *start, *end); err != nil {
 			fatal("run rounds: %v", err)
