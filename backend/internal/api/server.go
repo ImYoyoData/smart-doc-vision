@@ -1,7 +1,9 @@
 package api
 
 import (
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -76,14 +78,22 @@ func (s *Server) Router() *gin.Engine {
 	}
 	r := gin.New()
 	r.Use(gin.Logger(), gin.Recovery(), traceMiddleware(), metricsMiddleware(), bodyLimitMiddleware(40<<20))
-	r.Use(cors.New(cors.Config{
+	corsCfg := cors.Config{
 		AllowOrigins:     s.cfg.CORSOrigins,
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization", "X-Trace-Id", "Idempotency-Key"},
 		ExposeHeaders:    []string{"X-Trace-Id"},
 		AllowCredentials: true,
 		MaxAge:           12 * time.Hour,
-	}))
+	}
+	if s.cfg.AppEnv == "development" {
+		configured := append([]string(nil), s.cfg.CORSOrigins...)
+		corsCfg.AllowOrigins = nil
+		corsCfg.AllowOriginFunc = func(origin string) bool {
+			return originInList(origin, configured) || isDevFrontendOrigin(origin)
+		}
+	}
+	r.Use(cors.New(corsCfg))
 	r.GET("/health", s.health)
 	r.GET("/metrics", s.prometheusMetrics)
 	s.registerAdminUI(r)
@@ -321,4 +331,30 @@ func parseUint(s string) (uint64, bool) {
 		v = v*10 + uint64(ch-'0')
 	}
 	return v, true
+}
+
+func originInList(origin string, allowed []string) bool {
+	origin = strings.TrimRight(strings.TrimSpace(origin), "/")
+	for _, item := range allowed {
+		if origin == strings.TrimRight(strings.TrimSpace(item), "/") {
+			return true
+		}
+	}
+	return false
+}
+
+// isDevFrontendOrigin keeps phone/LAN debugging usable when the machine IP
+// changes; production deployments still rely on the explicit CORS allowlist.
+func isDevFrontendOrigin(origin string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(origin))
+	if err != nil || parsed.Host == "" {
+		return false
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return false
+	}
+	if parsed.Port() != "5173" && parsed.Port() != "8080" {
+		return false
+	}
+	return net.ParseIP(parsed.Hostname()) != nil
 }
