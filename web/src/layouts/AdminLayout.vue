@@ -32,6 +32,7 @@ import {
   TrashOutline,
 } from '@vicons/ionicons5'
 import BrandMark from '@/components/BrandMark.vue'
+import MessageDetailModal from '@/components/MessageDetailModal.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { useThemeStore } from '@/stores/theme'
@@ -53,6 +54,8 @@ const messages = ref<InAppMessage[]>([])
 const messageUnread = ref(0)
 const messageLoading = ref(false)
 const messagePopoverShow = ref(false)
+const messageDetailShow = ref(false)
+const activeMessage = ref<InAppMessage | null>(null)
 
 const sections = [
   {
@@ -140,7 +143,7 @@ function navigate(name: string) {
 async function loadMessages(silent = false) {
   if (!silent) messageLoading.value = true
   try {
-    const data = await messageApi.list({ page: 1, page_size: 6 })
+    const data = await messageApi.list({ page: 1, page_size: 10 })
     messages.value = data.items
     messageUnread.value = data.unread_count
   } catch {
@@ -199,7 +202,16 @@ function handleMessagesUpdated() {
 
 function openMessage(item: InAppMessage) {
   messagePopoverShow.value = false
+  activeMessage.value = item
+  messageDetailShow.value = true
+}
+
+function handleMessageRead(item: InAppMessage) {
   if (!item.read) void markMessageRead(item.id)
+}
+
+function goMessageAction(item: InAppMessage) {
+  messageDetailShow.value = false
   if (item.project_id) workspace.setCurrentProject(item.project_id)
   router.push(item.link || '/reviews').catch(() => undefined)
 }
@@ -433,6 +445,12 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
       </main>
     </div>
 
+    <MessageDetailModal
+      v-model:show="messageDetailShow"
+      :message="activeMessage"
+      @read="handleMessageRead"
+      @action="goMessageAction"
+    />
   </div>
 </template>
 
@@ -764,7 +782,9 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
 
 .message-list {
   display: flex;
+  max-height: min(60vh, 460px);
   flex-direction: column;
+  overflow-y: auto;
 }
 
 .message-item {

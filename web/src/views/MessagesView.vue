@@ -21,6 +21,7 @@ import {
 import dayjs from 'dayjs'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
+import MessageDetailModal from '@/components/MessageDetailModal.vue'
 import { messageApi, notificationPreferenceApi } from '@/api'
 import type { InAppMessage, NotificationPreference } from '@/api/types'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -148,9 +149,12 @@ function goProfile() {
   router.push({ name: 'profile' })
 }
 
-async function openDetail(item: InAppMessage) {
+function openDetail(item: InAppMessage) {
   active.value = item
   detailShow.value = true
+}
+
+async function markDetailRead(item: InAppMessage) {
   if (item.read) return
   try {
     const data = await messageApi.markRead(item.id)
@@ -163,11 +167,10 @@ async function openDetail(item: InAppMessage) {
   }
 }
 
-function goAction() {
-  if (!active.value) return
-  if (active.value.project_id) workspace.setCurrentProject(active.value.project_id)
+function goMessageAction(item: InAppMessage) {
+  if (item.project_id) workspace.setCurrentProject(item.project_id)
   detailShow.value = false
-  router.push(active.value.link || '/reviews')
+  router.push(item.link || '/reviews')
 }
 
 function changePage(value: number) {
@@ -315,29 +318,12 @@ onMounted(load)
       </div>
     </n-modal>
 
-    <n-modal v-model:show="detailShow">
-      <div class="message-detail-modal">
-        <div class="message-detail-head">
-          <div>
-            <div class="detail-kicker">MESSAGE</div>
-            <h2>{{ active?.title }}</h2>
-            <p>{{ typeLabel(active?.type) }} · {{ formatTime(active?.created_at) }}</p>
-          </div>
-          <button type="button" class="detail-close" title="关闭" aria-label="关闭" @click="detailShow = false">×</button>
-        </div>
-        <div class="message-detail-body">
-          <p class="message-detail-text">{{ active?.body || '这条消息没有正文。' }}</p>
-          <div class="message-detail-meta">
-            <span>状态：{{ active?.read ? '已读' : '未读' }}</span>
-            <span v-if="active?.task_id">任务 #{{ active.task_id }}</span>
-          </div>
-        </div>
-        <div class="message-detail-footer">
-          <n-button @click="detailShow = false">关闭</n-button>
-          <n-button v-if="active?.link" type="primary" @click="goAction">前往处理</n-button>
-        </div>
-      </div>
-    </n-modal>
+    <MessageDetailModal
+      v-model:show="detailShow"
+      :message="active"
+      @read="markDetailRead"
+      @action="goMessageAction"
+    />
   </div>
 </template>
 
@@ -482,49 +468,6 @@ onMounted(load)
 }
 
 
-.message-detail-modal {
-  width: min(760px, calc(100vw - 32px));
-  max-height: min(80vh, 760px);
-  display: flex;
-  flex-direction: column;
-  border-radius: 18px;
-  background: var(--card);
-  box-shadow: 0 30px 80px -20px rgba(15, 23, 42, 0.35);
-}
-
-.message-detail-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 22px 24px 16px;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface-soft);
-  border-radius: 18px 18px 0 0;
-}
-
-.detail-kicker {
-  color: var(--brand);
-  font-family: var(--mono);
-  font-size: 9px;
-  font-weight: 650;
-  letter-spacing: 0.13em;
-}
-
-.message-detail-head h2 {
-  margin: 5px 0 4px;
-  color: var(--ink);
-  font-size: 20px;
-  font-weight: 660;
-  line-height: 1.35;
-}
-
-.message-detail-head p {
-  margin: 0;
-  color: var(--muted);
-  font-size: 11px;
-}
-
 .detail-close {
   padding: 0;
   border: 0;
@@ -533,39 +476,6 @@ onMounted(load)
   font-size: 20px;
   line-height: 1;
   cursor: pointer;
-}
-
-.message-detail-body {
-  overflow-y: auto;
-  padding: 20px 24px;
-}
-
-.message-detail-text {
-  margin: 0;
-  color: var(--text);
-  font-size: 12.5px;
-  line-height: 1.8;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.message-detail-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  margin-top: 18px;
-  padding-top: 12px;
-  border-top: 1px dashed var(--border);
-  color: var(--muted-light);
-  font-size: 10px;
-}
-
-.message-detail-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  padding: 14px 24px 20px;
-  border-top: 1px solid var(--border);
 }
 
 .notify-settings-modal {
