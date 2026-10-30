@@ -13,10 +13,13 @@ import {
 import {
   AddOutline,
   CheckmarkCircleOutline,
+  ChevronForwardOutline,
   CloseCircleOutline,
   CreateOutline,
   FlashOutline,
+  LinkOutline,
   MailOutline,
+  PhonePortraitOutline,
   RefreshOutline,
   TrashOutline,
   WarningOutline,
@@ -38,6 +41,7 @@ const dialog = useDialog()
 const channels = ref<NotificationChannel[]>([])
 const loading = ref(false)
 const modalShow = ref(false)
+const typePickerShow = ref(false)
 const editing = ref<NotificationChannel | null>(null)
 const saving = ref(false)
 const errorText = ref('')
@@ -181,6 +185,12 @@ function openCreate() {
     message.warning('请先选择项目')
     return
   }
+  typePickerShow.value = true
+}
+
+function chooseChannelType(type: string) {
+  if (type !== 'EMAIL') return
+  typePickerShow.value = false
   resetForm()
   modalShow.value = true
 }
@@ -413,6 +423,51 @@ onMounted(load)
     >
       <template #icon><MailOutline /></template>
     </EmptyState>
+
+    <n-modal v-model:show="typePickerShow">
+      <div class="type-modal">
+        <div class="modal-head">
+          <div>
+            <div class="modal-kicker">NEW CHANNEL</div>
+            <h2>选择通知渠道类型</h2>
+            <p>类型决定发送方式和后续配置表单；当前只开放邮箱通知。</p>
+          </div>
+          <div class="modal-head-actions">
+            <span class="modal-icon"><AddOutline /></span>
+            <button class="modal-close" type="button" title="关闭" aria-label="关闭" @click="typePickerShow = false">×</button>
+          </div>
+        </div>
+        <div class="modal-body">
+          <div class="type-grid">
+            <button type="button" class="type-card" @click="chooseChannelType('EMAIL')">
+              <span class="type-icon email"><MailOutline /></span>
+              <span class="type-card-body">
+                <strong>邮箱通知</strong>
+                <p>通过 SMTP 邮箱账号发送，支持 QQ、163、Gmail、Outlook 和自定义服务商。</p>
+              </span>
+              <ChevronForwardOutline class="type-chevron" />
+            </button>
+            <button type="button" class="type-card disabled" disabled>
+              <span class="type-icon"><PhonePortraitOutline /></span>
+              <span class="type-card-body">
+                <strong>短信通知</strong>
+                <p>接入短信服务商，即将支持。</p>
+              </span>
+              <span class="type-soon">即将支持</span>
+            </button>
+            <button type="button" class="type-card disabled" disabled>
+              <span class="type-icon"><LinkOutline /></span>
+              <span class="type-card-body">
+                <strong>Webhook</strong>
+                <p>通过 HTTP Hook 推送到业务系统，即将支持。</p>
+              </span>
+              <span class="type-soon">即将支持</span>
+            </button>
+          </div>
+          <div class="type-picker-hint">其它渠道类型会沿用同一套启停、测试和权限能力。</div>
+        </div>
+      </div>
+    </n-modal>
 
     <n-modal v-model:show="modalShow" :mask-closable="!saving">
       <div class="channel-modal">
@@ -763,6 +818,117 @@ onMounted(load)
 .channel-actions .delete-btn {
   margin-left: auto;
   color: var(--muted-light);
+}
+
+.type-modal {
+  width: min(820px, calc(100vw - 32px));
+  border-radius: 18px;
+  background: var(--card);
+  box-shadow: 0 30px 80px -20px rgba(15, 23, 42, 0.35);
+}
+
+.type-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px;
+}
+
+.type-card {
+  position: relative;
+  display: flex;
+  min-height: 158px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.16s ease, background 0.16s ease, transform 0.16s ease;
+}
+
+.type-card:hover {
+  transform: translateY(-1px);
+  border-color: var(--brand-border);
+  background: var(--brand-softer);
+}
+
+.type-card.disabled {
+  cursor: default;
+  opacity: 0.62;
+}
+
+.type-card.disabled:hover {
+  transform: none;
+  border-color: var(--border);
+  background: var(--card);
+}
+
+.type-icon {
+  display: flex;
+  width: 38px;
+  height: 38px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: var(--surface-strong);
+  color: var(--muted);
+  flex: none;
+}
+
+.type-icon.email {
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+
+.type-icon :deep(svg) {
+  width: 18px;
+  height: 18px;
+}
+
+.type-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.type-card-body strong {
+  color: var(--ink);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.type-card-body p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.type-chevron {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 14px;
+  height: 14px;
+  color: var(--muted-light);
+}
+
+.type-soon {
+  margin-top: auto;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--surface-strong);
+  color: var(--muted-light);
+  font-size: 8.5px;
+}
+
+.type-picker-hint {
+  margin-top: 14px;
+  color: var(--muted-light);
+  font-size: 10px;
 }
 
 .channel-modal {
