@@ -1736,56 +1736,58 @@ onMounted(async () => {
 
     <div v-if="filtered.length" class="audit-list fade-list">
       <article v-for="audit in filtered" :key="audit.id" class="audit-card">
-        <div class="audit-side" :class="{ active: audit.status === 'ACTIVE' }">
-          <ShieldCheckmarkOutline />
+        <div class="audit-card-head">
+          <div class="audit-side" :class="{ active: audit.status === 'ACTIVE' }">
+            <ShieldCheckmarkOutline />
+          </div>
+          <div class="audit-heading">
+            <h3 class="audit-name" :title="audit.name">{{ audit.name }}</h3>
+            <div class="audit-badges">
+              <span class="audit-code mono">{{ audit.code }}</span>
+              <StatusTag :status="audit.status" type="audit" />
+              <StatusTag v-if="audit.provider_kind" :status="audit.provider_kind" type="kind" />
+              <span v-if="audit.decision_mode === 'CLASSIFY' || audit.decision_mode === 'CLASSIFY_ONLY'" class="audit-mode-badge" :class="{ classifier: audit.decision_mode === 'CLASSIFY_ONLY' }">
+                <SparklesOutline />
+                {{ audit.decision_mode === 'CLASSIFY_ONLY' ? '纯分类器' : '分类审核' }} · {{ (audit.categories || []).length }} {{ audit.decision_mode === 'CLASSIFY_ONLY' ? '个类型' : '类' }}
+              </span>
+            </div>
+          </div>
         </div>
-        <div class="audit-main">
-          <div class="audit-title-row">
-            <h3>{{ audit.name }}</h3>
-            <span class="audit-code mono">{{ audit.code }}</span>
-            <StatusTag :status="audit.status" type="audit" />
-            <StatusTag v-if="audit.provider_kind" :status="audit.provider_kind" type="kind" />
-            <span v-if="audit.decision_mode === 'CLASSIFY' || audit.decision_mode === 'CLASSIFY_ONLY'" class="audit-mode-badge" :class="{ classifier: audit.decision_mode === 'CLASSIFY_ONLY' }">
-              <SparklesOutline />
-              {{ audit.decision_mode === 'CLASSIFY_ONLY' ? '纯分类器' : '分类审核' }} · {{ (audit.categories || []).length }} {{ audit.decision_mode === 'CLASSIFY_ONLY' ? '个类型' : '类' }}
-            </span>
-          </div>
-          <p class="audit-desc">{{ audit.description || '暂无说明' }}</p>
-          <div class="audit-meta">
-            <span class="meta-item">
-              <CloudOutline />
-              {{ audit.provider_name || '未绑定模型' }}
-            </span>
-            <span class="meta-item">
-              <TextOutline />
-              {{ (audit.media_types || []).map(mediaLabel).join(' / ') }}
-            </span>
-            <span class="meta-item">
-              <FlashOutline />
-              今日 {{ audit.today_tasks || 0 }} 条
-            </span>
-            <span class="meta-item">
-              <CopyOutline />
-              v{{ audit.version }}
-            </span>
-            <span class="meta-item">
-              去重 {{ audit.dedupe_window_sec ? `${Math.round(audit.dedupe_window_sec / 3600)}h` : '关闭' }}
-            </span>
-            <span v-if="audit.review_mode === 'EXTERNAL'" class="meta-item" title="REVIEW 任务不进本平台复核台，由结果动作通知业务系统复核">外部复核</span>
-          </div>
-          <div class="audit-trigger-row">
-            <span class="trigger-row-label">已开启接入</span>
-            <span v-for="type in audit.active_triggers || []" :key="type" class="trigger-chip">{{ triggerLabel(type) }}</span>
-            <span v-if="!(audit.active_triggers || []).length" class="trigger-chip muted">暂无</span>
-          </div>
-          <div class="audit-prompt">{{ audit.review_prompt }}</div>
+        <p class="audit-desc" :title="audit.description || ''">{{ audit.description || '暂无说明' }}</p>
+        <div class="audit-meta">
+          <span class="meta-item">
+            <CloudOutline />
+            {{ audit.provider_name || '未绑定模型' }}
+          </span>
+          <span class="meta-item">
+            <TextOutline />
+            {{ (audit.media_types || []).map(mediaLabel).join(' / ') }}
+          </span>
+          <span class="meta-item">
+            <FlashOutline />
+            今日 {{ audit.today_tasks || 0 }} 条
+          </span>
+          <span class="meta-item">
+            <CopyOutline />
+            v{{ audit.version }}
+          </span>
+          <span class="meta-item">
+            去重 {{ audit.dedupe_window_sec ? `${Math.round(audit.dedupe_window_sec / 3600)}h` : '关闭' }}
+          </span>
+          <span v-if="audit.review_mode === 'EXTERNAL'" class="meta-item" title="REVIEW 任务不进本平台复核台，由结果动作通知业务系统复核">外部复核</span>
         </div>
+        <div class="audit-trigger-row">
+          <span class="trigger-row-label">已开启接入</span>
+          <span v-for="type in audit.active_triggers || []" :key="type" class="trigger-chip">{{ triggerLabel(type) }}</span>
+          <span v-if="!(audit.active_triggers || []).length" class="trigger-chip muted">暂无</span>
+        </div>
+        <div class="audit-prompt" :title="audit.review_prompt">{{ audit.review_prompt }}</div>
         <div class="audit-actions">
-          <n-button v-if="auth.can('task:submit')" size="small" type="primary" :disabled="audit.status !== 'ACTIVE'" @click="openSubmit(audit)">
+          <n-button v-if="auth.can('task:submit')" class="audit-run" size="small" type="primary" :disabled="audit.status !== 'ACTIVE'" @click="openSubmit(audit)">
             <template #icon><FlashOutline /></template>
             发起审核
           </n-button>
-          <div class="action-row">
+          <div class="audit-action-row">
             <n-button size="small" secondary @click="openGuide(audit)">接入指南</n-button>
             <n-button size="small" quaternary @click="openExport(audit)">
               <template #icon><DownloadOutline /></template>
@@ -2606,24 +2608,34 @@ onMounted(async () => {
 }
 
 .audit-list {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  align-items: stretch;
+  gap: 14px;
 }
 
 .audit-card {
   display: flex;
-  gap: 16px;
-  padding: 18px 20px 17px;
+  min-width: 0;
+  flex-direction: column;
+  padding: 18px;
   border: 1px solid var(--border);
-  border-radius: 15px;
+  border-radius: 16px;
   background: #fff;
   box-shadow: var(--shadow-sm);
-  transition: box-shadow 0.18s ease;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
 }
 
 .audit-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--brand-border);
   box-shadow: var(--shadow-md);
+}
+
+.audit-card-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
 }
 
 .audit-side {
@@ -2635,7 +2647,7 @@ onMounted(async () => {
   border-radius: 12px;
   background: #f3f5f9;
   color: #94a3b8;
-  flex-shrink: 0;
+  flex: none;
 }
 
 .audit-side.active {
@@ -2648,40 +2660,67 @@ onMounted(async () => {
   height: 19px;
 }
 
-.audit-main {
+.audit-heading {
   min-width: 0;
   flex: 1;
 }
 
-.audit-title-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 7px;
+.audit-name {
+  margin: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.audit-title-row h3 {
-  margin: 0;
-  color: var(--ink);
-  font-size: 14.5px;
-  font-weight: 620;
+.audit-badges {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 7px;
+}
+
+.audit-badges :deep(.status-pill) {
+  height: 20px;
+  padding: 0 7px;
+  gap: 4px;
+  font-size: 10px;
+}
+
+.audit-badges :deep(.status-pill i) {
+  width: 5px;
+  height: 5px;
 }
 
 .audit-code {
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: var(--surface-soft);
   color: var(--muted-light);
   font-size: 9.5px;
 }
 
 .audit-desc {
-  margin: 5px 0 8px;
+  display: -webkit-box;
+  min-height: 37px;
+  margin: 12px 0 0;
+  overflow: hidden;
   color: var(--muted);
   font-size: 11.5px;
+  line-height: 1.6;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .audit-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 7px;
+  gap: 6px;
+  margin-top: 10px;
 }
 
 .meta-item {
@@ -2727,29 +2766,42 @@ onMounted(async () => {
 }
 
 .audit-prompt {
+  display: -webkit-box;
+  margin: 10px 0 12px;
+  padding: 8px 10px;
   overflow: hidden;
-  max-width: 780px;
-  margin-top: 10px;
-  color: #9aa5b5;
+  border-radius: 8px;
+  background: var(--surface-soft);
+  color: #8b96a8;
   font-size: 10px;
-  line-height: 1.6;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.55;
+  word-break: break-word;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .audit-actions {
   display: flex;
-  align-items: flex-end;
   flex-direction: column;
-  justify-content: space-between;
-  gap: 12px;
-  flex-shrink: 0;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
 }
 
-.action-row {
+.audit-run {
+  width: 100%;
+}
+
+.audit-action-row {
   display: flex;
-  gap: 1px;
-  color: var(--muted);
+  align-items: center;
+  gap: 4px;
+}
+
+.audit-action-row :deep(.n-button) {
+  min-width: 0;
+  flex: 1;
 }
 
 .delete-btn {
@@ -3442,11 +3494,6 @@ onMounted(async () => {
   height: 10px;
 }
 
-.action-row {
-  align-items: center;
-  gap: 4px;
-}
-
 .mode-picker {
   display: flex;
   align-items: center;
@@ -3728,17 +3775,6 @@ onMounted(async () => {
     width: 100%;
     margin-left: 0;
   }
-
-  .audit-card {
-    flex-wrap: wrap;
-  }
-
-  .audit-actions {
-    width: 100%;
-    align-items: center;
-    flex-direction: row;
-    justify-content: flex-end;
-  }
 }
 
 @media (max-width: 620px) {
@@ -3747,16 +3783,8 @@ onMounted(async () => {
     grid-template-columns: 1fr;
   }
 
-  .audit-actions {
-    flex-wrap: wrap;
-    justify-content: flex-start;
-  }
-
-  .audit-prompt {
-    white-space: normal;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
+  .audit-card {
+    padding: 16px;
   }
 
   .modal-head,
@@ -4268,10 +4296,6 @@ onMounted(async () => {
     position: absolute;
     top: 6px;
     right: 6px;
-  }
-
-  .action-row {
-    flex-wrap: wrap;
   }
 
   .export-target {
