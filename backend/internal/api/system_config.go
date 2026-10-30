@@ -50,8 +50,6 @@ func (s *Server) systemConfigGroups() []systemConfigGroup {
 				plainConfigField("WORKER_COUNT", "审核 Worker 数", fmt.Sprint(cfg.WorkerCount)),
 				plainConfigField("MEDIA_ALLOW_PRIVATE", "允许私有网络地址", yesNo(cfg.AllowPrivate)),
 				plainConfigField("CORS_ORIGINS", "允许的 CORS 来源", strings.Join(cfg.CORSOrigins, ", ")),
-				plainConfigField("ENV_FILE", "环境配置文件", valueOrUnset(cfg.EnvFile)),
-				plainConfigField("CONFIG_FILE", "YAML 配置文件", valueOrUnset(cfg.ConfigFile)),
 			},
 		},
 		{
@@ -59,11 +57,14 @@ func (s *Server) systemConfigGroups() []systemConfigGroup {
 			Fields: mysqlConfigFields(cfg.MySQLDSN),
 		},
 		{
-			Key: "redis", Title: "Redis", Description: "平台缓存与队列连接；密码已脱敏。",
+			Key: "ai", Title: "默认模型", Description: "未在模型接入中单独配置时使用的默认 AI 参数。",
 			Fields: []systemConfigField{
-				plainConfigField("REDIS_ADDR", "连接地址", cfg.RedisAddr),
-				plainConfigField("REDIS_DB", "数据库编号", fmt.Sprint(cfg.RedisDB)),
-				secretConfigField("REDIS_PASSWORD", "访问密码", cfg.RedisPassword),
+				plainConfigField("DEFAULT_AI_BASE_URL", "默认 Base URL", cfg.DefaultAIBaseURL),
+				plainConfigField("DEFAULT_AI_MODEL", "默认模型", cfg.DefaultAIModel),
+				secretConfigField("DEFAULT_AI_API_KEY", "默认 API Key", cfg.DefaultAIAPIKey),
+				plainConfigField("DEFAULT_AI_SUPPORTS_VISION", "默认支持图片", yesNo(cfg.DefaultAISupportsVision)),
+				plainConfigField("JEV_BASE_URL", "JEV Base URL", cfg.JEVBaseURL),
+				plainConfigField("JEV_MODEL", "JEV 模型", cfg.JEVModel),
 			},
 		},
 		{
@@ -76,14 +77,11 @@ func (s *Server) systemConfigGroups() []systemConfigGroup {
 			},
 		},
 		{
-			Key: "ai", Title: "默认模型", Description: "未在模型接入中单独配置时使用的默认 AI 参数。",
+			Key: "redis", Title: "Redis", Description: "平台缓存与队列连接；密码已脱敏。",
 			Fields: []systemConfigField{
-				plainConfigField("DEFAULT_AI_BASE_URL", "默认 Base URL", cfg.DefaultAIBaseURL),
-				plainConfigField("DEFAULT_AI_MODEL", "默认模型", cfg.DefaultAIModel),
-				secretConfigField("DEFAULT_AI_API_KEY", "默认 API Key", cfg.DefaultAIAPIKey),
-				plainConfigField("DEFAULT_AI_SUPPORTS_VISION", "默认支持图片", yesNo(cfg.DefaultAISupportsVision)),
-				plainConfigField("JEV_BASE_URL", "JEV Base URL", cfg.JEVBaseURL),
-				plainConfigField("JEV_MODEL", "JEV 模型", cfg.JEVModel),
+				plainConfigField("REDIS_ADDR", "连接地址", cfg.RedisAddr),
+				plainConfigField("REDIS_DB", "数据库编号", fmt.Sprint(cfg.RedisDB)),
+				secretConfigField("REDIS_PASSWORD", "访问密码", cfg.RedisPassword),
 			},
 		},
 	}
@@ -124,14 +122,6 @@ func secretConfigField(key, label, value string) systemConfigField {
 		Key: key, Label: label, Value: security.MaskSecret(value),
 		Sensitive: true, Configured: true,
 	}
-}
-
-func valueOrUnset(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return "未使用"
-	}
-	return value
 }
 
 func yesNo(value bool) string {

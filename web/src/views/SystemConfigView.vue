@@ -257,11 +257,14 @@ onMounted(load)
 .config-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
-  align-items: start;
+  align-items: stretch;
   gap: 14px;
 }
 
 .config-card {
+  display: flex;
+  height: 100%;
+  flex-direction: column;
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 16px;
@@ -310,11 +313,15 @@ onMounted(load)
 }
 
 .config-fields {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
   padding: 2px 17px 8px;
 }
 
 .config-field {
   display: flex;
+  flex: 1 0 auto;
   align-items: center;
   justify-content: space-between;
   gap: 18px;
