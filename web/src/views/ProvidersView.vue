@@ -1395,14 +1395,16 @@ onMounted(load)
 
 .provider-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  align-items: stretch;
   gap: 14px;
 }
 
 .provider-card {
   display: flex;
+  min-width: 0;
   flex-direction: column;
-  padding: 20px;
+  padding: 18px;
   border: 1px solid var(--border);
   border-radius: 17px;
   background: #fff;
@@ -1465,7 +1467,19 @@ onMounted(load)
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+}
+
+.provider-name-row :deep(.status-pill) {
+  height: 20px;
+  padding: 0 7px;
+  gap: 4px;
+  font-size: 10px;
+}
+
+.provider-name-row :deep(.status-pill i) {
+  width: 5px;
+  height: 5px;
 }
 
 .provider-name-row h3 {
@@ -1585,8 +1599,9 @@ onMounted(load)
 
 .provider-usage {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-end;
-  gap: 18px;
+  gap: 8px 18px;
   margin-top: 14px;
   padding-top: 12px;
   border-top: 1px dashed #edf1f7;
@@ -2294,12 +2309,6 @@ onMounted(load)
   display: flex;
   gap: 8px;
   flex-shrink: 0;
-}
-
-@media (max-width: 1100px) {
-  .provider-grid {
-    grid-template-columns: 1fr;
-  }
 }
 
 @media (max-width: 720px) {

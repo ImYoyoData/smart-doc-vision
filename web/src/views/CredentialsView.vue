@@ -436,14 +436,16 @@ onMounted(load)
 
 .credential-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  align-items: stretch;
   gap: 14px;
 }
 
 .credential-card {
   display: flex;
+  min-width: 0;
   flex-direction: column;
-  padding: 19px;
+  padding: 18px;
   border: 1px solid var(--border);
   border-radius: 16px;
   background: #fff;
@@ -845,12 +847,6 @@ onMounted(load)
   display: flex;
   justify-content: flex-end;
   padding: 0 24px 20px;
-}
-
-@media (max-width: 1000px) {
-  .credential-grid {
-    grid-template-columns: 1fr;
-  }
 }
 
 @media (max-width: 600px) {
