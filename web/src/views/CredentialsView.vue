@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { NButton, NInput, NModal, NSelect, NSwitch, useDialog, useMessage } from 'naive-ui'
+import { NButton, NInput, NModal, NPopover, NSelect, NSwitch, useDialog, useMessage } from 'naive-ui'
 import {
   AddOutline,
   CheckmarkCircleOutline,
@@ -18,7 +18,7 @@ import StatusTag from '@/components/StatusTag.vue'
 import CopyButton from '@/components/CopyButton.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import { auditApi, credentialApi } from '@/api'
-import type { APICredential, Audit } from '@/api/types'
+import type { APICredential, Audit, CredentialScope } from '@/api/types'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 const workspace = useWorkspaceStore()
@@ -186,6 +186,47 @@ function openAuditReport(scopeId: number) {
   })
 }
 
+const VISIBLE_SCOPE_LIMIT = 2
+const scopePopoverId = ref<number | null>(null)
+
+function decorateScope(scope: CredentialScope) {
+  const kind = audits.value.find((a) => a.id === scope.id)?.provider_kind || ''
+  return {
+    ...scope,
+    kindShort: kind === 'JEV' ? 'JEV' : kind ? '通用' : '',
+    kindTone: kind === 'JEV' ? 'jev' : 'generic',
+    kindLabel:
+      kind === 'JEV'
+        ? 'JEV 决策模型'
+        : kind === 'ANTHROPIC'
+          ? '通用大模型 · Anthropic 协议'
+          : kind === 'OPENAI_COMPATIBLE'
+            ? '通用大模型 · OpenAI 协议'
+            : '',
+  }
+}
+
+function visibleScopes(credential: APICredential) {
+  return credential.scopes.slice(0, VISIBLE_SCOPE_LIMIT).map(decorateScope)
+}
+
+function allScopes(credential: APICredential) {
+  return credential.scopes.map(decorateScope)
+}
+
+function hiddenScopeCount(credential: APICredential) {
+  return Math.max(0, credential.scopes.length - VISIBLE_SCOPE_LIMIT)
+}
+
+function toggleScopePopover(credentialId: number, value: boolean) {
+  scopePopoverId.value = value ? credentialId : null
+}
+
+function openScopeFromPopover(scope: CredentialScope) {
+  scopePopoverId.value = null
+  if (scope.exists) openAuditReport(scope.id)
+}
+
 watch(() => workspace.currentProjectId, load)
 onMounted(load)
 </script>
@@ -265,7 +306,7 @@ onMounted(load)
         </div>
         <div class="scope-list">
           <button
-            v-for="scope in credential.scopes"
+            v-for="scope in visibleScopes(credential)"
             :key="scope.id"
             type="button"
             class="scope-chip"
@@ -273,8 +314,44 @@ onMounted(load)
             @click="scope.exists ? openAuditReport(scope.id) : undefined"
           >
             <span>{{ scope.name || `审核 #${scope.id}` }}</span>
+            <em v-if="scope.kindShort" class="scope-kind" :class="scope.kindTone" :title="scope.kindLabel">{{ scope.kindShort }}</em>
             <small>{{ scope.exists ? scope.code : '已删除/不可用' }}</small>
           </button>
+          <n-popover
+            v-if="hiddenScopeCount(credential) > 0"
+            :show="scopePopoverId === credential.id"
+            trigger="click"
+            placement="top-start"
+            :width="360"
+            @update:show="(value) => toggleScopePopover(credential.id, value)"
+          >
+            <template #trigger>
+              <button
+                class="scope-chip more"
+                type="button"
+                :title="`查看全部 ${credential.scopes.length} 条授权审核配置`"
+                :aria-label="`查看全部 ${credential.scopes.length} 条授权审核配置`"
+              >+{{ hiddenScopeCount(credential) }}</button>
+            </template>
+            <div class="scope-popover">
+              <strong>全部授权审核配置（{{ credential.scopes.length }}）</strong>
+              <div class="scope-popover-list">
+                <button
+                  v-for="scope in allScopes(credential)"
+                  :key="scope.id"
+                  type="button"
+                  class="scope-chip"
+                  :class="{ missing: !scope.exists }"
+                  :disabled="!scope.exists"
+                  @click="openScopeFromPopover(scope)"
+                >
+                  <span>{{ scope.name || `审核 #${scope.id}` }}</span>
+                  <em v-if="scope.kindShort" class="scope-kind" :class="scope.kindTone" :title="scope.kindLabel">{{ scope.kindShort }}</em>
+                  <small>{{ scope.exists ? scope.code : '已删除/不可用' }}</small>
+                </button>
+              </div>
+            </div>
+          </n-popover>
           <span v-if="!credential.scopes.length" class="scope-missing">未授权任何审核配置</span>
         </div>
 
@@ -555,8 +632,9 @@ onMounted(load)
 
 .scope-chip {
   display: flex;
-  align-items: baseline;
-  gap: 4px;
+  max-width: 100%;
+  align-items: center;
+  gap: 5px;
   padding: 3px 7px;
   border: 1px solid #e5ebf4;
   border-radius: 6px;
@@ -571,10 +649,47 @@ onMounted(load)
   background: #f8fbff;
 }
 
+.scope-chip > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .scope-chip small {
   color: var(--muted-light);
   font-family: var(--mono);
   font-size: 7.5px;
+  flex: none;
+}
+
+.scope-kind {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--brand-soft);
+  color: var(--brand-strong);
+  font-style: normal;
+  font-size: 7.5px;
+  font-weight: 600;
+  line-height: 1.5;
+  flex: none;
+}
+
+.scope-kind.jev {
+  background: var(--purple-soft);
+  color: var(--purple);
+}
+
+.scope-chip.more {
+  border-style: dashed;
+  background: transparent;
+  color: var(--brand-strong);
+  font-family: inherit;
+}
+
+.scope-chip.more:hover {
+  border-color: var(--brand-border);
+  background: var(--brand-soft);
 }
 
 .scope-chip.missing {
@@ -582,6 +697,31 @@ onMounted(load)
   background: #fff9f9;
   color: #b45353;
   cursor: default;
+}
+
+.scope-chip:disabled {
+  opacity: 1;
+}
+
+.scope-popover {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.scope-popover > strong {
+  color: var(--ink);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.scope-popover-list {
+  display: flex;
+  max-height: 240px;
+  flex-wrap: wrap;
+  gap: 6px;
+  overflow-y: auto;
+  padding-right: 2px;
 }
 
 .scope-missing {
