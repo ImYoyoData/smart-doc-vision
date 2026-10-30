@@ -260,8 +260,8 @@ func (s *Server) me(c *gin.Context) {
 func userView(user model.User) gin.H {
 	return gin.H{
 		"id": user.ID, "username": user.Username, "display_name": user.DisplayName,
-		"email": user.Email,
-		"role":  user.Role, "status": user.Status, "last_login_at": user.LastLoginAt,
+		"email": user.Email, "email_notify_enabled": user.EmailNotifyEnabled,
+		"role": user.Role, "status": user.Status, "last_login_at": user.LastLoginAt,
 		"mfa_enabled": user.MFAEnabled,
 		"project_ids": user.ProjectIDs, "audit_ids": user.AuditIDs,
 		"permissions": user.Permissions, "menus": user.Menus,

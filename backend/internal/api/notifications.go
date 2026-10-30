@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	mail "github.com/wneessen/go-mail"
 
 	"smartdoc-vision/backend/internal/model"
+	"smartdoc-vision/backend/internal/notify"
 )
 
 type notificationEmailConfig struct {
@@ -425,45 +425,12 @@ func defaultSMTPPort(security string) int {
 }
 
 func sendNotificationTestEmail(cfg notificationEmailConfig, channelName, projectName, to string) error {
-	security := strings.ToLower(strings.TrimSpace(cfg.Security))
-	timeout := time.Duration(cfg.TimeoutSec) * time.Second
-	if timeout <= 0 {
-		timeout = 10 * time.Second
-	}
-	opts := []mail.Option{
-		mail.WithPort(cfg.Port),
-		mail.WithTimeout(timeout),
-		mail.WithSMTPAuth(mail.SMTPAuthPlain),
-		mail.WithUsername(cfg.Username),
-		mail.WithPassword(cfg.Password),
-	}
-	switch security {
-	case "ssl":
-		opts = append(opts, mail.WithSSL())
-	case "starttls":
-		opts = append(opts, mail.WithTLSPolicy(mail.TLSMandatory))
-	default:
-		opts = append(opts, mail.WithTLSPolicy(mail.NoTLS))
-	}
-	client, err := mail.NewClient(cfg.Host, opts...)
-	if err != nil {
-		return err
-	}
-	msg := mail.NewMsg()
-	if cfg.FromName != "" {
-		if err := msg.FromFormat(cfg.FromName, cfg.FromAddress); err != nil {
-			return err
-		}
-	} else if err := msg.From(cfg.FromAddress); err != nil {
-		return err
-	}
-	if err := msg.To(to); err != nil {
-		return err
-	}
-	msg.Subject("SmartDoc Vision 通知渠道测试")
-	msg.SetBodyString(mail.TypeTextPlain, fmt.Sprintf(
+	return notify.SendEmail(notify.EmailConfig{
+		Host: cfg.Host, Port: cfg.Port, Username: cfg.Username, Password: cfg.Password,
+		FromName: cfg.FromName, FromAddress: cfg.FromAddress, Security: cfg.Security,
+		TimeoutSec: cfg.TimeoutSec,
+	}, to, "SmartDoc Vision 通知渠道测试", fmt.Sprintf(
 		"这是一封来自 SmartDoc Vision 的测试邮件。\n\n渠道名称：%s\n项目：%s\n发送时间：%s\n",
 		channelName, projectName, time.Now().Format("2006-01-02 15:04:05"),
 	))
-	return client.DialAndSend(msg)
 }

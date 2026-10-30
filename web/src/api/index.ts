@@ -18,6 +18,7 @@ import type {
   MFAStatus,
   MonitorData,
   NotificationChannel,
+  NotificationPreference,
   Paged,
   Project,
   Provider,
@@ -145,6 +146,13 @@ export const notificationApi = {
     patch<NotificationChannel>(`/notification-channels/${id}/status`, { status }),
   test: (id: number, to: string) =>
     post<{ ok: boolean; to: string; message: string }>(`/notification-channels/${id}/test`, { to }),
+}
+
+export const notificationPreferenceApi = {
+  get: (projectId: number) =>
+    get<NotificationPreference>('/notification-preferences', projectId ? { project_id: projectId } : undefined),
+  update: (payload: { email_notify_enabled: boolean; project_id: number }) =>
+    put<NotificationPreference>('/notification-preferences', payload),
 }
 
 export const messageApi = {

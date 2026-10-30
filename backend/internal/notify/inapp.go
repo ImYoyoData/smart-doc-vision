@@ -1,7 +1,9 @@
 package notify
 
 import (
+	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 
 	"gorm.io/gorm"
@@ -9,12 +11,13 @@ import (
 
 	"smartdoc-vision/backend/internal/catalog"
 	"smartdoc-vision/backend/internal/model"
+	"smartdoc-vision/backend/internal/security"
 )
 
 // NotifyReviewPending creates one inbox message per eligible reviewer when a
 // task enters the internal REVIEW_PENDING queue. An empty audit scope means the
 // user can access every audit inside their project scope.
-func NotifyReviewPending(db *gorm.DB, task model.Task, audit model.Audit, summary string) error {
+func NotifyReviewPending(db *gorm.DB, cipher *security.Cipher, task model.Task, audit model.Audit, summary string) error {
 	recipients, err := reviewRecipients(db, task)
 	if err != nil {
 		return err
@@ -26,6 +29,7 @@ func NotifyReviewPending(db *gorm.DB, task model.Task, audit model.Audit, summar
 	if text := strings.TrimSpace(summary); text != "" {
 		body += " " + truncateRunes(text, 180)
 	}
+	title := truncateRunes("待议复核 · "+audit.Name, 200)
 	link := fmt.Sprintf("/reviews?project_id=%d&audit_id=%d&task_id=%d", task.ProjectID, task.AuditID, task.ID)
 	messages := make([]model.InAppMessage, 0, len(recipients))
 	for _, user := range recipients {
@@ -33,7 +37,7 @@ func NotifyReviewPending(db *gorm.DB, task model.Task, audit model.Audit, summar
 			UserID:    user.ID,
 			DedupeKey: fmt.Sprintf("review:%d", task.ID),
 			Type:      model.MessageTypeReviewPending,
-			Title:     truncateRunes("待议复核 · "+audit.Name, 200),
+			Title:     title,
 			Body:      truncateRunes(body, 1000),
 			Link:      link,
 			ProjectID: task.ProjectID,
@@ -41,7 +45,88 @@ func NotifyReviewPending(db *gorm.DB, task model.Task, audit model.Audit, summar
 			TaskID:    task.ID,
 		})
 	}
-	return db.Clauses(clause.OnConflict{DoNothing: true}).Create(&messages).Error
+	return CreateMessages(db, cipher, task.ProjectID, messages, title, body)
+}
+
+// CreateMessages is the shared entry point for every in-app message type. It
+// persists new messages and, for users who enabled email notifications, sends
+// the same notification to their email using the project's usable channel.
+func CreateMessages(db *gorm.DB, cipher *security.Cipher, projectID uint64, messages []model.InAppMessage, subject, body string) error {
+	if len(messages) == 0 {
+		return nil
+	}
+	result := db.Clauses(clause.OnConflict{DoNothing: true}).Create(&messages)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return nil
+	}
+	go sendMessageEmails(db, cipher, projectID, messages, subject, body)
+	return nil
+}
+
+func sendMessageEmails(db *gorm.DB, cipher *security.Cipher, projectID uint64, messages []model.InAppMessage, subject, body string) {
+	if cipher == nil || projectID == 0 {
+		return
+	}
+	userIDs := make([]uint64, 0, len(messages))
+	seen := make(map[uint64]bool, len(messages))
+	for _, message := range messages {
+		if message.UserID == 0 || seen[message.UserID] {
+			continue
+		}
+		seen[message.UserID] = true
+		userIDs = append(userIDs, message.UserID)
+	}
+	var users []model.User
+	if err := db.Where("id IN ? AND email_notify_enabled = ? AND email <> ''", userIDs, true).Find(&users).Error; err != nil {
+		log.Printf("load email notification recipients: %v", err)
+		return
+	}
+	if len(users) == 0 {
+		return
+	}
+	var channel model.NotificationChannel
+	if err := db.Where("project_id = ? AND type = ? AND status = ? AND last_test_ok = ?",
+		projectID, model.NotificationTypeEmail, model.NotificationStatusActive, true).
+		Order("id asc").First(&channel).Error; err != nil {
+		return
+	}
+	raw, err := cipher.Decrypt(channel.ConfigEnc)
+	if err != nil {
+		log.Printf("decrypt notification channel %d: %v", channel.ID, err)
+		return
+	}
+	var cfg EmailConfig
+	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+		log.Printf("parse notification channel %d: %v", channel.ID, err)
+		return
+	}
+	userMap := make(map[uint64]model.User, len(users))
+	for _, user := range users {
+		userMap[user.ID] = user
+	}
+	for _, message := range messages {
+		user, ok := userMap[message.UserID]
+		if !ok {
+			continue
+		}
+		mailSubject := subject
+		if strings.TrimSpace(mailSubject) == "" {
+			mailSubject = message.Title
+		}
+		mailBody := body
+		if strings.TrimSpace(mailBody) == "" {
+			mailBody = message.Body
+		}
+		to := user.Email
+		go func() {
+			if err := SendEmail(cfg, to, mailSubject, mailBody+"\n\n请登录 SmartDoc Vision 查看详情。"); err != nil {
+				log.Printf("send notification email to %s: %v", to, err)
+			}
+		}()
+	}
 }
 
 func reviewRecipients(db *gorm.DB, task model.Task) ([]model.User, error) {

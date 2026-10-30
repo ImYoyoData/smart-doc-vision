@@ -258,6 +258,9 @@ func (s *Server) updateUser(c *gin.Context) {
 			return
 		}
 		user.Email = email
+		if email == "" {
+			user.EmailNotifyEnabled = false
+		}
 	}
 	if req.Password != "" {
 		if err := validatePassword(req.Password); err != nil {
@@ -361,7 +364,12 @@ func (s *Server) updateProfile(c *gin.Context) {
 		badRequest(c, err.Error())
 		return
 	}
-	if err := s.db.Model(&model.User{}).Where("id = ?", user.ID).Update("email", email).Error; err != nil {
+	updates := map[string]any{"email": email}
+	if email == "" {
+		updates["email_notify_enabled"] = false
+		user.EmailNotifyEnabled = false
+	}
+	if err := s.db.Model(&model.User{}).Where("id = ?", user.ID).Updates(updates).Error; err != nil {
 		serverError(c, err)
 		return
 	}

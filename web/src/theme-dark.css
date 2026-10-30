@@ -1021,3 +1021,7 @@ html[data-theme='dark'] .vars-panel code {
   background: var(--surface-strong) !important;
   color: var(--text) !important;
 }
+
+html[data-theme='dark'] .notify-reason {
+  color: var(--amber) !important;
+}

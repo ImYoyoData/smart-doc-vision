@@ -7,6 +7,7 @@ import {
   NModal,
   NPagination,
   NSelect,
+  NSwitch,
   useMessage,
 } from 'naive-ui'
 import {
@@ -14,12 +15,14 @@ import {
   NotificationsOutline,
   RefreshOutline,
   SearchOutline,
+  SettingsOutline,
+  WarningOutline,
 } from '@vicons/ionicons5'
 import dayjs from 'dayjs'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
-import { messageApi } from '@/api'
-import type { InAppMessage } from '@/api/types'
+import { messageApi, notificationPreferenceApi } from '@/api'
+import type { InAppMessage, NotificationPreference } from '@/api/types'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 const router = useRouter()
@@ -37,8 +40,14 @@ const statusFilter = ref<'ALL' | 'UNREAD' | 'READ'>('ALL')
 const typeFilter = ref('ALL')
 const detailShow = ref(false)
 const active = ref<InAppMessage | null>(null)
+const settingsShow = ref(false)
+const prefLoading = ref(false)
+const prefSaving = ref(false)
+const preference = ref<NotificationPreference | null>(null)
+const prefError = ref('')
 
 const pageCount = computed(() => Math.max(1, Math.ceil(total.value / pageSize)))
+const canToggleEmail = computed(() => Boolean(preference.value?.has_email && preference.value?.has_channel))
 const statusOptions = [
   { label: '全部状态', value: 'ALL' },
   { label: '未读', value: 'UNREAD' },
@@ -103,6 +112,42 @@ async function markAllRead() {
   }
 }
 
+async function openSettings() {
+  settingsShow.value = true
+  prefLoading.value = true
+  prefError.value = ''
+  try {
+    preference.value = await notificationPreferenceApi.get(workspace.currentProjectId || 0)
+  } catch (error) {
+    prefError.value = error instanceof Error ? error.message : '加载通知设置失败'
+    preference.value = null
+  } finally {
+    prefLoading.value = false
+  }
+}
+
+async function toggleEmailNotify(value: boolean) {
+  if (!preference.value || !canToggleEmail.value || prefSaving.value) return
+  prefSaving.value = true
+  prefError.value = ''
+  try {
+    preference.value = await notificationPreferenceApi.update({
+      email_notify_enabled: value,
+      project_id: workspace.currentProjectId || 0,
+    })
+    message.success(value ? '已开启邮箱通知' : '已关闭邮箱通知')
+  } catch (error) {
+    prefError.value = error instanceof Error ? error.message : '更新通知设置失败'
+  } finally {
+    prefSaving.value = false
+  }
+}
+
+function goProfile() {
+  settingsShow.value = false
+  router.push({ name: 'profile' })
+}
+
 async function openDetail(item: InAppMessage) {
   active.value = item
   detailShow.value = true
@@ -146,6 +191,10 @@ onMounted(load)
       subtitle="待议复核与系统通知会在这里汇总；打开消息详情后自动标记为已读。"
     >
       <template #actions>
+        <n-button secondary @click="openSettings">
+          <template #icon><SettingsOutline /></template>
+          通知设置
+        </n-button>
         <n-button secondary :loading="loading" @click="load">
           <template #icon><RefreshOutline /></template>
           刷新
@@ -218,6 +267,52 @@ onMounted(load)
         />
       </div>
     </section>
+
+    <n-modal v-model:show="settingsShow">
+      <div class="notify-settings-modal">
+        <div class="notify-settings-head">
+          <div>
+            <div class="settings-kicker">PERSONAL SETTINGS</div>
+            <h2>通知设置</h2>
+            <p>配置待议复核等消息的邮箱通知。</p>
+          </div>
+          <button type="button" class="detail-close" title="关闭" aria-label="关闭" @click="settingsShow = false">×</button>
+        </div>
+        <div class="notify-settings-body">
+          <div v-if="prefLoading" class="message-page-loading">正在加载…</div>
+          <template v-else-if="preference">
+            <div class="notify-switch-row">
+              <div>
+                <strong>邮箱通知</strong>
+                <p>开启后，所有新的站内消息都会同时发送到 {{ preference.email || '你的邮箱' }}。</p>
+              </div>
+              <n-switch
+                :value="preference.email_notify_enabled"
+                :disabled="!canToggleEmail"
+                :loading="prefSaving"
+                @update:value="toggleEmailNotify"
+              />
+            </div>
+            <div v-if="!preference.has_email" class="notify-reason">
+              <WarningOutline />
+              <span>你还未配置邮箱地址，暂时无法开启邮箱通知。</span>
+              <n-button text type="primary" size="small" @click="goProfile">去个人中心配置</n-button>
+            </div>
+            <div v-if="!preference.has_channel" class="notify-reason">
+              <WarningOutline />
+              <span>当前项目还没有可用且测试通过的邮箱通知渠道，请联系管理员配置。</span>
+            </div>
+            <div v-if="canToggleEmail" class="notify-tip">
+              站内消息仍会保留；开启后所有新消息都会额外发送邮件提醒。
+            </div>
+          </template>
+          <div v-if="prefError" class="modal-error">{{ prefError }}</div>
+        </div>
+        <div class="notify-settings-foot">
+          <n-button @click="settingsShow = false">关闭</n-button>
+        </div>
+      </div>
+    </n-modal>
 
     <n-modal v-model:show="detailShow">
       <div class="message-detail-modal">
@@ -473,6 +568,120 @@ onMounted(load)
   gap: 8px;
   padding: 14px 24px 20px;
   border-top: 1px solid var(--border);
+}
+
+.notify-settings-modal {
+  width: min(560px, calc(100vw - 32px));
+  border-radius: 18px;
+  background: var(--card);
+  box-shadow: 0 30px 80px -20px rgba(15, 23, 42, 0.35);
+}
+
+.notify-settings-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 22px 24px 16px;
+  border-bottom: 1px solid var(--border);
+  border-radius: 18px 18px 0 0;
+  background: var(--surface-soft);
+}
+
+.settings-kicker {
+  color: var(--brand);
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 650;
+  letter-spacing: 0.13em;
+}
+
+.notify-settings-head h2 {
+  margin: 4px 0 3px;
+  color: var(--ink);
+  font-size: 20px;
+  font-weight: 660;
+}
+
+.notify-settings-head p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.notify-settings-body {
+  padding: 20px 24px;
+}
+
+.notify-switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 14px 0;
+}
+
+.notify-switch-row strong {
+  display: block;
+  color: var(--ink);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.notify-switch-row p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 10.5px;
+  line-height: 1.6;
+}
+
+.notify-reason {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 9px 11px;
+  border-radius: 8px;
+  background: var(--amber-soft);
+  color: #a16207;
+  font-size: 10.5px;
+  line-height: 1.6;
+}
+
+.notify-reason :deep(svg) {
+  width: 13px;
+  height: 13px;
+  margin-top: 2px;
+  flex: none;
+}
+
+.notify-reason > span {
+  min-width: 0;
+  flex: 1;
+}
+
+.notify-tip {
+  margin-top: 10px;
+  color: var(--muted-light);
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.notify-settings-foot {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 24px 20px;
+}
+
+.modal-error {
+  margin-top: 12px;
+  padding: 9px 11px;
+  border: 1px solid #fee2e2;
+  border-radius: 8px;
+  background: #fef2f2;
+  color: #b91c1c;
+  font-size: 11px;
 }
 
 @media (max-width: 620px) {

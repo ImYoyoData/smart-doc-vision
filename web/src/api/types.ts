@@ -11,6 +11,7 @@ export interface User {
   username: string
   display_name: string
   email?: string
+  email_notify_enabled?: boolean
   role: string
   status: string
   mfa_enabled?: boolean
@@ -336,6 +337,13 @@ export interface InAppMessage {
 
 export interface InAppMessagePage extends Paged<InAppMessage> {
   unread_count: number
+}
+
+export interface NotificationPreference {
+  email_notify_enabled: boolean
+  has_email: boolean
+  email: string
+  has_channel: boolean
 }
 
 export interface TriggerSource {

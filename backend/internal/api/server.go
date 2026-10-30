@@ -205,6 +205,8 @@ func (s *Server) Router() *gin.Engine {
 			auth.PUT("/roles/:code", s.updateRole)
 			auth.DELETE("/roles/:code", s.deleteRole)
 			auth.GET("/messages", s.listMessages)
+			auth.GET("/notification-preferences", s.getNotificationPreference)
+			auth.PUT("/notification-preferences", s.updateNotificationPreference)
 			auth.POST("/messages/:id/read", s.markMessageRead)
 			auth.POST("/messages/read-all", s.markAllMessagesRead)
 
