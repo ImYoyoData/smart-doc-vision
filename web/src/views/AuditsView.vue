@@ -2189,7 +2189,7 @@ onMounted(async () => {
     </n-modal>
 
     <n-modal v-model:show="rulesModalShow">
-      <div class="config-submodal wide">
+      <div class="config-submodal wide rules-editor-modal">
         <div class="modal-head">
           <div>
             <div class="modal-kicker">RULE ENGINE</div>
@@ -3079,6 +3079,14 @@ onMounted(async () => {
 
 .config-submodal.wide {
   width: min(1000px, calc(100vw - 32px));
+}
+
+.config-submodal.rules-editor-modal {
+  height: min(620px, calc(100vh - 40px));
+}
+
+.config-submodal.rules-editor-modal .submodal-body {
+  scrollbar-gutter: stable;
 }
 
 .config-submodal.routes {
