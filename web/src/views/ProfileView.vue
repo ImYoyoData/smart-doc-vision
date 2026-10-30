@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { NButton, NInput, useMessage } from 'naive-ui'
+import { NButton, NInput, NPopover, useMessage } from 'naive-ui'
 import {
+  CreateOutline,
   HelpCircleOutline,
   LockClosedOutline,
   LogOutOutline,
@@ -32,7 +33,7 @@ const mfaConfirmCode = ref('')
 const mfaError = ref('')
 const mfaBusy = ref(false)
 const mfaQrDataUrl = ref('')
-const emailEditing = ref(false)
+const emailPopoverShow = ref(false)
 const emailDraft = ref('')
 const emailSaving = ref(false)
 const emailError = ref('')
@@ -140,16 +141,12 @@ const scopedProjects = computed(() => {
   return workspace.projects.filter((p) => ids.includes(p.id))
 })
 
-function startEmailEdit() {
-  emailDraft.value = auth.user?.email || ''
-  emailError.value = ''
-  emailEditing.value = true
-}
-
-function cancelEmailEdit() {
-  if (emailSaving.value) return
-  emailEditing.value = false
-  emailError.value = ''
+function onEmailPopover(value: boolean) {
+  emailPopoverShow.value = value
+  if (value) {
+    emailDraft.value = auth.user?.email || ''
+    emailError.value = ''
+  }
 }
 
 async function saveEmail() {
@@ -159,7 +156,7 @@ async function saveEmail() {
   try {
     const result = await authApi.updateProfile(emailDraft.value.trim())
     if (auth.user) auth.user.email = result.user.email
-    emailEditing.value = false
+    emailPopoverShow.value = false
     message.success('邮箱已更新')
   } catch (error) {
     emailError.value = error instanceof Error ? error.message : '更新邮箱失败'
@@ -226,25 +223,38 @@ async function logout() {
         <span class="profile-username mono">@{{ auth.user?.username }}</span>
         <span class="profile-role"><ShieldCheckmarkOutline />{{ auth.roleLabel }}</span>
         <div class="identity-meta">
-          <div class="email-row" :class="{ editing: emailEditing }">
+          <div class="email-row">
             <span>邮箱</span>
-            <div v-if="!emailEditing" class="email-display">
+            <div class="email-display">
               <strong :title="auth.user?.email || ''">{{ auth.user?.email || '未填写' }}</strong>
-              <n-button text type="primary" size="tiny" @click="startEmailEdit">修改</n-button>
-            </div>
-            <div v-else class="email-editor">
-              <n-input
-                v-model:value="emailDraft"
-                size="small"
-                placeholder="name@example.com"
-                :disabled="emailSaving"
-                @keyup.enter="saveEmail"
-              />
-              <div class="email-editor-actions">
-                <n-button size="tiny" type="primary" :loading="emailSaving" @click="saveEmail">保存</n-button>
-                <n-button size="tiny" quaternary :disabled="emailSaving" @click="cancelEmailEdit">取消</n-button>
-              </div>
-              <div v-if="emailError" class="email-error">{{ emailError }}</div>
+              <n-popover
+                :show="emailPopoverShow"
+                trigger="click"
+                placement="bottom-end"
+                :width="300"
+                @update:show="onEmailPopover"
+              >
+                <template #trigger>
+                  <button class="email-edit-btn" type="button" title="修改邮箱" aria-label="修改邮箱">
+                    <CreateOutline />
+                  </button>
+                </template>
+                <div class="email-popover">
+                  <strong>修改邮箱</strong>
+                  <n-input
+                    v-model:value="emailDraft"
+                    placeholder="name@example.com"
+                    :disabled="emailSaving"
+                    @keyup.enter="saveEmail"
+                  />
+                  <div class="email-popover-hint">留空保存可清除邮箱。</div>
+                  <div v-if="emailError" class="email-error">{{ emailError }}</div>
+                  <div class="email-popover-actions">
+                    <n-button size="tiny" quaternary :disabled="emailSaving" @click="emailPopoverShow = false">取消</n-button>
+                    <n-button size="tiny" type="primary" :loading="emailSaving" @click="saveEmail">保存</n-button>
+                  </div>
+                </div>
+              </n-popover>
             </div>
           </div>
           <div><span>账号状态</span><strong>{{ auth.user?.status === 'ACTIVE' ? '正常' : auth.user?.status }}</strong></div>
@@ -447,18 +457,12 @@ async function logout() {
   font-weight: 500;
 }
 
-.identity-meta .email-row.editing {
-  align-items: stretch;
-  flex-direction: column;
-  gap: 6px;
-}
-
 .email-display {
   display: flex;
   min-width: 0;
   align-items: center;
   justify-content: flex-end;
-  gap: 8px;
+  gap: 6px;
 }
 
 .email-display strong {
@@ -468,14 +472,48 @@ async function logout() {
   white-space: nowrap;
 }
 
-.email-editor {
-  display: flex;
-  width: 100%;
-  flex-direction: column;
-  gap: 6px;
+.email-edit-btn {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted-light);
+  cursor: pointer;
 }
 
-.email-editor-actions {
+.email-edit-btn:hover {
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+
+.email-edit-btn :deep(svg) {
+  width: 12px;
+  height: 12px;
+}
+
+.email-popover {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.email-popover > strong {
+  color: var(--ink);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.email-popover-hint {
+  color: var(--muted-light);
+  font-size: 9.5px;
+}
+
+.email-popover-actions {
   display: flex;
   justify-content: flex-end;
   gap: 4px;
@@ -483,7 +521,7 @@ async function logout() {
 
 .email-error {
   color: var(--red);
-  font-size: 9px;
+  font-size: 9.5px;
   line-height: 1.4;
 }
 
