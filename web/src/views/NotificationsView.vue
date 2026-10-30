@@ -110,6 +110,10 @@ function securityLabel(security: string) {
   return securityLabels[security] || security || '—'
 }
 
+function channelTypeLabel(type: string) {
+  return type === 'EMAIL' ? '邮箱通知' : type || '未知类型'
+}
+
 function onProviderChange(value: string) {
   form.provider = value
   const preset = providerPresets[value]
@@ -371,8 +375,12 @@ onMounted(load)
             <div class="channel-name-row">
               <h3>{{ channel.name }}</h3>
               <StatusTag :status="channel.status" type="provider" />
+              <span class="channel-type-tag">
+                <MailOutline v-if="channel.type === 'EMAIL'" />
+                {{ channelTypeLabel(channel.type) }}
+              </span>
             </div>
-            <span class="channel-provider">{{ providerLabel(channel.provider) }} · 邮箱</span>
+            <span class="channel-provider">{{ providerLabel(channel.provider) }}</span>
           </div>
           <n-switch
             :value="channel.status === 'ACTIVE'"
@@ -724,6 +732,24 @@ onMounted(load)
   margin-top: 2px;
   color: var(--muted-light);
   font-size: 9.5px;
+}
+
+.channel-type-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--brand-soft);
+  color: var(--brand-strong);
+  font-size: 8.5px;
+  font-weight: 550;
+  white-space: nowrap;
+}
+
+.channel-type-tag :deep(svg) {
+  width: 10px;
+  height: 10px;
 }
 
 .channel-endpoint {
