@@ -2201,44 +2201,38 @@ onMounted(async () => {
           </div>
         </div>
         <div class="submodal-body">
-          <div class="rule-template in-modal">
-            <div class="rule-template-head">
-              <div>
-                <strong>{{ form.decisionMode === 'CLASSIFY_ONLY' ? '分类器规则' : form.decisionMode === 'CLASSIFY' ? '分类规则模板' : '风险规则模板' }}</strong>
-                <span v-if="form.decisionMode === 'CLASSIFY_ONLY'">纯分类器成功审核固定 PASS，规则仅用于记录或附加标签，不会把结果改成驳回。仅支持多文本/多图片。</span>
-                <span v-else-if="form.decisionMode === 'CLASSIFY'">按分类映射结论，并对低置信度的通过结果转人工。仅支持多文本/多图片，不支持视频。</span>
-                <span v-else>决定模型输出后的 PASS / REJECT / REVIEW 阈值。仅支持多文本/多图片，不支持视频。</span>
-              </div>
-              <div class="rule-head-actions">
-                <n-button
-                  size="small"
-                  secondary
-                  :disabled="!hasGeneralProvider"
-                  title="根据需求生成可执行的规则"
-                  @click="openFieldAssistant('rules')"
-                >
-                  <template #icon><SparklesOutline /></template>
-                  AI 生成规则
-                </n-button>
-                <n-select
-                  :value="form.rulesPreset"
-                  :options="templateOptions"
-                  size="small"
-                  style="width: 200px"
-                  @update:value="applyRulesPreset"
-                />
-              </div>
+          <div class="rule-editor-toolbar">
+            <div class="rule-template-pick">
+              <span>规则模板</span>
+              <n-select
+                :value="form.rulesPreset"
+                :options="templateOptions"
+                size="small"
+                style="width: 240px"
+                @update:value="applyRulesPreset"
+              />
             </div>
-            <div class="template-desc">
-              <span v-if="selectedTemplate">{{ selectedTemplate.description }}</span>
-              <span v-else-if="form.rulesPreset === 'keep'">保持当前已有规则，不会覆盖自定义条件。</span>
-              <span v-else-if="form.rulesPreset === 'custom'">当前为自定义规则，可在下方直接增删规则组和条件。</span>
-            </div>
-            <RuleGroupsEditor
-              v-model="form.rulesText"
-              @change="form.rulesPreset = 'custom'"
-            />
+            <n-button
+              size="small"
+              secondary
+              :disabled="!hasGeneralProvider"
+              title="根据需求生成可执行的规则"
+              @click="openFieldAssistant('rules')"
+            >
+              <template #icon><SparklesOutline /></template>
+              AI 生成规则
+            </n-button>
           </div>
+          <p class="rule-editor-desc">
+            <span v-if="selectedTemplate">{{ selectedTemplate.description }}</span>
+            <span v-else-if="form.rulesPreset === 'keep'">保持当前已有规则，不会覆盖自定义条件。</span>
+            <span v-else-if="form.rulesPreset === 'custom'">当前为自定义规则，可在下方直接增删规则组和条件。</span>
+            <span v-else>选择一个模板快速生成规则，也可以手动添加规则组。</span>
+          </p>
+          <RuleGroupsEditor
+            v-model="form.rulesText"
+            @change="form.rulesPreset = 'custom'"
+          />
         </div>
         <div class="modal-footer">
           <n-button type="primary" @click="rulesModalShow = false">完成</n-button>
@@ -3114,6 +3108,33 @@ onMounted(async () => {
 .rule-template.in-modal,
 .category-panel.in-modal {
   margin-bottom: 0;
+}
+
+.rule-editor-toolbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.rule-template-pick {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rule-template-pick > span {
+  color: var(--muted);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.rule-editor-desc {
+  margin: 0 0 10px;
+  color: var(--muted-light);
+  font-size: 9.5px;
+  line-height: 1.55;
 }
 
 .config-sections {

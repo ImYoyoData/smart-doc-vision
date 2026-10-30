@@ -98,6 +98,7 @@ const enumFields: Record<string, string[]> = {
 }
 
 const draft = ref<RuleGroup[]>([])
+const expandedGroup = ref<number | null>(null)
 const advanced = ref(false)
 const rawText = ref('')
 const rawError = ref('')
@@ -147,6 +148,7 @@ function syncFromProp(value: string) {
     const groups = normalizeJson(parsedText)
     syncing = true
     draft.value = groups
+    expandedGroup.value = null
     rawError.value = ''
     if (advanced.value) rawText.value = parsedText
     void nextTick(() => {
@@ -184,6 +186,7 @@ function toggleAdvanced(value: boolean) {
     const groups = normalizeJson(rawText.value || '[]')
     syncing = true
     draft.value = groups
+    expandedGroup.value = null
     rawError.value = ''
     advanced.value = false
     void nextTick(() => {
@@ -227,9 +230,19 @@ function addGroup() {
     on_hit_result: 'REVIEW',
     items: [newItem()],
   })
+  expandedGroup.value = draft.value.length - 1
+}
+
+function toggleGroup(index: number) {
+  expandedGroup.value = expandedGroup.value === index ? null : index
 }
 
 function removeGroup(index: number) {
+  if (expandedGroup.value === index) {
+    expandedGroup.value = null
+  } else if (expandedGroup.value !== null && expandedGroup.value > index) {
+    expandedGroup.value -= 1
+  }
   draft.value.splice(index, 1)
 }
 
@@ -356,6 +369,106 @@ function valuePlaceholder(item: RuleItem) {
   return '比较值'
 }
 
+const fieldSummaryLabels: Record<string, string> = {
+  'model.result': '模型结论',
+  'model.score': '风险分',
+  'model.risk_level': '风险等级',
+  'model.category': '分类编码',
+  'model.category_name': '分类名称',
+  'model.category_confidence': '分类置信度',
+  'model.summary': '模型摘要',
+  'model.label': '首个标签',
+  'model.labels': '全部标签',
+  'media.text': '文本内容',
+  'media.text_len': '文本长度',
+  'media.count': '媒体数量',
+  'media.image_count': '图片数量',
+  'media.type': '媒体类型',
+  'task.source_type': '来源类型',
+  'task.biz_key': '业务主键',
+}
+
+const operatorSymbols: Record<string, string> = {
+  eq: '=',
+  ne: '≠',
+  gt: '>',
+  gte: '≥',
+  lt: '<',
+  lte: '≤',
+}
+
+const valueSummaryLabels: Record<string, string> = {
+  PASS: '通过',
+  REJECT: '不通过',
+  REVIEW: '待议',
+  high: '高',
+  medium: '中',
+  low: '低',
+  text: '纯文本',
+  image: '纯图片',
+  mixed: '图文',
+}
+
+function summaryValue(value: unknown): string {
+  if (Array.isArray(value)) return value.map(summaryValue).join('、')
+  if (value == null) return '空'
+  if (typeof value === 'object') return JSON.stringify(value)
+  const text = String(value)
+  return valueSummaryLabels[text] || text
+}
+
+function conditionSummary(item: RuleItem): string {
+  if (!item.field) return '未选择字段'
+  const field = fieldSummaryLabels[item.field] || item.field
+  const value = summaryValue(item.value)
+  switch (item.operator) {
+    case 'eq':
+    case 'ne':
+    case 'gt':
+    case 'gte':
+    case 'lt':
+    case 'lte':
+      return `${field} ${operatorSymbols[item.operator] || item.operator} ${value}`
+    case 'between': {
+      const values = Array.isArray(item.value) ? item.value : []
+      return `${field} 在 ${summaryValue(values[0])} ~ ${summaryValue(values[1])} 之间`
+    }
+    case 'in':
+      return `${field} 属于 [${value}]`
+    case 'not_in':
+      return `${field} 不属于 [${value}]`
+    case 'contains':
+      return `${field} 包含 ${value}`
+    case 'not_contains':
+      return `${field} 不包含 ${value}`
+    case 'contains_any':
+      return `${field} 包含任一 [${value}]`
+    case 'contains_all':
+      return `${field} 包含全部 [${value}]`
+    case 'starts_with':
+      return `${field} 以 ${value} 开头`
+    case 'ends_with':
+      return `${field} 以 ${value} 结尾`
+    case 'regex':
+      return `${field} 匹配 ${value}`
+    case 'is_null':
+      return `${field} 为 null`
+    case 'is_not_null':
+      return `${field} 不为 null`
+    case 'is_empty':
+      return `${field} 为空`
+    case 'is_not_empty':
+      return `${field} 不为空`
+    default:
+      return `${field} ${item.operator} ${value}`
+  }
+}
+
+function groupSummary(group: RuleGroup) {
+  if (!group.items.length) return '暂无条件，此规则组不会命中'
+  return group.items.map(conditionSummary).join(group.logic === 'OR' ? ' 或 ' : ' 且 ')
+}
+
 function resultTagType(result: string) {
   if (result === 'PASS') return 'success'
   if (result === 'REJECT') return 'error'
@@ -367,7 +480,7 @@ function resultTagType(result: string) {
   <div class="rule-groups-editor">
     <div class="rules-toolbar">
       <span class="rules-note">
-        按优先级从小到大执行；命中后可按设置停止后续规则。
+        规则组按优先级执行。点击「编辑」展开条件，未展开时只显示摘要。
       </span>
       <div class="rules-toolbar-right">
         <span class="rule-count">{{ draft.length }} 组 · {{ totalConditions }} 条件</span>
@@ -397,144 +510,162 @@ function resultTagType(result: string) {
         </n-button>
       </div>
 
-      <article v-for="(group, groupIndex) in draft" :key="groupIndex" class="rule-card">
-        <div class="rule-card-head">
-          <div class="rule-title">
-            <span class="rule-index">{{ groupIndex + 1 }}</span>
-            <n-input v-model:value="group.name" size="small" placeholder="规则组名称" />
-            <n-tag size="small" :bordered="false" :type="resultTagType(group.on_hit_result)">
-              {{ group.on_hit_result }}
-            </n-tag>
-          </div>
-          <n-button quaternary size="tiny" type="error" title="删除规则组" @click="removeGroup(groupIndex)">
-            <template #icon><TrashOutline /></template>
-          </n-button>
-        </div>
-
-        <div class="rule-settings">
-          <div class="rule-setting">
-            <label>优先级</label>
-            <n-input-number
-              :value="group.priority"
-              size="small"
-              :min="0"
-              :max="9999"
-              style="width: 100%"
-              @update:value="(value) => (group.priority = value ?? 0)"
-            />
-          </div>
-          <div class="rule-setting">
-            <label>条件关系</label>
-            <n-select v-model:value="group.logic" :options="logicOptions" size="small" />
-          </div>
-          <div class="rule-setting">
-            <label>命中结论</label>
-            <n-select v-model:value="group.on_hit_result" :options="resultOptions" size="small" />
-          </div>
-          <div class="rule-setting rule-stop">
-            <div>
-              <strong>命中后停止</strong>
-              <span>不再执行后续规则</span>
+      <article v-for="(group, groupIndex) in draft" :key="groupIndex" class="rule-card" :class="{ expanded: expandedGroup === groupIndex }">
+        <div class="rule-summary">
+          <span class="rule-index">{{ groupIndex + 1 }}</span>
+          <div class="rule-summary-main">
+            <div class="rule-summary-title">
+              <strong>{{ group.name || '未命名规则组' }}</strong>
+              <n-tag size="small" :bordered="false" :type="resultTagType(group.on_hit_result)">
+                {{ group.on_hit_result }}
+              </n-tag>
+              <span class="rule-summary-meta">
+                优先级 {{ group.priority }} · {{ group.logic === 'OR' ? '任一满足' : '全部满足' }} · {{ group.stop_on_hit ? '命中后停止' : '命中后继续' }}
+              </span>
             </div>
-            <n-switch v-model:value="group.stop_on_hit" size="small" />
+            <p class="rule-summary-text" :title="groupSummary(group)">{{ groupSummary(group) }}</p>
           </div>
-        </div>
-
-        <div class="conditions">
-          <div class="conditions-head">
-            <span>条件 <em>{{ group.items.length }}</em></span>
-            <n-button text type="primary" size="tiny" @click="addItem(group)">
-              <template #icon><AddOutline /></template>
-              添加条件
+          <div class="rule-summary-actions">
+            <n-button size="tiny" secondary @click="toggleGroup(groupIndex)">
+              {{ expandedGroup === groupIndex ? '收起' : '编辑' }}
+            </n-button>
+            <n-button quaternary size="tiny" type="error" title="删除规则组" @click="removeGroup(groupIndex)">
+              <template #icon><TrashOutline /></template>
             </n-button>
           </div>
+        </div>
 
-          <div v-if="!group.items.length" class="condition-empty">
-            没有条件，此规则组不会命中。
+        <div v-if="expandedGroup === groupIndex" class="rule-card-body">
+          <div class="rule-name-setting">
+            <label>规则组名称</label>
+            <n-input v-model:value="group.name" size="small" placeholder="规则组名称" />
           </div>
-          <div v-else class="condition-table">
-            <div class="condition-labels">
-              <span>字段</span>
-              <span>操作符</span>
-              <span>比较值</span>
-              <span></span>
+
+          <div class="rule-settings">
+            <div class="rule-setting">
+              <label>优先级</label>
+              <n-input-number
+                :value="group.priority"
+                size="small"
+                :min="0"
+                :max="9999"
+                style="width: 100%"
+                @update:value="(value) => (group.priority = value ?? 0)"
+              />
             </div>
-            <div v-for="(item, itemIndex) in group.items" :key="itemIndex" class="condition-row">
-              <n-select
-                :value="item.field"
-                :options="fieldOptions"
-                size="small"
-                filterable
-                tag
-                placeholder="选择或输入字段"
-                @update:value="(value) => setField(item, value)"
-              />
-              <n-select
-                :value="item.operator"
-                :options="operatorOptions"
-                size="small"
-                @update:value="(value) => setOperator(item, value)"
-              />
-              <div class="condition-value">
-                <span v-if="hasNoValue(item.operator)" class="no-value">无需比较值</span>
-                <div v-else-if="item.operator === 'between'" class="range-value">
-                  <n-input-number
-                    :value="rangeValue(item, 0)"
-                    size="small"
-                    :show-button="false"
-                    placeholder="下限"
-                    @update:value="(value) => setRange(item, 0, value)"
-                  />
-                  <span>~</span>
-                  <n-input-number
-                    :value="rangeValue(item, 1)"
-                    size="small"
-                    :show-button="false"
-                    placeholder="上限"
-                    @update:value="(value) => setRange(item, 1, value)"
-                  />
-                </div>
-                <n-dynamic-tags
-                  v-else-if="isListOperator(item.operator)"
-                  :value="listValue(item)"
-                  size="small"
-                  @update:value="(values: string[]) => setList(item, values)"
-                />
+            <div class="rule-setting">
+              <label>条件关系</label>
+              <n-select v-model:value="group.logic" :options="logicOptions" size="small" />
+            </div>
+            <div class="rule-setting">
+              <label>命中结论</label>
+              <n-select v-model:value="group.on_hit_result" :options="resultOptions" size="small" />
+            </div>
+            <div class="rule-setting rule-stop">
+              <div>
+                <strong>命中后停止</strong>
+                <span>不再执行后续规则</span>
+              </div>
+              <n-switch v-model:value="group.stop_on_hit" size="small" />
+            </div>
+          </div>
+
+          <div class="conditions">
+            <div class="conditions-head">
+              <span>条件 <em>{{ group.items.length }}</em></span>
+              <n-button text type="primary" size="tiny" @click="addItem(group)">
+                <template #icon><AddOutline /></template>
+                添加条件
+              </n-button>
+            </div>
+
+            <div v-if="!group.items.length" class="condition-empty">
+              没有条件，此规则组不会命中。
+            </div>
+            <div v-else class="condition-table">
+              <div class="condition-labels">
+                <span>字段</span>
+                <span>操作符</span>
+                <span>比较值</span>
+                <span></span>
+              </div>
+              <div v-for="(item, itemIndex) in group.items" :key="itemIndex" class="condition-row">
                 <n-select
-                  v-else-if="isEnumEquality(item)"
-                  :value="enumValue(item)"
-                  :options="enumOptions(item.field)"
+                  :value="item.field"
+                  :options="fieldOptions"
                   size="small"
                   filterable
                   tag
-                  @update:value="(value) => setEnum(item, value)"
+                  placeholder="选择或输入字段"
+                  @update:value="(value) => setField(item, value)"
                 />
-                <n-input-number
-                  v-else-if="isNumericField(item.field)"
-                  :value="numericValue(item)"
+                <n-select
+                  :value="item.operator"
+                  :options="operatorOptions"
                   size="small"
-                  :show-button="false"
-                  style="width: 100%"
-                  @update:value="(value) => setNumeric(item, value)"
+                  @update:value="(value) => setOperator(item, value)"
                 />
-                <n-input
-                  v-else
-                  :value="textValue(item)"
-                  size="small"
-                  :placeholder="valuePlaceholder(item)"
-                  @update:value="(value) => setText(item, value)"
-                />
-              </div>
-              <div class="condition-ops">
-                <n-button quaternary size="tiny" :disabled="itemIndex === 0" title="上移条件" @click="moveItem(group, itemIndex, -1)">
-                  <template #icon><ArrowUpOutline /></template>
-                </n-button>
-                <n-button quaternary size="tiny" :disabled="itemIndex === group.items.length - 1" title="下移条件" @click="moveItem(group, itemIndex, 1)">
-                  <template #icon><ArrowDownOutline /></template>
-                </n-button>
-                <n-button quaternary size="tiny" type="error" title="删除条件" @click="removeItem(group, itemIndex)">
-                  <template #icon><TrashOutline /></template>
-                </n-button>
+                <div class="condition-value">
+                  <span v-if="hasNoValue(item.operator)" class="no-value">无需比较值</span>
+                  <div v-else-if="item.operator === 'between'" class="range-value">
+                    <n-input-number
+                      :value="rangeValue(item, 0)"
+                      size="small"
+                      :show-button="false"
+                      placeholder="下限"
+                      @update:value="(value) => setRange(item, 0, value)"
+                    />
+                    <span>~</span>
+                    <n-input-number
+                      :value="rangeValue(item, 1)"
+                      size="small"
+                      :show-button="false"
+                      placeholder="上限"
+                      @update:value="(value) => setRange(item, 1, value)"
+                    />
+                  </div>
+                  <n-dynamic-tags
+                    v-else-if="isListOperator(item.operator)"
+                    :value="listValue(item)"
+                    size="small"
+                    @update:value="(values: string[]) => setList(item, values)"
+                  />
+                  <n-select
+                    v-else-if="isEnumEquality(item)"
+                    :value="enumValue(item)"
+                    :options="enumOptions(item.field)"
+                    size="small"
+                    filterable
+                    tag
+                    @update:value="(value) => setEnum(item, value)"
+                  />
+                  <n-input-number
+                    v-else-if="isNumericField(item.field)"
+                    :value="numericValue(item)"
+                    size="small"
+                    :show-button="false"
+                    style="width: 100%"
+                    @update:value="(value) => setNumeric(item, value)"
+                  />
+                  <n-input
+                    v-else
+                    :value="textValue(item)"
+                    size="small"
+                    :placeholder="valuePlaceholder(item)"
+                    @update:value="(value) => setText(item, value)"
+                  />
+                </div>
+                <div class="condition-ops">
+                  <n-button quaternary size="tiny" :disabled="itemIndex === 0" title="上移条件" @click="moveItem(group, itemIndex, -1)">
+                    <template #icon><ArrowUpOutline /></template>
+                  </n-button>
+                  <n-button quaternary size="tiny" :disabled="itemIndex === group.items.length - 1" title="下移条件" @click="moveItem(group, itemIndex, 1)">
+                    <template #icon><ArrowDownOutline /></template>
+                  </n-button>
+                  <n-button quaternary size="tiny" type="error" title="删除条件" @click="removeItem(group, itemIndex)">
+                    <template #icon><TrashOutline /></template>
+                  </n-button>
+                </div>
               </div>
             </div>
           </div>
@@ -545,9 +676,6 @@ function resultTagType(result: string) {
         <template #icon><AddOutline /></template>
         添加规则组
       </n-button>
-      <p class="rules-footer">
-        支持 <code>ext.scene</code> 等扩展字段；输入数组字段时可使用「属于 / 包含任一 / 包含全部」等操作符。
-      </p>
     </template>
   </div>
 </template>
@@ -609,32 +737,80 @@ function resultTagType(result: string) {
 }
 
 .rule-card {
-  margin-bottom: 9px;
+  margin-bottom: 8px;
   padding: 9px 10px;
   border: 1px solid var(--border);
   border-radius: 9px;
   background: #fff;
 }
 
-.rule-card-head {
+.rule-card.expanded {
+  border-color: var(--brand-border);
+}
+
+.rule-summary {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.rule-summary-main {
+  min-width: 0;
+  flex: 1;
+}
+
+.rule-summary-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.rule-summary-title strong {
+  color: var(--text);
+  font-size: 11.5px;
+  font-weight: 620;
+}
+
+.rule-summary-meta {
+  color: var(--muted-light);
+  font-size: 9px;
+}
+
+.rule-summary-text {
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.55;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.rule-summary-actions {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  gap: 2px;
+  flex: none;
+}
+
+.rule-card-body {
+  margin-top: 9px;
+  padding-top: 9px;
+  border-top: 1px dashed var(--border);
+}
+
+.rule-name-setting {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
   margin-bottom: 8px;
 }
 
-.rule-title {
-  display: flex;
-  min-width: 0;
-  flex: 1;
-  align-items: center;
-  gap: 7px;
-}
-
-.rule-title :deep(.n-input) {
-  min-width: 100px;
-  flex: 1;
+.rule-name-setting label {
+  color: #6a7686;
+  font-size: 9.5px;
 }
 
 .rule-index {
@@ -804,21 +980,6 @@ function resultTagType(result: string) {
 .rules-empty p {
   margin: 4px 0 9px;
   font-size: 10px;
-}
-
-.rules-footer {
-  margin: 7px 0 0;
-  color: var(--muted-light);
-  font-size: 9.5px;
-  line-height: 1.5;
-}
-
-.rules-footer code {
-  padding: 1px 4px;
-  border-radius: 4px;
-  background: #eef2f8;
-  font-family: var(--mono);
-  font-size: 9px;
 }
 
 @media (max-width: 720px) {
