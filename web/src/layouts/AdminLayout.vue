@@ -12,6 +12,7 @@ import {
   HelpCircleOutline,
   KeyOutline,
   LinkOutline,
+  LogoGithub,
   DocumentTextOutline,
   FolderOpenOutline,
   GridOutline,
@@ -48,6 +49,7 @@ const workspace = useWorkspaceStore()
 const review = useReviewStore()
 const theme = useThemeStore()
 const sidebarOpen = ref(false)
+const githubURL = 'https://github.com/ImYoyoData/smart-doc-vision'
 const version = ref('1.0.0')
 const metaLoading = ref(false)
 const messages = ref<InAppMessage[]>([])
@@ -335,7 +337,19 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
         </div>
         <div class="footer-meta">
           <span>SmartDoc Vision v{{ version }}</span>
-          <span class="mono">Redis DB 3</span>
+          <span class="footer-meta-right">
+            <span class="mono">Redis DB 3</span>
+            <a
+              class="footer-github"
+              :href="githubURL"
+              target="_blank"
+              rel="noopener noreferrer"
+              :title="`GitHub 仓库：${githubURL}`"
+              aria-label="打开 GitHub 仓库"
+            >
+              <LogoGithub />
+            </a>
+          </span>
         </div>
       </div>
     </aside>
@@ -939,10 +953,39 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
 
 .footer-meta {
   display: flex;
+  align-items: center;
   justify-content: space-between;
   margin-top: 7px;
   color: #a6b0c0;
   font-size: 9.5px;
+}
+
+.footer-meta-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.footer-github {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  align-items: center;
+  justify-content: center;
+  margin: -5px -6px -5px 0;
+  border-radius: 6px;
+  color: inherit;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.footer-github:hover {
+  background: var(--surface-soft);
+  color: var(--ink);
+}
+
+.footer-github :deep(svg) {
+  width: 13px;
+  height: 13px;
 }
 
 .main-shell {
