@@ -4,11 +4,12 @@ import {
   NButton,
   NInput,
   NModal,
+  NPopover,
   NSelect,
   NSpace,
   useMessage,
 } from 'naive-ui'
-import { CloseOutline, CloudUploadOutline, FlashOutline, ImagesOutline, TextOutline, WarningOutline } from '@vicons/ionicons5'
+import { CloseOutline, CloudUploadOutline, FlashOutline, HelpCircleOutline, ImagesOutline, TextOutline, WarningOutline } from '@vicons/ionicons5'
 import { auditApi, taskApi } from '@/api'
 import type { Audit, Task } from '@/api/types'
 
@@ -323,7 +324,23 @@ async function submit() {
 
         <div class="two-col">
           <div class="field">
-            <label>回调地址</label>
+            <label>
+              回调地址
+              <n-popover trigger="click" placement="top-start" :width="360">
+                <template #trigger>
+                  <button class="field-help" type="button" title="回调地址说明" aria-label="查看回调地址说明">
+                    <HelpCircleOutline />
+                  </button>
+                </template>
+                <div class="field-help-content">
+                  <strong>任务级业务回调</strong>
+                  <p>只覆盖这一次任务的回调地址，适合联调时把结果临时打到测试服务，或让调用方按请求指定接收方。不填则使用审核配置「接入指南 → 结果回调」里的地址。</p>
+                  <strong>和结果动作的区别</strong>
+                  <p>结果动作按 PASS / REJECT / REVIEW 分别编排，可发 HTTP、WebSocket、Redis 或执行 JS，报文和请求头都由你自己控制；这里走的是固定报文的通知通道，自带 HMAC 签名、失败重试和幂等键，类似支付异步通知。</p>
+                  <p>任务级地址只覆盖业务回调，不会触发或修改结果动作；审核配置启用回调时，仍受「回调结论」白名单限制。</p>
+                </div>
+              </n-popover>
+            </label>
             <n-input v-model:value="form.callbackUrl" placeholder="https://your-service/callback（可选）" />
           </div>
           <div class="field">
@@ -435,6 +452,48 @@ async function submit() {
 
 .required {
   color: var(--red);
+}
+
+.field-help {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted-light);
+  cursor: pointer;
+}
+
+.field-help:hover {
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+
+.field-help :deep(svg) {
+  width: 13px;
+  height: 13px;
+}
+
+.field-help-content {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.6;
+}
+
+.field-help-content strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.field-help-content p {
+  margin: 0;
 }
 
 .audit-hint {
