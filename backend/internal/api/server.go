@@ -212,6 +212,7 @@ func (s *Server) Router() *gin.Engine {
 
 			auth.GET("/meta/system", s.systemInfo)
 			auth.GET("/system/monitor", s.systemMonitor)
+			auth.GET("/system/config", s.systemConfig)
 			auth.GET("/users", s.listUsers)
 			auth.POST("/users", s.createUser)
 			auth.PUT("/users/:id", s.updateUser)

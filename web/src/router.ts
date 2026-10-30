@@ -56,6 +56,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '运行监控', section: '系统管理', menu: 'monitor' },
       },
       {
+        path: 'system-config',
+        name: 'system-config',
+        component: () => import('@/views/SystemConfigView.vue'),
+        meta: { title: '系统配置', section: '系统管理', menu: 'system-config' },
+      },
+      {
         path: 'profile',
         name: 'profile',
         component: () => import('@/views/ProfileView.vue'),

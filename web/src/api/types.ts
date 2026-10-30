@@ -339,6 +339,28 @@ export interface InAppMessagePage extends Paged<InAppMessage> {
   unread_count: number
 }
 
+export interface SystemConfigField {
+  key: string
+  label: string
+  value: string
+  sensitive: boolean
+  configured: boolean
+}
+
+export interface SystemConfigGroup {
+  key: string
+  title: string
+  description: string
+  fields: SystemConfigField[]
+}
+
+export interface SystemConfigData {
+  version: string
+  env_file: string
+  config_file: string
+  groups: SystemConfigGroup[]
+}
+
 export interface NotificationPreference {
   email_notify_enabled: boolean
   has_email: boolean

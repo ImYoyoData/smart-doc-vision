@@ -123,7 +123,7 @@ const menuLabels: Record<string, string> = {
   dashboard: '仪表盘', analytics: '数据报表', reviews: '待议复核', tasks: '审核任务',
   audits: '审核配置', providers: '模型接入', credentials: '接入凭证', connections: '数据连接', notifications: '通知渠道', projects: '项目空间',
   logs: '审计日志', recycle: '回收站', users: '用户与权限', monitor: '运行监控',
-  help: '对接文档', profile: '个人中心',
+  'system-config': '系统配置', help: '对接文档', profile: '个人中心',
 }
 
 const permissionLabels: Record<string, string> = {
@@ -132,6 +132,7 @@ const permissionLabels: Record<string, string> = {
   'notification:write': '管理通知渠道',
   'task:submit': '提交审核任务', 'task:review': '人工复核', 'task:retry': '重试任务', 'user:manage': '管理账号',
   'log:read': '查看审计日志', 'recycle:write': '回收站操作', 'system:monitor': '查看运行监控',
+  'system:config': '查看系统配置',
 }
 
 async function loadAuditOptions() {

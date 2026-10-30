@@ -33,6 +33,7 @@ import type {
   ReviewSummary,
   RoleDefinition,
   RuleTemplate,
+  SystemConfigData,
   Task,
   TaskDetail,
   TriggerSource,
@@ -146,6 +147,10 @@ export const notificationApi = {
     patch<NotificationChannel>(`/notification-channels/${id}/status`, { status }),
   test: (id: number, to: string) =>
     post<{ ok: boolean; to: string; message: string }>(`/notification-channels/${id}/test`, { to }),
+}
+
+export const systemConfigApi = {
+  get: () => get<SystemConfigData>('/system/config'),
 }
 
 export const notificationPreferenceApi = {

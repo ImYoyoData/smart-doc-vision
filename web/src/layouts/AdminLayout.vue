@@ -92,6 +92,7 @@ const sections = [
     items: [
       { name: 'users', label: '用户与权限', icon: PeopleOutline },
       { name: 'monitor', label: '运行监控', icon: SpeedometerOutline },
+      { name: 'system-config', label: '系统配置', icon: SettingsOutline },
     ],
   },
 ]
