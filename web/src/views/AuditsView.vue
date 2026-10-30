@@ -79,6 +79,11 @@ const templates = ref<RuleTemplate[]>([])
 const search = ref('')
 const statusFilter = ref<string | null>('ACTIVE')
 const modalShow = ref(false)
+const promptModalShow = ref(false)
+const categoryModalShow = ref(false)
+const rulesModalShow = ref(false)
+const routeModalShow = ref(false)
+const policyModalShow = ref(false)
 const editing = ref<Audit | null>(null)
 const errorText = ref('')
 const cloneShow = ref(false)
@@ -523,6 +528,86 @@ const summaryLoaded = ref(false)
 const selectedProvider = computed(() => providers.value.find((p) => p.id === form.providerId))
 const jevProviders = computed(() => providers.value.filter((p) => p.kind === 'JEV' && p.status === 'ACTIVE'))
 const selectedTemplate = computed(() => templates.value.find((t) => t.key === form.rulesPreset))
+
+const promptSummary = computed(() => {
+  const text = form.reviewPrompt.replace(/\s+/g, ' ').trim()
+  if (!text) return '尚未填写审核要求'
+  return text.length > 150 ? `${text.slice(0, 150)}…` : text
+})
+
+const categorySummary = computed(() => {
+  const items = form.categories.slice(0, 5).map((category) => ({
+    code: category.code || '未命名',
+    result: category.result || 'REVIEW',
+  }))
+  return { count: form.categories.length, items, more: Math.max(0, form.categories.length - items.length) }
+})
+
+const ruleSummary = computed(() => {
+  try {
+    const rules = JSON.parse(form.rulesText)
+    if (!Array.isArray(rules)) throw new Error('规则组必须是数组')
+    const groups = rules.length
+    const conditions = rules.reduce(
+      (total, group) => total + (Array.isArray(group?.items) ? group.items.length : 0),
+      0,
+    )
+    const names = rules.slice(0, 3).map((group) => String(group?.name || '未命名规则'))
+    const preview = names.length
+      ? `${names.join('、')}${groups > names.length ? ` 等 ${groups} 组` : ''}`
+      : '未配置规则组，将直接使用默认结论'
+    return { groups, conditions, preview, invalid: false }
+  } catch {
+    return { groups: 0, conditions: 0, preview: '规则 JSON 需要修复', invalid: true }
+  }
+})
+
+const routeSummary = computed(() => {
+  try {
+    const routes = JSON.parse(form.routesText)
+    if (!routes || typeof routes !== 'object' || Array.isArray(routes)) {
+      throw new Error('结果动作路由必须是对象')
+    }
+    const parts: string[] = []
+    let total = 0
+    for (const result of ['PASS', 'REJECT', 'REVIEW']) {
+      const actions = Array.isArray(routes[result]?.actions) ? routes[result].actions.length : 0
+      total += actions
+      if (actions) parts.push(`${result} ${actions}`)
+    }
+    return {
+      total,
+      preview: total ? parts.join(' · ') : '未配置额外动作，结果仅落库',
+      invalid: false,
+    }
+  } catch {
+    return { total: 0, preview: '路由 JSON 需要修复', invalid: true }
+  }
+})
+
+function resultLabel(value: string) {
+  if (value === 'PASS') return '通过'
+  if (value === 'REJECT') return '不通过'
+  return '待议'
+}
+
+function formatDedupe(seconds: number) {
+  if (!seconds) return '不去重'
+  if (seconds % 86400 === 0) return `${seconds / 86400} 天`
+  if (seconds % 3600 === 0) return `${seconds / 3600} 小时`
+  if (seconds % 60 === 0) return `${seconds / 60} 分钟`
+  return `${seconds} 秒`
+}
+
+const policySummary = computed(() =>
+  [
+    `默认 ${resultLabel(form.defaultResult)}`,
+    `失败 ${resultLabel(form.onModelFail)}`,
+    form.reviewMode === 'EXTERNAL' ? '外部复核' : '平台内复核',
+    formatDedupe(form.dedupeWindowSec),
+  ].join(' · '),
+)
+
 const exportSummary = computed(() => {
   const target = exportForm.range
     ? `${dayjs(exportForm.range[0]).format('MM-DD')} 至 ${dayjs(exportForm.range[1]).format('MM-DD')}`
@@ -532,6 +617,14 @@ const exportSummary = computed(() => {
   const source = exportForm.sources.length ? `${exportForm.sources.length} 种来源` : '全部来源'
   return `${target} · ${status} · ${result} · ${source}`
 })
+
+function closeConfigEditors() {
+  promptModalShow.value = false
+  categoryModalShow.value = false
+  rulesModalShow.value = false
+  routeModalShow.value = false
+  policyModalShow.value = false
+}
 
 function resetForm() {
   form.name = ''
@@ -559,11 +652,13 @@ function openCreate() {
     message.warning('请先选择项目')
     return
   }
+  closeConfigEditors()
   resetForm()
   modalShow.value = true
 }
 
 function openEdit(audit: Audit) {
+  closeConfigEditors()
   editing.value = audit
   form.name = audit.name
   form.code = audit.code
@@ -1905,9 +2000,90 @@ onMounted(async () => {
               />
             </div>
           </div>
+          <div class="config-sections">
+            <div class="config-sections-head">
+              <strong>详细配置</strong>
+              <span>按需打开独立弹窗编辑，主表单只保留摘要</span>
+            </div>
+            <div class="config-section-row">
+              <div class="config-section-main">
+                <div class="config-section-title">审核要求 <span>发送给模型的审核 Prompt</span></div>
+                <p class="config-section-text">{{ promptSummary }}</p>
+              </div>
+              <n-button size="small" secondary aria-label="编辑审核要求" @click="promptModalShow = true">编辑</n-button>
+            </div>
+            <div v-if="isClassifyMode" class="config-section-row">
+              <div class="config-section-main">
+                <div class="config-section-title">分类类型 <span>{{ categorySummary.count }} 个</span></div>
+                <div v-if="categorySummary.items.length" class="config-section-tags">
+                  <n-tag v-for="(item, index) in categorySummary.items" :key="index" size="small" :bordered="false">
+                    {{ item.code }}<template v-if="form.decisionMode === 'CLASSIFY'"> → {{ item.result }}</template>
+                  </n-tag>
+                  <span v-if="categorySummary.more" class="config-section-more">+{{ categorySummary.more }}</span>
+                </div>
+                <p v-else class="config-section-text">尚未配置分类类型</p>
+              </div>
+              <n-button size="small" secondary aria-label="编辑分类类型" @click="categoryModalShow = true">编辑</n-button>
+            </div>
+            <div class="config-section-row">
+              <div class="config-section-main">
+                <div class="config-section-title">
+                  规则组
+                  <span>{{ ruleSummary.groups }} 组 · {{ ruleSummary.conditions }} 个条件</span>
+                </div>
+                <p class="config-section-text" :class="{ 'config-section-error': ruleSummary.invalid }">{{ ruleSummary.preview }}</p>
+              </div>
+              <n-button size="small" secondary aria-label="编辑规则组" @click="rulesModalShow = true">编辑</n-button>
+            </div>
+            <div class="config-section-row">
+              <div class="config-section-main">
+                <div class="config-section-title">结果动作回调 <span>{{ routeSummary.total }} 个动作</span></div>
+                <p class="config-section-text" :class="{ 'config-section-error': routeSummary.invalid }">{{ routeSummary.preview }}</p>
+              </div>
+              <n-button size="small" secondary aria-label="编辑结果动作" @click="routeModalShow = true">编辑</n-button>
+            </div>
+            <div class="config-section-row">
+              <div class="config-section-main">
+                <div class="config-section-title">运行策略 <span>默认结论 / 失败兜底 / 复核方式 / 去重</span></div>
+                <p class="config-section-text">{{ policySummary }}</p>
+              </div>
+              <n-button size="small" secondary aria-label="编辑运行策略" @click="policyModalShow = true">编辑</n-button>
+            </div>
+          </div>
+          <div class="create-hint">
+            <ShieldCheckmarkOutline />
+            <span v-if="editing">保存后可在「接入指南」中查看当前三种触发方式、接口参数和回调配置。</span>
+            <span v-else>创建后会自动生成 开放 API / Redis / WebSocket 三种接入方式，并立即打开接入指南。Redis 需要先在「数据连接」配置并测试连接。</span>
+          </div>
+          <div v-if="errorText" class="modal-error">{{ errorText }}</div>
+        </div>
+        <div class="modal-footer">
+          <n-button v-if="editing && auth.can('audit:write')" secondary :disabled="!hasGeneralProvider" @click="startAssistant('edit', editing)">
+            <template #icon><SparklesOutline /></template>
+            AI 帮我修改
+          </n-button>
+          <n-button :disabled="saving" @click="requestCloseModal">取消</n-button>
+          <n-button v-if="auth.can('audit:write')" type="primary" :loading="saving" @click="save()">{{ editing ? '保存修改' : '创建并查看接入方式' }}</n-button>
+        </div>
+      </div>
+    </n-modal>
+
+    <n-modal v-model:show="promptModalShow">
+      <div class="config-submodal">
+        <div class="modal-head">
+          <div>
+            <div class="modal-kicker">REVIEW PROMPT</div>
+            <h2>审核要求</h2>
+            <p>这段要求会作为审核 Prompt 发送给通用模型，并作为 JEV 的 state 审核要求。</p>
+          </div>
+          <div class="modal-head-actions">
+            <button class="modal-close" type="button" title="关闭" aria-label="关闭" @click="promptModalShow = false">×</button>
+          </div>
+        </div>
+        <div class="submodal-body">
           <div class="field">
             <div class="field-label-row">
-              <label>审核要求</label>
+              <label>审核要求 Prompt</label>
               <n-button
                 size="tiny"
                 secondary
@@ -1922,12 +2098,32 @@ onMounted(async () => {
             <n-input
               v-model:value="form.reviewPrompt"
               type="textarea"
-              :autosize="{ minRows: 4, maxRows: 8 }"
+              :autosize="{ minRows: 12, maxRows: 24 }"
               placeholder="告诉模型该审核什么、什么情况通过/驳回/转人工"
             />
             <div class="form-hint">这段要求会作为审核 Prompt 发送给通用模型，并作为 JEV 的 state 审核要求。</div>
           </div>
-          <div v-if="isClassifyMode" class="category-panel">
+        </div>
+        <div class="modal-footer">
+          <n-button type="primary" @click="promptModalShow = false">完成</n-button>
+        </div>
+      </div>
+    </n-modal>
+
+    <n-modal v-model:show="categoryModalShow">
+      <div class="config-submodal wide">
+        <div class="modal-head">
+          <div>
+            <div class="modal-kicker">CLASSIFICATION</div>
+            <h2>分类类型</h2>
+            <p>调整分类编码、判定说明和映射结论；导入导出不会影响其他配置。</p>
+          </div>
+          <div class="modal-head-actions">
+            <button class="modal-close" type="button" title="关闭" aria-label="关闭" @click="categoryModalShow = false">×</button>
+          </div>
+        </div>
+        <div class="submodal-body">
+          <div class="category-panel in-modal">
             <div class="category-head">
               <div>
                 <strong>{{ form.decisionMode === 'CLASSIFY_ONLY' ? '可返回的分类类型' : '分类与终审结论映射' }}</strong>
@@ -1985,7 +2181,27 @@ onMounted(async () => {
             </n-button>
             <div class="form-hint">支持 CSV（code,name,description,result）和 JSON（分类数组）导入；纯分类器会忽略 result 并统一使用 PASS。</div>
           </div>
-          <div class="rule-template">
+        </div>
+        <div class="modal-footer">
+          <n-button type="primary" @click="categoryModalShow = false">完成</n-button>
+        </div>
+      </div>
+    </n-modal>
+
+    <n-modal v-model:show="rulesModalShow">
+      <div class="config-submodal wide">
+        <div class="modal-head">
+          <div>
+            <div class="modal-kicker">RULE ENGINE</div>
+            <h2>规则组</h2>
+            <p>规则组按优先级执行；未命中时使用默认结论，命中后可选是否停止后续规则。</p>
+          </div>
+          <div class="modal-head-actions">
+            <button class="modal-close" type="button" title="关闭" aria-label="关闭" @click="rulesModalShow = false">×</button>
+          </div>
+        </div>
+        <div class="submodal-body">
+          <div class="rule-template in-modal">
             <div class="rule-template-head">
               <div>
                 <strong>{{ form.decisionMode === 'CLASSIFY_ONLY' ? '分类器规则' : form.decisionMode === 'CLASSIFY' ? '分类规则模板' : '风险规则模板' }}</strong>
@@ -1998,7 +2214,7 @@ onMounted(async () => {
                   size="small"
                   secondary
                   :disabled="!hasGeneralProvider"
-                  title="根据需求生成可执行的规则 JSON"
+                  title="根据需求生成可执行的规则"
                   @click="openFieldAssistant('rules')"
                 >
                   <template #icon><SparklesOutline /></template>
@@ -2008,7 +2224,7 @@ onMounted(async () => {
                   :value="form.rulesPreset"
                   :options="templateOptions"
                   size="small"
-                  style="width: 190px"
+                  style="width: 200px"
                   @update:value="applyRulesPreset"
                 />
               </div>
@@ -2018,21 +2234,53 @@ onMounted(async () => {
               <span v-else-if="form.rulesPreset === 'keep'">保持当前已有规则，不会覆盖自定义条件。</span>
               <span v-else-if="form.rulesPreset === 'custom'">当前为自定义规则，可在下方直接增删规则组和条件。</span>
             </div>
-            <div class="json-editor-grid">
-              <div class="field">
-                <label>规则组 <span>按优先级执行，未命中时使用默认结论</span></label>
-                <RuleGroupsEditor
-                  v-model="form.rulesText"
-                  @change="form.rulesPreset = 'custom'"
-                />
-              </div>
-              <div class="field routes-field">
-                <label>结果动作回调 <span>按最终结论向业务系统推送结果</span></label>
-                <ResultRoutesEditor v-model="form.routesText" :audit-id="editing?.id || 0" />
-              </div>
-            </div>
+            <RuleGroupsEditor
+              v-model="form.rulesText"
+              @change="form.rulesPreset = 'custom'"
+            />
           </div>
-          <div class="three-col">
+        </div>
+        <div class="modal-footer">
+          <n-button type="primary" @click="rulesModalShow = false">完成</n-button>
+        </div>
+      </div>
+    </n-modal>
+
+    <n-modal v-model:show="routeModalShow">
+      <div class="config-submodal routes">
+        <div class="modal-head">
+          <div>
+            <div class="modal-kicker">RESULT ACTIONS</div>
+            <h2>结果动作回调</h2>
+            <p>按最终结论向业务系统推送结果；未配置动作时只写入平台结果。</p>
+          </div>
+          <div class="modal-head-actions">
+            <button class="modal-close" type="button" title="关闭" aria-label="关闭" @click="routeModalShow = false">×</button>
+          </div>
+        </div>
+        <div class="submodal-body">
+          <ResultRoutesEditor v-model="form.routesText" :audit-id="editing?.id || 0" />
+        </div>
+        <div class="modal-footer">
+          <n-button type="primary" @click="routeModalShow = false">完成</n-button>
+        </div>
+      </div>
+    </n-modal>
+
+    <n-modal v-model:show="policyModalShow">
+      <div class="config-submodal compact">
+        <div class="modal-head">
+          <div>
+            <div class="modal-kicker">POLICY</div>
+            <h2>运行策略</h2>
+            <p>控制默认结论、模型失败兜底、人工复核方式和任务去重窗口。</p>
+          </div>
+          <div class="modal-head-actions">
+            <button class="modal-close" type="button" title="关闭" aria-label="关闭" @click="policyModalShow = false">×</button>
+          </div>
+        </div>
+        <div class="submodal-body">
+          <div class="two-col">
             <div class="field">
               <label>默认结论</label>
               <n-select
@@ -2073,22 +2321,12 @@ onMounted(async () => {
             <div class="field">
               <label>去重窗口（秒，0 表示不去重）</label>
               <n-input-number v-model:value="form.dedupeWindowSec" :min="0" :max="604800" :step="3600" style="width: 100%" />
+              <div class="form-hint">当前：{{ formatDedupe(form.dedupeWindowSec) }}</div>
             </div>
           </div>
-          <div class="create-hint">
-            <ShieldCheckmarkOutline />
-            <span v-if="editing">保存后可在「接入指南」中查看当前三种触发方式、接口参数和回调配置。</span>
-            <span v-else>创建后会自动生成 开放 API / Redis / WebSocket 三种接入方式，并立即打开接入指南。Redis 需要先在「数据连接」配置并测试连接。</span>
-          </div>
-          <div v-if="errorText" class="modal-error">{{ errorText }}</div>
         </div>
         <div class="modal-footer">
-          <n-button v-if="editing && auth.can('audit:write')" secondary :disabled="!hasGeneralProvider" @click="startAssistant('edit', editing)">
-            <template #icon><SparklesOutline /></template>
-            AI 帮我修改
-          </n-button>
-          <n-button :disabled="saving" @click="requestCloseModal">取消</n-button>
-          <n-button v-if="auth.can('audit:write')" type="primary" :loading="saving" @click="save()">{{ editing ? '保存修改' : '创建并查看接入方式' }}</n-button>
+          <n-button type="primary" @click="policyModalShow = false">完成</n-button>
         </div>
       </div>
     </n-modal>
@@ -2832,6 +3070,178 @@ onMounted(async () => {
   border-radius: 18px;
   background: #fff;
   box-shadow: 0 30px 80px -20px rgba(15, 23, 42, 0.35);
+}
+
+.config-submodal {
+  display: flex;
+  width: min(760px, calc(100vw - 32px));
+  max-height: min(88vh, 920px);
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 30px 80px -20px rgba(15, 23, 42, 0.35);
+}
+
+.config-submodal.wide {
+  width: min(1000px, calc(100vw - 32px));
+}
+
+.config-submodal.routes {
+  width: min(960px, calc(100vw - 32px));
+}
+
+.config-submodal.compact {
+  width: min(680px, calc(100vw - 32px));
+}
+
+.config-submodal .modal-head,
+.config-submodal .modal-footer {
+  flex: none;
+}
+
+.submodal-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px 24px 20px;
+}
+
+.submodal-body .field:last-child {
+  margin-bottom: 0;
+}
+
+.rule-template.in-modal,
+.category-panel.in-modal {
+  margin-bottom: 0;
+}
+
+.config-sections {
+  overflow: hidden;
+  margin: 2px 0 16px;
+  border: 1px solid #edf1f7;
+  border-radius: 12px;
+  background: #fbfcfe;
+}
+
+.config-sections-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 13px;
+  border-bottom: 1px solid #edf1f7;
+  background: #f8fafd;
+}
+
+.config-sections-head strong {
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 620;
+}
+
+.config-sections-head span {
+  color: var(--muted-light);
+  font-size: 9.5px;
+}
+
+.config-section-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 13px;
+  border-bottom: 1px dashed #edf1f7;
+}
+
+.config-section-row:last-child {
+  border-bottom: 0;
+}
+
+.config-section-main {
+  min-width: 0;
+  flex: 1;
+}
+
+.config-section-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.config-section-title span {
+  color: var(--muted-light);
+  font-size: 9.5px;
+  font-weight: 400;
+}
+
+.config-section-text {
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.55;
+  word-break: break-word;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.config-section-error {
+  color: #d03050 !important;
+}
+
+.config-section-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.config-section-tags :deep(.n-tag) {
+  font-size: 9px;
+}
+
+.config-section-more {
+  align-self: center;
+  color: var(--muted-light);
+  font-size: 9px;
+}
+
+.config-section-row :deep(.n-button) {
+  flex: none;
+}
+
+@media (max-width: 720px) {
+  .config-sections-head {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .config-section-row {
+    align-items: flex-start;
+  }
+
+  .config-submodal {
+    width: calc(100vw - 20px);
+    max-height: calc(100vh - 20px);
+  }
+
+  .submodal-body {
+    padding: 15px 18px 18px;
+  }
+
+  .config-submodal .modal-head {
+    padding: 18px;
+  }
+
+  .config-submodal .modal-footer {
+    padding: 12px 18px 16px;
+  }
 }
 
 .clone-modal {
