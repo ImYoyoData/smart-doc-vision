@@ -860,10 +860,17 @@ onMounted(load)
 .user-meta {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 12px;
   margin-top: 3px;
   color: var(--muted-light);
   font-size: 8.5px;
+}
+
+.user-meta > span {
+  display: inline-flex;
+  min-height: 20px;
+  align-items: center;
 }
 
 .user-meta .mfa-on {
