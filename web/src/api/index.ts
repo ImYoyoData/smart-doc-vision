@@ -33,8 +33,8 @@ import type {
   ReviewSummary,
   RoleDefinition,
   RuleTemplate,
+  AuditTreaty,
   SystemConfigData,
-  TreatyParseResult,
   UpdateCheck,
   Task,
   TaskDetail,
@@ -184,7 +184,28 @@ export const auditApi = {
     postSSE('/audits/assistant/stream', payload, handlers),
   assistantField: (payload: Record<string, unknown>) =>
     post<AuditFieldAssistantResult>('/audits/assistant/field', payload),
-  parseTreaty: (payload: FormData) => post<TreatyParseResult>('/audit-treaties/parse', payload),
+  listTreaties: (id: number) => get<{ items: AuditTreaty[]; parsing: number }>(`/audits/${id}/treaties`),
+  addTreaty: (
+    id: number,
+    payload: FormData,
+    options?: { signal?: AbortSignal; onUploadProgress?: (percent: number) => void },
+  ) =>
+    request<{ treaty: AuditTreaty }>({
+      method: 'POST',
+      url: `/audits/${id}/treaties`,
+      data: payload,
+      signal: options?.signal,
+      onUploadProgress: (event) => {
+        if (!options?.onUploadProgress) return
+        const total = event.total || 0
+        if (total > 0) {
+          options.onUploadProgress(Math.min(99, Math.round((event.loaded / total) * 100)))
+        }
+      },
+    }),
+  reparseTreaty: (id: number, treatyID: string, payload: FormData) =>
+    post<{ treaty: AuditTreaty }>(`/audits/${id}/treaties/${treatyID}/reparse`, payload),
+  deleteTreaty: (id: number, treatyID: string) => del<{ deleted: boolean }>(`/audits/${id}/treaties/${treatyID}`),
   update: (id: number, payload: Record<string, unknown>) => put<Audit>(`/audits/${id}`, payload),
   setStatus: (id: number, status: string) => patch<{ status: string }>(`/audits/${id}/status`, { status }),
   clone: (id: number, payload: { name: string; code: string }) => post<Audit>(`/audits/${id}/clone`, payload),

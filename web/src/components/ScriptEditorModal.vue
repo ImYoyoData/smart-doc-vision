@@ -830,10 +830,15 @@ async function sendAi() {
   let streamError = ''
   let timedOut = false
   let applied = false
-  const timeout = window.setTimeout(() => {
-    timedOut = true
-    controller.abort()
-  }, 300_000)
+  let timeout: number | null = null
+  const armTimeout = () => {
+    if (timeout !== null) window.clearTimeout(timeout)
+    timeout = window.setTimeout(() => {
+      timedOut = true
+      controller.abort()
+    }, 600_000)
+  }
+  armTimeout()
   try {
     await scriptApi.assistantStream({
       project_id: workspace.currentProjectId,
@@ -845,6 +850,7 @@ async function sendAi() {
     }, {
       signal: controller.signal,
       onEvent: (event, data) => {
+        armTimeout()
         const value = data as Record<string, any>
         if (event === 'step' && value?.label) {
           aiStatus.value = String(value.label)
@@ -879,7 +885,7 @@ async function sendAi() {
       },
     })
     if (timedOut) {
-      aiError.value = '模型响应超时（300 秒），请重试或换用更快的模型'
+      aiError.value = '模型连续 10 分钟没有返回新内容，请重试或换用更快的模型'
       return
     }
     if (controller.signal.aborted) return
@@ -899,12 +905,12 @@ async function sendAi() {
     })
   } catch (error) {
     if (timedOut) {
-      aiError.value = '模型响应超时（300 秒），请重试或换用更快的模型'
+      aiError.value = '模型连续 10 分钟没有返回新内容，请重试或换用更快的模型'
     } else if (!controller.signal.aborted && aiAbort === controller) {
       aiError.value = normalizeAiError(error)
     }
   } finally {
-    window.clearTimeout(timeout)
+    if (timeout !== null) window.clearTimeout(timeout)
     if (aiAbort === controller) {
       aiAbort = null
       aiBusy.value = false

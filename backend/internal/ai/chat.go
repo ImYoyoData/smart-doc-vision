@@ -15,6 +15,10 @@ import (
 	"smartdoc-vision/backend/internal/model"
 )
 
+// Free-form chat calls can legitimately run for several minutes on reasoning
+// models; the request context still provides the per-call deadline.
+const chatHTTPTimeout = 10 * time.Minute
+
 type ChatImage struct {
 	DataURL string
 }
@@ -205,7 +209,7 @@ func callOpenAI(ctx context.Context, req ChatRequest, useReasoning bool) ([]byte
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+req.APIKey)
 	ApplyCustomHeaders(httpReq, ParseConfig(req.Provider).Headers)
-	client := &http.Client{Timeout: 150 * time.Second}
+	client := &http.Client{Timeout: chatHTTPTimeout}
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		return nil, 0, chatTransportError(err)
@@ -285,7 +289,7 @@ func chatAnthropic(ctx context.Context, req ChatRequest) (*ChatResult, error) {
 	httpReq.Header.Set("x-api-key", req.APIKey)
 	httpReq.Header.Set("anthropic-version", "2023-06-01")
 	ApplyCustomHeaders(httpReq, ParseConfig(req.Provider).Headers)
-	client := &http.Client{Timeout: 150 * time.Second}
+	client := &http.Client{Timeout: chatHTTPTimeout}
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		return nil, chatTransportError(err)

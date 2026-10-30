@@ -239,7 +239,7 @@ func (s *Server) handleAuditAssistant(c *gin.Context, stream bool) {
 
 	emit(assistantStep{ID: "thinking", Label: "调用大模型思考", Status: "running"})
 	started := time.Now()
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 150*time.Second)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 600*time.Second)
 	defer cancel()
 	result, err := ai.Chat(ctx, ai.ChatRequest{
 		Provider: *provider, APIKey: key, System: systemPrompt,

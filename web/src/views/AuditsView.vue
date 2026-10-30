@@ -16,6 +16,7 @@ import {
   NInput,
   NInputNumber,
   NModal,
+  NProgress,
   NSelect,
   NSwitch,
   useDialog,
@@ -91,9 +92,13 @@ const treatyTextModalShow = ref(false)
 const treatyPreviewShow = ref(false)
 const treatyPreviewDoc = ref<AuditTreaty | null>(null)
 const treatyFileInput = ref<HTMLInputElement | null>(null)
+const treatyDocs = ref<AuditTreaty[]>([])
+const treatiesLoading = ref(false)
 const treatyText = ref('')
 const treatyTextName = ref('')
 const treatyTextParsing = ref(false)
+let treatyPollTimer: ReturnType<typeof setInterval> | null = null
+const uploadControllers = new Map<string, AbortController>()
 const treatyPlaceholder = '{{AUDIT_TREATY}}'
 const treatyAddOptions = [
   { label: '上传文件（TXT / Markdown / DOCX）', key: 'file' },
@@ -323,7 +328,6 @@ const form = reactive({
   categories: [] as AuditCategory[],
   providerId: null as number | null,
   reviewPrompt: defaultPrompt,
-  treaties: [] as AuditTreaty[],
   rulesPreset: 'standard',
   rulesText: '',
   routesText: defaultRoutesText,
@@ -443,7 +447,13 @@ function handleBeforeUnload(event: BeforeUnloadEvent) {
 }
 
 onMounted(() => window.addEventListener('beforeunload', handleBeforeUnload))
-onBeforeUnmount(() => window.removeEventListener('beforeunload', handleBeforeUnload))
+onBeforeUnmount(() => {
+  window.removeEventListener('beforeunload', handleBeforeUnload)
+  stopTreatyPolling()
+})
+watch(modalShow, (show) => {
+  if (!show) stopTreatyPolling()
+})
 
 const statusFilterOptions = [
   { label: '已启用', value: 'ACTIVE' },
@@ -625,19 +635,21 @@ const policySummary = computed(() =>
 )
 
 const readyTreaties = computed(() =>
-  form.treaties.filter((treaty) => treaty.status === 'READY' && treaty.content.trim()),
+  treatyDocs.value.filter((treaty) => treaty.status === 'READY' && treaty.content.trim()),
 )
 
 const treatySummary = computed(() => {
   const names = readyTreaties.value.slice(0, 3).map((treaty) => treaty.name)
   const preview = names.length
     ? `${names.join('、')}${readyTreaties.value.length > names.length ? ` 等 ${readyTreaties.value.length} 份` : ''}`
-    : '尚未添加审核条约，模型仅按审核要求判断'
+    : editing.value
+      ? '尚未添加审核条约，模型仅按审核要求判断'
+      : '保存审核配置后可添加审核条约'
   return {
     ready: readyTreaties.value.length,
-    total: form.treaties.length,
+    total: treatyDocs.value.length,
     preview,
-    parsing: form.treaties.some((treaty) => treaty.status === 'PARSING'),
+    parsing: treatyDocs.value.some((treaty) => treaty.status === 'PARSING'),
   }
 })
 
@@ -661,9 +673,12 @@ function closeConfigEditors() {
   treatyTextModalShow.value = false
   treatyPreviewShow.value = false
   treatyPreviewDoc.value = null
+  stopTreatyPolling()
+  treatyDocs.value = []
 }
 
 function treatyStatusLabel(status: string) {
+  if (status === 'UPLOADING') return '上传中'
   if (status === 'READY') return '已生效'
   if (status === 'PARSING') return '解析中'
   if (status === 'FAILED') return '解析失败'
@@ -671,6 +686,7 @@ function treatyStatusLabel(status: string) {
 }
 
 function treatyStatusType(status: string): 'default' | 'success' | 'info' | 'error' {
+  if (status === 'UPLOADING') return 'info'
   if (status === 'READY') return 'success'
   if (status === 'PARSING') return 'info'
   if (status === 'FAILED') return 'error'
@@ -681,16 +697,75 @@ function treatySourceLabel(sourceType: string) {
   return sourceType === 'FILE' ? '文档上传' : '手动文本'
 }
 
+function treatyTimeLabel(value?: string) {
+  return value ? dayjs(value).format('YYYY-MM-DD HH:mm') : '—'
+}
+
+function treatyDurationLabel(ms?: number) {
+  if (!ms || ms <= 0) return '—'
+  if (ms < 1000) return `${ms}ms`
+  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`
+  const minutes = Math.floor(ms / 60000)
+  const seconds = Math.round((ms % 60000) / 1000)
+  return `${minutes}分${seconds}秒`
+}
+
 function treatyNameFromFile(fileName: string) {
   const name = fileName.replace(/\.[^.]+$/, '').trim()
   return (name || fileName || '未命名条约').slice(0, 255)
 }
 
+function openTreatyModal() {
+  treatyModalShow.value = true
+  void loadTreaties()
+}
+
+async function loadTreaties(silent = true) {
+  if (!editing.value) {
+    treatyDocs.value = []
+    return
+  }
+  if (!silent) treatiesLoading.value = true
+  try {
+    const result = await auditApi.listTreaties(editing.value.id)
+    const uploading = treatyDocs.value.filter((treaty) => treaty.status === 'UPLOADING')
+    treatyDocs.value = [...result.items, ...uploading]
+    if (result.parsing > 0) startTreatyPolling()
+    else stopTreatyPolling()
+  } catch (error) {
+    if (!silent) message.error(error instanceof Error ? error.message : '加载审核条约失败')
+  } finally {
+    if (!silent) treatiesLoading.value = false
+  }
+}
+
+function startTreatyPolling() {
+  if (treatyPollTimer) return
+  treatyPollTimer = setInterval(() => {
+    void loadTreaties(true)
+  }, 2000)
+}
+
+function stopTreatyPolling() {
+  if (treatyPollTimer) {
+    clearInterval(treatyPollTimer)
+    treatyPollTimer = null
+  }
+}
+
 function triggerTreatyUpload() {
+  if (!editing.value) {
+    message.warning('请先保存审核配置，再添加审核条约')
+    return
+  }
   treatyFileInput.value?.click()
 }
 
 function handleTreatyAdd(key: string) {
+  if (!editing.value) {
+    message.warning('请先保存审核配置，再添加审核条约')
+    return
+  }
   if (key === 'file') {
     triggerTreatyUpload()
     return
@@ -700,65 +775,79 @@ function handleTreatyAdd(key: string) {
   }
 }
 
-function treatyLocalID() {
-  return `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-}
-
-async function requestTreatyParse(payload: FormData): Promise<{ treaty: AuditTreaty | null; error: string }> {
-  if (!workspace.currentProjectId) {
-    return { treaty: null, error: '请先选择项目' }
-  }
-  payload.append('project_id', String(workspace.currentProjectId))
-  if (form.providerId) payload.append('provider_id', String(form.providerId))
-  try {
-    const result = await auditApi.parseTreaty(payload)
-    return { treaty: result.treaty, error: '' }
-  } catch (error) {
-    return { treaty: null, error: error instanceof Error ? error.message : '审核条约解析失败' }
-  }
+function updateTreatyDoc(id: string, patch: Partial<AuditTreaty>) {
+  const index = treatyDocs.value.findIndex((treaty) => treaty.id === id)
+  if (index >= 0) treatyDocs.value[index] = { ...treatyDocs.value[index], ...patch }
 }
 
 async function parseTreatyFile(file: File) {
-  const local: AuditTreaty = {
-    id: treatyLocalID(),
+  if (!editing.value) return
+  const localID = `upload-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  treatyDocs.value.push({
+    id: localID,
     name: treatyNameFromFile(file.name),
     source_type: 'FILE',
     file_name: file.name,
     mime_type: file.type,
-    status: 'PARSING',
+    status: 'UPLOADING',
+    upload_progress: 0,
     content: '',
     original_chars: 0,
     content_chars: 0,
     created_at: new Date().toISOString(),
-  }
-  form.treaties.push(local)
+  })
   const payload = new FormData()
-  payload.append('name', local.name)
+  payload.append('name', treatyNameFromFile(file.name))
   payload.append('file', file)
-  const result = await requestTreatyParse(payload)
-  const index = form.treaties.findIndex((treaty) => treaty.id === local.id)
-  if (index < 0) return
-  if (result.treaty) {
-    form.treaties[index] = result.treaty
-    return
+  if (form.providerId) payload.append('provider_id', String(form.providerId))
+  const controller = new AbortController()
+  uploadControllers.set(localID, controller)
+  try {
+    const result = await auditApi.addTreaty(editing.value.id, payload, {
+      signal: controller.signal,
+      onUploadProgress: (percent) => updateTreatyDoc(localID, { upload_progress: percent }),
+    })
+    const index = treatyDocs.value.findIndex((treaty) => treaty.id === localID)
+    if (index >= 0) treatyDocs.value[index] = result.treaty
+    if (result.treaty.status === 'PARSING') startTreatyPolling()
+    if (result.treaty.status === 'FAILED') {
+      message.error(`${result.treaty.name}：${result.treaty.error || '解析失败'}`)
+    }
+  } catch (error) {
+    const index = treatyDocs.value.findIndex((treaty) => treaty.id === localID)
+    if (index >= 0) treatyDocs.value.splice(index, 1)
+    if (controller.signal.aborted) {
+      message.info('已取消上传')
+      void loadTreaties(true)
+    } else {
+      message.error(error instanceof Error ? error.message : '添加审核条约失败')
+      void loadTreaties(true)
+    }
+  } finally {
+    uploadControllers.delete(localID)
   }
-  form.treaties[index] = { ...local, status: 'FAILED', error: result.error }
-  message.error(`${local.name}：${result.error}`)
+}
+
+function cancelTreatyUpload(treaty: AuditTreaty) {
+  uploadControllers.get(treaty.id)?.abort()
 }
 
 async function handleTreatyFiles(event: Event) {
   const input = event.target as HTMLInputElement
   const files = Array.from(input.files || [])
   input.value = ''
-  for (const file of files) {
-    await parseTreatyFile(file)
-  }
+  if (!editing.value || !files.length) return
+  await Promise.all(files.map((file) => parseTreatyFile(file)))
 }
 
 async function addTextTreaty() {
+  if (!editing.value) {
+    message.warning('请先保存审核配置，再添加审核条约')
+    return
+  }
   const content = treatyText.value.trim()
   if (content.length < 20) {
-    message.warning('请输入至少 20 个字符的条约文本')
+    message.warning('请输入至少 20 个字符的有效条约文本')
     return
   }
   if (content.length > 80000) {
@@ -770,27 +859,65 @@ async function addTextTreaty() {
     const payload = new FormData()
     payload.append('name', treatyTextName.value.trim() || '手动输入条约')
     payload.append('text', content)
-    const result = await requestTreatyParse(payload)
-    if (!result.treaty) {
-      message.error(result.error)
-      return
-    }
-    form.treaties.push(result.treaty)
+    if (form.providerId) payload.append('provider_id', String(form.providerId))
+    const result = await auditApi.addTreaty(editing.value.id, payload)
+    treatyDocs.value.push(result.treaty)
     treatyText.value = ''
     treatyTextName.value = ''
     treatyTextModalShow.value = false
-    message.success('审核条约已解析并加入列表')
+    if (result.treaty.status === 'PARSING') {
+      startTreatyPolling()
+      message.success('条约已添加，正在后台解析')
+    } else if (result.treaty.status === 'FAILED') {
+      message.error(result.treaty.error || '条约内容无效')
+    }
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : '添加审核条约失败')
   } finally {
     treatyTextParsing.value = false
   }
 }
 
-function removeTreaty(id: string) {
-  form.treaties = form.treaties.filter((treaty) => treaty.id !== id)
-  if (treatyPreviewDoc.value?.id === id) {
-    treatyPreviewShow.value = false
-    treatyPreviewDoc.value = null
+async function reparseTreaty(treaty: AuditTreaty) {
+  if (!editing.value) return
+  const payload = new FormData()
+  if (form.providerId) payload.append('provider_id', String(form.providerId))
+  try {
+    const result = await auditApi.reparseTreaty(editing.value.id, treaty.id, payload)
+    const index = treatyDocs.value.findIndex((item) => item.id === treaty.id)
+    if (index >= 0) treatyDocs.value[index] = result.treaty
+    startTreatyPolling()
+    message.success('已重新提交解析')
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : '重新解析失败')
+    void loadTreaties(true)
   }
+}
+
+async function removeTreaty(id: string) {
+  if (!editing.value) return
+  try {
+    await auditApi.deleteTreaty(editing.value.id, id)
+    treatyDocs.value = treatyDocs.value.filter((treaty) => treaty.id !== id)
+    if (treatyPreviewDoc.value?.id === id) {
+      treatyPreviewShow.value = false
+      treatyPreviewDoc.value = null
+    }
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : '删除审核条约失败')
+  }
+}
+
+function confirmRemoveTreaty(treaty: AuditTreaty) {
+  dialog.warning({
+    title: '删除审核条约',
+    content: `确认删除「${treaty.name}」？删除后该条约将不再参与审核，且无法恢复。`,
+    positiveText: '删除',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      await removeTreaty(treaty.id)
+    },
+  })
 }
 
 function openTreatyPreview(treaty: AuditTreaty) {
@@ -820,7 +947,6 @@ function resetForm() {
   form.categories = []
   form.providerId = providers.value.find((p) => p.status === 'ACTIVE')?.id || providers.value[0]?.id || null
   form.reviewPrompt = defaultPrompt
-  form.treaties = []
   form.rulesPreset = 'standard'
   form.rulesText = rulesTextForPreset('standard')
   form.routesText = defaultRoutesText
@@ -861,7 +987,9 @@ async function openEdit(audit: Audit) {
   form.categories = (detail.categories || []).map((category) => ({ ...category }))
   form.providerId = detail.provider_id
   form.reviewPrompt = detail.review_prompt || defaultPrompt
-  form.treaties = (detail.treaties || []).map((treaty) => ({ ...treaty }))
+  treatyDocs.value = detail.treaties || []
+  if (treatyDocs.value.some((treaty) => treaty.status === 'PARSING')) startTreatyPolling()
+  else stopTreatyPolling()
   form.rulesPreset = 'keep'
   form.rulesText = JSON.stringify(detail.rules || [], null, 2)
   form.routesText = JSON.stringify(detail.routes || JSON.parse(defaultRoutesText), null, 2)
@@ -1304,10 +1432,6 @@ async function save(openGuide = true): Promise<Audit | null> {
       return null
     }
   }
-  if (form.treaties.some((treaty) => treaty.status === 'PARSING')) {
-    errorText.value = '审核条约仍在解析中，请等待解析完成后再保存'
-    return null
-  }
   let rules: unknown
   let routes: unknown
   try {
@@ -1340,19 +1464,6 @@ async function save(openGuide = true): Promise<Audit | null> {
     categories,
     provider_id: form.providerId,
     review_prompt: form.reviewPrompt,
-    treaties: form.treaties.map((treaty) => ({
-      id: treaty.id,
-      name: treaty.name,
-      source_type: treaty.source_type,
-      file_name: treaty.file_name || '',
-      mime_type: treaty.mime_type || '',
-      status: treaty.status,
-      content: treaty.content,
-      original_chars: treaty.original_chars,
-      content_chars: treaty.content_chars,
-      error: treaty.error || '',
-      created_at: treaty.created_at,
-    })),
     default_result: form.defaultResult,
     on_model_fail: form.onModelFail,
     review_mode: form.reviewMode,
@@ -2234,7 +2345,7 @@ onMounted(async () => {
                 </div>
                 <p class="config-section-text">{{ treatySummary.preview }}</p>
               </div>
-              <n-button size="small" secondary aria-label="管理审核条约" @click="treatyModalShow = true">编辑</n-button>
+              <n-button size="small" secondary aria-label="管理审核条约" @click="openTreatyModal" :disabled="!editing">编辑</n-button>
             </div>
             <div class="config-section-row">
               <div class="config-section-main">
@@ -2365,7 +2476,7 @@ onMounted(async () => {
           </div>
           <div class="modal-head-actions">
             <n-dropdown :options="treatyAddOptions" trigger="click" @select="handleTreatyAdd">
-              <n-button size="small" type="primary" secondary>
+              <n-button size="small" type="primary" secondary :disabled="!editing">
                 <template #icon><AddOutline /></template>
                 添加条约
               </n-button>
@@ -2385,15 +2496,16 @@ onMounted(async () => {
           <div class="treaty-banner">
             <ShieldCheckmarkOutline />
             <div>
-              <strong>已生效条约会自动追加到审核要求</strong>
-              <span>也可以在审核要求中使用 <code>{{ treatyPlaceholder }}</code> 指定插入位置。条约修改随审核配置保存后生效。</span>
+              <strong>审核条约在服务器后台解析，关闭网页不会中断</strong>
+              <span>已生效条约会自动追加到审核要求，也可以用 <code>{{ treatyPlaceholder }}</code> 指定插入位置；解析完成后立即生效。</span>
             </div>
           </div>
           <p class="treaty-formats">支持 TXT / Markdown / DOCX；旧版 .doc 请另存为 .docx，单文件不超过 12MB。</p>
 
-          <div v-if="!form.treaties.length" class="treaty-empty">
+          <div v-if="!treatyDocs.length" class="treaty-empty">
             <strong>还没有审核条约</strong>
-            <p>点击右上角「添加条约」，选择上传文件或录入纯文本。解析后会去掉口水话和格式噪音，只保留审核条件、阈值、例外和判定结论。</p>
+            <p v-if="editing">点击右上角「添加条约」，选择上传文件或录入纯文本。解析任务会进入服务器后台，成功后自动生效。</p>
+            <p v-else>请先保存审核配置，之后即可添加审核条约；解析任务会在服务器后台执行，关闭网页不会中断。</p>
           </div>
 
           <div v-else class="treaty-table-wrap">
@@ -2401,16 +2513,18 @@ onMounted(async () => {
               <thead>
                 <tr>
                   <th>条约名称</th>
-                  <th>来源</th>
+                  <th>简介</th>
                   <th>状态</th>
                   <th class="num">原文</th>
                   <th class="num">整理后</th>
+                  <th>上传时间</th>
+                  <th>解析耗时</th>
                   <th class="actions">操作</th>
                 </tr>
               </thead>
               <tbody>
                 <tr
-                  v-for="treaty in form.treaties"
+                  v-for="treaty in treatyDocs"
                   :key="treaty.id"
                   :class="{ failed: treaty.status === 'FAILED' }"
                 >
@@ -2419,20 +2533,46 @@ onMounted(async () => {
                       <strong>{{ treaty.name }}</strong>
                       <small v-if="treaty.file_name">{{ treaty.file_name }}</small>
                       <small v-if="treaty.error" class="error">{{ treaty.error }}</small>
+                      <small class="treaty-sub">{{ treatySourceLabel(treaty.source_type) }}</small>
                     </div>
                   </td>
-                  <td><span class="treaty-source">{{ treatySourceLabel(treaty.source_type) }}</span></td>
                   <td>
-                    <n-tag size="small" :bordered="false" :type="treatyStatusType(treaty.status)">
+                    <span class="treaty-summary" :title="treaty.summary || ''">{{ treaty.summary || '—' }}</span>
+                  </td>
+                  <td>
+                    <div v-if="treaty.status === 'UPLOADING'" class="treaty-upload-progress">
+                      <n-progress
+                        type="line"
+                        :percentage="treaty.upload_progress || 0"
+                        :show-indicator="false"
+                        :height="4"
+                      />
+                      <small>{{ treaty.upload_progress || 0 }}% 上传中</small>
+                    </div>
+                    <n-tag v-else size="small" :bordered="false" :type="treatyStatusType(treaty.status)">
                       {{ treatyStatusLabel(treaty.status) }}
                     </n-tag>
                   </td>
                   <td class="num">{{ treaty.original_chars ? `${treaty.original_chars} 字` : '—' }}</td>
                   <td class="num">{{ treaty.status === 'READY' ? `${treaty.content_chars} 字` : '—' }}</td>
+                  <td>{{ treatyTimeLabel(treaty.created_at) }}</td>
+                  <td>{{ treaty.status === 'PARSING' ? '解析中' : treaty.parse_ms ? treatyDurationLabel(treaty.parse_ms) : '—' }}</td>
                   <td class="actions">
                     <div class="treaty-row-actions">
                       <n-button
-                        v-if="treaty.status === 'READY'"
+                        v-if="treaty.status === 'UPLOADING'"
+                        quaternary
+                        circle
+                        size="tiny"
+                        type="warning"
+                        title="取消上传"
+                        aria-label="取消上传"
+                        @click="cancelTreatyUpload(treaty)"
+                      >
+                        <template #icon><CloseOutline /></template>
+                      </n-button>
+                      <n-button
+                        v-else-if="treaty.status === 'READY'"
                         quaternary
                         circle
                         size="tiny"
@@ -2444,14 +2584,26 @@ onMounted(async () => {
                         <template #icon><EyeOutline /></template>
                       </n-button>
                       <n-button
+                        v-if="treaty.status === 'FAILED' && treaty.retryable"
+                        quaternary
+                        circle
+                        size="tiny"
+                        type="warning"
+                        title="重新解析"
+                        aria-label="重新解析"
+                        @click="reparseTreaty(treaty)"
+                      >
+                        <template #icon><RefreshOutline /></template>
+                      </n-button>
+                      <n-button
+                        v-if="treaty.status !== 'UPLOADING'"
                         quaternary
                         circle
                         size="tiny"
                         type="error"
                         title="删除条约"
                         aria-label="删除条约"
-                        :disabled="treaty.status === 'PARSING'"
-                        @click="removeTreaty(treaty.id)"
+                        @click="confirmRemoveTreaty(treaty)"
                       >
                         <template #icon><TrashOutline /></template>
                       </n-button>
@@ -2464,7 +2616,7 @@ onMounted(async () => {
 
         </div>
         <div class="modal-footer">
-          <span class="treaty-footer-note">解析完成的条约会随审核配置保存后生效</span>
+          <span class="treaty-footer-note">解析任务持续运行在服务器，关闭网页不会影响结果</span>
           <n-button type="primary" @click="treatyModalShow = false">完成</n-button>
         </div>
       </div>
@@ -3610,7 +3762,7 @@ onMounted(async () => {
 
 .treaty-table {
   width: 100%;
-  min-width: 700px;
+  min-width: 960px;
   border-collapse: collapse;
 }
 
@@ -3644,6 +3796,34 @@ onMounted(async () => {
 
 .treaty-table tbody tr.failed {
   background: #fffafa;
+}
+
+.treaty-upload-progress {
+  width: 120px;
+  margin: 0 auto;
+  color: var(--muted);
+  font-size: 8.5px;
+}
+
+.treaty-upload-progress :deep(.n-progress) {
+  margin-bottom: 3px;
+}
+
+.treaty-summary {
+  display: block;
+  overflow: hidden;
+  max-width: 210px;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.treaty-sub {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted-light);
+  font-size: 8px;
+  font-weight: 400;
 }
 
 .treaty-table .num {

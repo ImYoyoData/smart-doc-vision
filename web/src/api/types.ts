@@ -248,11 +248,15 @@ export interface AuditTreaty {
   source_type: 'FILE' | 'TEXT' | string
   file_name?: string
   mime_type?: string
-  status: 'READY' | 'FAILED' | 'PARSING' | string
+  status: 'READY' | 'FAILED' | 'PARSING' | 'UPLOADING' | string
+  upload_progress?: number
   content: string
   original_chars: number
   content_chars: number
+  summary?: string
+  parse_ms?: number
   error?: string
+  retryable?: boolean
   created_at?: string
 }
 

@@ -80,8 +80,9 @@ const (
 	TreatySourceFile = "FILE"
 	TreatySourceText = "TEXT"
 
-	TreatyStatusReady  = "READY"
-	TreatyStatusFailed = "FAILED"
+	TreatyStatusPARSING = "PARSING"
+	TreatyStatusReady   = "READY"
+	TreatyStatusFailed  = "FAILED"
 )
 
 // AuditTreaty is one parsed document of the review treaty. Only READY
@@ -96,7 +97,10 @@ type AuditTreaty struct {
 	Content       string    `json:"content"`
 	OriginalChars int       `json:"original_chars"`
 	ContentChars  int       `json:"content_chars"`
+	Summary       string    `json:"summary,omitempty"`
+	ParseMS       int64     `json:"parse_ms,omitempty"`
 	Error         string    `json:"error,omitempty"`
+	Retryable     bool      `json:"retryable,omitempty"`
 	CreatedAt     time.Time `json:"created_at"`
 }
 

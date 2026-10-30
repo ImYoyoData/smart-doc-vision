@@ -106,7 +106,7 @@ func (s *Server) auditFieldAssistant(c *gin.Context) {
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 120*time.Second)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 600*time.Second)
 	defer cancel()
 	started := time.Now()
 	result, err := ai.Chat(ctx, ai.ChatRequest{

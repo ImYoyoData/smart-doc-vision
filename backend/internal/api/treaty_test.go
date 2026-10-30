@@ -78,3 +78,35 @@ func TestNormalizeAuditTreatiesRejectsUnparsedReadyDocument(t *testing.T) {
 		t.Fatal("expected an error for READY without content")
 	}
 }
+
+func TestParseTreatyCompilationJSON(t *testing.T) {
+	raw := "```json\n{\"summary\":\"规定合同归档判定条件\",\"content\":\"缺少公章 → 转人工复核。\"}\n```"
+	summary, content := parseTreatyCompilation(raw)
+	if summary != "规定合同归档判定条件" {
+		t.Fatalf("unexpected summary: %q", summary)
+	}
+	if content != "缺少公章 → 转人工复核。" {
+		t.Fatalf("unexpected content: %q", content)
+	}
+}
+
+func TestTreatyFailureRetryable(t *testing.T) {
+	if !treatyFailureRetryable("模型响应超时，请重试或更换更快的模型") {
+		t.Fatal("model timeout should be retryable")
+	}
+	if treatyFailureRetryable("文本缺少有效规则内容，请检查文件或输入内容") {
+		t.Fatal("invalid content should not be retryable")
+	}
+	if treatyFailureRetryable("未能从 DOCX 中提取到文本") {
+		t.Fatal("extraction failure should not be retryable")
+	}
+}
+
+func TestValidateTreatyMeaningful(t *testing.T) {
+	if err := validateTreatyMeaningful("!!!!!!!!!!!!!!!!!!!!!!!!!!!!"); err == nil {
+		t.Fatal("symbol-only text should be invalid")
+	}
+	if err := validateTreatyMeaningful("缺少公章或负责人签字时必须转人工复核，不得直接通过。"); err != nil {
+		t.Fatalf("valid text rejected: %v", err)
+	}
+}
