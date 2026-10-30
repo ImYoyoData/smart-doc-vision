@@ -62,6 +62,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '个人中心', section: '账号', menu: 'profile' },
       },
       {
+        path: 'messages',
+        name: 'messages',
+        component: () => import('@/views/MessagesView.vue'),
+        meta: { title: '站内消息', section: '账号' },
+      },
+      {
         path: 'help',
         name: 'help',
         component: () => import('@/views/HelpView.vue'),

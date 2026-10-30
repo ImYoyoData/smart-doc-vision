@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { NButton, NDropdown, NModal, NPopover, useMessage } from 'naive-ui'
+import { NButton, NDropdown, NPopover, useMessage } from 'naive-ui'
 import dayjs from 'dayjs'
 import {
   AddOutline,
@@ -53,11 +53,6 @@ const messages = ref<InAppMessage[]>([])
 const messageUnread = ref(0)
 const messageLoading = ref(false)
 const messagePopoverShow = ref(false)
-const messageModalShow = ref(false)
-const allMessages = ref<InAppMessage[]>([])
-const allMessagePage = ref(1)
-const allMessageLoading = ref(false)
-const allMessageHasMore = ref(false)
 
 const sections = [
   {
@@ -164,16 +159,11 @@ function messageTime(value: string) {
 }
 
 function markLocalRead(id: number) {
-  let changed = false
-  for (const list of [messages.value, allMessages.value]) {
-    const item = list.find((entry) => entry.id === id)
-    if (item && !item.read) {
-      item.read = true
-      item.read_at = new Date().toISOString()
-      changed = true
-    }
-  }
-  if (changed) messageUnread.value = Math.max(0, messageUnread.value - 1)
+  const item = messages.value.find((entry) => entry.id === id)
+  if (!item || item.read) return
+  item.read = true
+  item.read_at = new Date().toISOString()
+  messageUnread.value = Math.max(0, messageUnread.value - 1)
 }
 
 async function markMessageRead(id: number) {
@@ -190,46 +180,24 @@ async function markAllRead() {
   try {
     await messageApi.markAllRead()
     messageUnread.value = 0
-    for (const list of [messages.value, allMessages.value]) {
-      for (const item of list) item.read = true
-    }
+    for (const item of messages.value) item.read = true
     message.success('全部消息已标记为已读')
   } catch (error) {
     message.error(error instanceof Error ? error.message : '操作失败')
   }
 }
 
-async function loadAllMessages(reset: boolean) {
-  if (allMessageLoading.value) return
-  allMessageLoading.value = true
-  try {
-    const data = await messageApi.list({ page: allMessagePage.value, page_size: 20 })
-    allMessages.value = reset ? data.items : [...allMessages.value, ...data.items]
-    messageUnread.value = data.unread_count
-    allMessageHasMore.value = data.has_more
-  } catch (error) {
-    message.error(error instanceof Error ? error.message : '加载消息失败')
-  } finally {
-    allMessageLoading.value = false
-  }
-}
-
-async function openMessageModal() {
+function openMessagesPage() {
   messagePopoverShow.value = false
-  messageModalShow.value = true
-  allMessagePage.value = 1
-  await loadAllMessages(true)
+  router.push({ name: 'messages' })
 }
 
-function loadMoreMessages() {
-  if (!allMessageHasMore.value || allMessageLoading.value) return
-  allMessagePage.value += 1
-  void loadAllMessages(false)
+function handleMessagesUpdated() {
+  void loadMessages(true)
 }
 
 function openMessage(item: InAppMessage) {
   messagePopoverShow.value = false
-  messageModalShow.value = false
   if (!item.read) void markMessageRead(item.id)
   if (item.project_id) workspace.setCurrentProject(item.project_id)
   router.push(item.link || '/reviews').catch(() => undefined)
@@ -285,10 +253,12 @@ let messageTimer: ReturnType<typeof setInterval> | null = null
 onMounted(() => {
   bootstrap()
   void loadMessages(true)
+  window.addEventListener('sdv:messages-updated', handleMessagesUpdated)
   reviewTimer = setInterval(() => review.refresh(workspace.currentProjectId), 30000)
   messageTimer = setInterval(() => loadMessages(true), 30000)
 })
 onBeforeUnmount(() => {
+  window.removeEventListener('sdv:messages-updated', handleMessagesUpdated)
   if (reviewTimer) clearInterval(reviewTimer)
   if (messageTimer) clearInterval(messageTimer)
 })
@@ -403,7 +373,7 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
                 <strong>站内消息</strong>
                 <div class="message-head-actions">
                   <button type="button" class="message-text-btn" :disabled="messageUnread === 0" @click="markAllRead">全部已读</button>
-                  <button type="button" class="message-text-btn primary" @click="openMessageModal">查看全部</button>
+                  <button type="button" class="message-text-btn primary" @click="openMessagesPage">查看全部</button>
                 </div>
               </div>
               <div v-if="messageLoading" class="message-loading">正在加载…</div>
@@ -462,48 +432,6 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
       </main>
     </div>
 
-    <n-modal v-model:show="messageModalShow">
-      <div class="message-modal">
-        <div class="message-modal-head">
-          <div>
-            <div class="message-modal-kicker">INBOX</div>
-            <h2>站内消息</h2>
-            <p>待议复核与系统通知会在这里汇总。</p>
-          </div>
-          <div class="message-modal-actions">
-            <n-button size="small" secondary :disabled="messageUnread === 0" @click="markAllRead">
-              <template #icon><CheckmarkDoneOutline /></template>
-              全部已读
-            </n-button>
-            <button type="button" class="modal-close" title="关闭" aria-label="关闭" @click="messageModalShow = false">×</button>
-          </div>
-        </div>
-        <div class="message-modal-body">
-          <div v-if="allMessageLoading && !allMessages.length" class="message-loading">正在加载…</div>
-          <div v-else-if="allMessages.length" class="message-list">
-            <button
-              v-for="item in allMessages"
-              :key="item.id"
-              type="button"
-              class="message-item"
-              :class="{ unread: !item.read }"
-              @click="openMessage(item)"
-            >
-              <i class="message-unread-dot" :class="{ hidden: item.read }"></i>
-              <span class="message-item-main">
-                <span class="message-title">{{ item.title }}</span>
-                <span v-if="item.body" class="message-body">{{ item.body }}</span>
-                <span class="message-meta">{{ messageTime(item.created_at) }}</span>
-              </span>
-            </button>
-            <div v-if="allMessageHasMore" class="message-more">
-              <n-button size="small" secondary :loading="allMessageLoading" @click="loadMoreMessages">加载更多</n-button>
-            </div>
-          </div>
-          <div v-else class="message-empty large">暂无消息</div>
-        </div>
-      </div>
-    </n-modal>
   </div>
 </template>
 
@@ -918,81 +846,6 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
   text-align: center;
 }
 
-.message-empty.large {
-  padding: 48px 0;
-}
-
-.message-more {
-  display: flex;
-  justify-content: center;
-  padding: 10px 0 0;
-}
-
-.message-modal {
-  width: min(560px, calc(100vw - 32px));
-  border-radius: 18px;
-  background: var(--card);
-  box-shadow: 0 30px 80px -20px rgba(15, 23, 42, 0.35);
-}
-
-.message-modal-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 22px 24px 16px;
-  border-bottom: 1px solid var(--border);
-  border-radius: 18px 18px 0 0;
-  background: var(--surface-soft);
-}
-
-.message-modal-kicker {
-  color: var(--brand);
-  font-family: var(--mono);
-  font-size: 9px;
-  font-weight: 650;
-  letter-spacing: 0.13em;
-}
-
-.message-modal-head h2 {
-  margin: 4px 0 3px;
-  color: var(--ink);
-  font-size: 20px;
-  font-weight: 660;
-}
-
-.message-modal-head p {
-  margin: 0;
-  color: var(--muted);
-  font-size: 11px;
-}
-
-.message-modal-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: none;
-}
-
-.message-modal-body {
-  max-height: min(68vh, 620px);
-  overflow-y: auto;
-  padding: 4px 24px 18px;
-}
-
-.message-modal .message-item {
-  padding: 12px 2px;
-}
-
-.modal-close {
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--muted-light);
-  font-size: 20px;
-  line-height: 1;
-  cursor: pointer;
-}
 
 .topbar-help {
   width: 31px;

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -28,6 +29,19 @@ func (s *Server) listMessages(c *gin.Context) {
 	q := s.db.Model(&model.InAppMessage{}).Where("user_id = ?", user.ID)
 	if c.Query("unread") == "true" {
 		q = q.Where("read_at IS NULL")
+	}
+	switch strings.ToUpper(strings.TrimSpace(c.Query("status"))) {
+	case "UNREAD":
+		q = q.Where("read_at IS NULL")
+	case "READ":
+		q = q.Where("read_at IS NOT NULL")
+	}
+	if channelType := strings.TrimSpace(c.Query("type")); channelType != "" {
+		q = q.Where("type = ?", channelType)
+	}
+	if keyword := strings.TrimSpace(c.Query("keyword")); keyword != "" {
+		like := "%" + keyword + "%"
+		q = q.Where("(title LIKE ? OR body LIKE ?)", like, like)
 	}
 	var total int64
 	if err := q.Count(&total).Error; err != nil {
