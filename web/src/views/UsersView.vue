@@ -67,6 +67,19 @@ const projectOptions = computed(() => workspace.projects.map((p) => ({ label: p.
 const selectedRole = computed(() => roles.value.find((r) => r.code === form.role))
 const activeUsers = computed(() => users.value.filter((u) => u.status === 'ACTIVE').length)
 
+const ENV_LABELS: Record<string, string> = { dev: '开发', test: '测试', staging: '预发', prod: '生产' }
+
+function userScopeProjects(user: User) {
+  return (user.project_ids || []).map((id) => {
+    const project = workspace.projects.find((p) => p.id === id)
+    return { id, name: project?.name || `项目 #${id}`, env: project?.env || '' }
+  })
+}
+
+function envLabel(env: string) {
+  return ENV_LABELS[env] || '未设置'
+}
+
 const menuLabels: Record<string, string> = {
   dashboard: '仪表盘', analytics: '数据报表', reviews: '待议复核', tasks: '审核任务',
   audits: '审核配置', providers: '模型接入', credentials: '接入凭证', connections: '数据连接', projects: '项目空间',
@@ -352,7 +365,22 @@ onMounted(load)
               <span v-if="user.id === auth.user?.id" class="self-chip">当前账号</span>
             </div>
             <div class="user-meta">
-              <span>项目范围：{{ user.role === 'SUPER_ADMIN' ? '全部项目' : (user.project_ids || []).map((id) => workspace.projects.find((p) => p.id === id)?.name || `#${id}`).join('、') || '无' }}</span>
+              <span class="scope-meta">
+                <span class="scope-label">项目范围</span>
+                <span v-if="user.role === 'SUPER_ADMIN'" class="scope-tag all">全部项目</span>
+                <template v-else>
+                  <span
+                    v-for="project in userScopeProjects(user)"
+                    :key="project.id"
+                    class="scope-tag"
+                    :class="[project.env, { missing: !project.env }]"
+                    :title="project.env ? `${project.name} · ${envLabel(project.env)}环境` : project.name"
+                  >
+                    <i v-if="project.env"></i>{{ project.name }}
+                  </span>
+                  <span v-if="!userScopeProjects(user).length" class="scope-empty">无</span>
+                </template>
+              </span>
               <span :class="{ 'mfa-on': user.mfa_enabled }">两步验证：{{ user.mfa_enabled ? '已开启' : '未开启' }}</span>
               <span>最近登录：{{ user.last_login_at ? user.last_login_at.replace('T', ' ').slice(0, 19) : '从未登录' }}</span>
             </div>
@@ -703,6 +731,72 @@ onMounted(load)
 
 .user-meta .mfa-on {
   color: #15803d;
+}
+
+.scope-meta {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.scope-label {
+  color: var(--muted-light);
+}
+
+.scope-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: var(--surface-strong);
+  color: var(--muted);
+  font-size: 9.5px;
+  font-weight: 550;
+  line-height: 1.5;
+}
+
+.scope-tag i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.85;
+}
+
+.scope-tag.prod {
+  background: var(--red-soft);
+  color: var(--red);
+}
+
+.scope-tag.staging {
+  background: var(--amber-soft);
+  color: #b45309;
+}
+
+.scope-tag.test {
+  background: var(--brand-soft);
+  color: var(--brand-strong);
+}
+
+.scope-tag.dev {
+  background: var(--surface-strong);
+  color: var(--muted);
+}
+
+.scope-tag.all {
+  background: var(--green-soft);
+  color: #15803d;
+}
+
+.scope-tag.missing {
+  background: var(--surface-strong);
+  color: var(--muted-light);
+}
+
+.scope-empty {
+  color: var(--muted-light);
 }
 
 .user-actions {

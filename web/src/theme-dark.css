@@ -902,6 +902,14 @@ html[data-theme='dark'] .user-meta .mfa-on {
   color: var(--green) !important;
 }
 
+html[data-theme='dark'] .scope-tag.staging {
+  color: var(--amber) !important;
+}
+
+html[data-theme='dark'] .scope-tag.all {
+  color: var(--green) !important;
+}
+
 html[data-theme='dark'] .mfa-admin-panel {
   border-color: var(--border) !important;
   background: var(--surface-soft) !important;
