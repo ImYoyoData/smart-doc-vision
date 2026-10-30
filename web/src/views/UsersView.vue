@@ -29,6 +29,7 @@ import { userApi } from '@/api'
 import type { RoleDefinition, User } from '@/api/types'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { useAuthStore } from '@/stores/auth'
+import { isValidEmail } from '@/utils/validation'
 
 const workspace = useWorkspaceStore()
 const auth = useAuthStore()
@@ -240,6 +241,11 @@ async function save() {
   }
   if (form.project_ids.length === 0 && form.role !== 'SUPER_ADMIN') {
     errorText.value = '非超级管理员至少需要授权一个项目'
+    return
+  }
+  const email = form.email.trim()
+  if (email && !isValidEmail(email)) {
+    errorText.value = '邮箱地址格式不正确，请填写类似 name@example.com 的地址'
     return
   }
   saving.value = true

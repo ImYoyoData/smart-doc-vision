@@ -17,6 +17,7 @@ import { authApi } from '@/api'
 import type { MFASetup } from '@/api/types'
 import { useAuthStore } from '@/stores/auth'
 import { useWorkspaceStore } from '@/stores/workspace'
+import { isValidEmail } from '@/utils/validation'
 
 const auth = useAuthStore()
 const workspace = useWorkspaceStore()
@@ -151,10 +152,15 @@ function onEmailPopover(value: boolean) {
 
 async function saveEmail() {
   if (emailSaving.value) return
+  const email = emailDraft.value.trim()
+  if (email && !isValidEmail(email)) {
+    emailError.value = '邮箱地址格式不正确，请填写类似 name@example.com 的地址'
+    return
+  }
   emailSaving.value = true
   emailError.value = ''
   try {
-    const result = await authApi.updateProfile(emailDraft.value.trim())
+    const result = await authApi.updateProfile(email)
     if (auth.user) auth.user.email = result.user.email
     emailPopoverShow.value = false
     message.success('邮箱已更新')
@@ -244,7 +250,9 @@ async function logout() {
                   <n-input
                     v-model:value="emailDraft"
                     placeholder="name@example.com"
+                    :status="emailError ? 'error' : undefined"
                     :disabled="emailSaving"
+                    @update:value="emailError = ''"
                     @keyup.enter="saveEmail"
                   />
                   <div class="email-popover-hint">留空保存可清除邮箱。</div>
