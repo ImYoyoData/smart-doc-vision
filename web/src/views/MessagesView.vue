@@ -257,7 +257,8 @@ onMounted(load)
         <template #icon><NotificationsOutline /></template>
       </EmptyState>
 
-      <div v-if="total > 0" class="message-pagination">
+      <div v-if="total > 0" class="pagination-row sticky-pagination">
+        <span>第 {{ page }} 页 · 每页 {{ pageSize }} 条</span>
         <n-pagination
           :page="page"
           :page-count="pageCount"
@@ -274,7 +275,7 @@ onMounted(load)
           <div>
             <div class="settings-kicker">PERSONAL SETTINGS</div>
             <h2>通知设置</h2>
-            <p>配置待议复核等消息的邮箱通知。</p>
+            <p>配置当前账号的邮箱通知偏好，不会影响其他账号。</p>
           </div>
           <button type="button" class="detail-close" title="关闭" aria-label="关闭" @click="settingsShow = false">×</button>
         </div>
@@ -284,7 +285,7 @@ onMounted(load)
             <div class="notify-switch-row">
               <div>
                 <strong>邮箱通知</strong>
-                <p>开启后，所有新的站内消息都会同时发送到 {{ preference.email || '你的邮箱' }}。</p>
+                <p>开启后，所有新的站内消息都会同时发送到当前账号的邮箱 {{ preference.email || '' }}。</p>
               </div>
               <n-switch
                 :value="preference.email_notify_enabled"
@@ -303,7 +304,7 @@ onMounted(load)
               <span>当前项目还没有可用且测试通过的邮箱通知渠道，请联系管理员配置。</span>
             </div>
             <div v-if="canToggleEmail" class="notify-tip">
-              站内消息仍会保留；开启后所有新消息都会额外发送邮件提醒。
+              该设置仅对当前账号生效；站内消息仍会保留，开启后所有新消息都会额外发送邮件提醒。
             </div>
           </template>
           <div v-if="prefError" class="modal-error">{{ prefError }}</div>
@@ -342,7 +343,7 @@ onMounted(load)
 
 <style scoped>
 .message-panel {
-  padding: 16px 18px 18px;
+  padding: 0;
 }
 
 .message-filter-bar {
@@ -351,6 +352,7 @@ onMounted(load)
   flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 14px;
+  padding: 16px 18px 0;
 }
 
 .message-search {
@@ -373,6 +375,7 @@ onMounted(load)
 .message-table {
   display: flex;
   flex-direction: column;
+  padding: 0 18px;
   border-top: 1px solid var(--border);
 }
 
@@ -478,11 +481,6 @@ onMounted(load)
   flex: none;
 }
 
-.message-pagination {
-  display: flex;
-  justify-content: flex-end;
-  padding-top: 14px;
-}
 
 .message-detail-modal {
   width: min(760px, calc(100vw - 32px));

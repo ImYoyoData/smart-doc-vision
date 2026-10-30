@@ -577,22 +577,6 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.sticky-pagination {
-  position: sticky;
-  bottom: 0;
-  z-index: 6;
-  background: var(--card);
-  box-shadow: 0 -10px 24px rgba(15, 23, 42, 0.08);
-  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
-}
-
-@media (max-width: 560px) {
-  .sticky-pagination {
-    flex-wrap: wrap;
-    justify-content: flex-end;
-  }
-}
-
 .task-toolbar {
   display: flex;
   flex-wrap: wrap;

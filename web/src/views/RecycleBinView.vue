@@ -426,7 +426,7 @@ onMounted(load)
         <template #icon><TrashOutline /></template>
       </EmptyState>
 
-      <div class="pagination-row">
+      <div class="pagination-row sticky-pagination">
         <span>保留期内可恢复 · 到期对象由后台每 6 小时自动永久清理</span>
         <n-pagination
           v-model:page="page"

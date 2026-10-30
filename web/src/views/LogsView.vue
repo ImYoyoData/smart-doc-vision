@@ -296,7 +296,7 @@ onMounted(load)
         <template #icon><DocumentTextOutline /></template>
       </EmptyState>
 
-      <div class="pagination-row">
+      <div class="pagination-row sticky-pagination">
         <span>共 {{ total }} 条记录</span>
         <n-pagination
           v-model:page="page"
