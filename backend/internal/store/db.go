@@ -52,6 +52,7 @@ func Open(cfg config.Config) (*gorm.DB, error) {
 		&model.ScriptExecution{},
 		&model.RedisConnection{},
 		&model.ProviderUsageLog{},
+		&model.NotificationChannel{},
 	); err != nil {
 		return nil, fmt.Errorf("migrate: %w", err)
 	}

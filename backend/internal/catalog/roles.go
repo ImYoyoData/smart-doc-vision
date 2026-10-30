@@ -11,12 +11,12 @@ type RoleDefinition struct {
 
 var allMenus = []string{
 	"dashboard", "analytics", "reviews", "tasks", "audits", "providers",
-	"credentials", "connections", "projects", "logs", "recycle", "users", "monitor", "help", "profile",
+	"credentials", "connections", "notifications", "projects", "logs", "recycle", "users", "monitor", "help", "profile",
 }
 
 var allPermissions = []string{
 	"project:create", "project:update", "project:delete", "project:restore",
-	"provider:write", "audit:write", "credential:write",
+	"provider:write", "audit:write", "credential:write", "notification:write",
 	"task:submit", "task:review", "task:retry", "user:manage",
 	"log:read", "recycle:write", "system:monitor",
 }
@@ -31,10 +31,10 @@ var roleDefinitions = []RoleDefinition{
 		Code: "PROJECT_ADMIN", Name: "项目管理员", Builtin: true,
 		Description: "管理被授权项目内的模型、审核、凭证、任务和回收站。",
 		Permissions: []string{
-			"project:update", "provider:write", "audit:write", "credential:write",
+			"project:update", "provider:write", "audit:write", "credential:write", "notification:write",
 			"task:submit", "task:review", "task:retry", "recycle:write", "log:read",
 		},
-		Menus: []string{"dashboard", "analytics", "reviews", "tasks", "audits", "providers", "credentials", "connections", "projects", "logs", "recycle", "help", "profile"},
+		Menus: []string{"dashboard", "analytics", "reviews", "tasks", "audits", "providers", "credentials", "connections", "notifications", "projects", "logs", "recycle", "help", "profile"},
 	},
 	{
 		Code: "AUDITOR", Name: "审核配置员", Builtin: true,

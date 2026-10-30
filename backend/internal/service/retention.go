@@ -136,6 +136,9 @@ func PurgeProject(db *gorm.DB, projectID uint64) error {
 		if err := tx.Where("project_id = ?", projectID).Delete(&model.RedisConnection{}).Error; err != nil {
 			return err
 		}
+		if err := tx.Where("project_id = ?", projectID).Delete(&model.NotificationChannel{}).Error; err != nil {
+			return err
+		}
 		if err := tx.Where("project_id = ?", projectID).Delete(&model.ProjectMember{}).Error; err != nil {
 			return err
 		}

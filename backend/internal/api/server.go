@@ -137,6 +137,13 @@ func (s *Server) Router() *gin.Engine {
 			auth.DELETE("/redis-connections/:id", s.deleteRedisConnection)
 			auth.POST("/redis-connections/:id/test", s.testRedisConnection)
 
+			auth.GET("/projects/:id/notification-channels", s.listNotificationChannels)
+			auth.POST("/projects/:id/notification-channels", s.createNotificationChannel)
+			auth.PUT("/notification-channels/:id", s.updateNotificationChannel)
+			auth.PATCH("/notification-channels/:id/status", s.updateNotificationChannelStatus)
+			auth.DELETE("/notification-channels/:id", s.deleteNotificationChannel)
+			auth.POST("/notification-channels/:id/test", s.testNotificationChannel)
+
 			auth.GET("/projects/:id/secrets", s.listProjectSecrets)
 			auth.PUT("/projects/:id/secrets/:name", s.putProjectSecret)
 			auth.DELETE("/projects/:id/secrets/:name", s.deleteProjectSecret)

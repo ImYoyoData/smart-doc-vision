@@ -293,6 +293,32 @@ export interface RedisConnection {
   updated_at: string
 }
 
+export interface NotificationEmailConfig {
+  host: string
+  port: number
+  username: string
+  from_name: string
+  from_address: string
+  security: string
+  timeout_sec: number
+}
+
+export interface NotificationChannel {
+  id: number
+  project_id: number
+  name: string
+  type: string
+  provider: string
+  status: string
+  config: NotificationEmailConfig
+  has_password: boolean
+  last_test_at?: string | null
+  last_test_ok: boolean
+  last_test_message: string
+  created_at: string
+  updated_at: string
+}
+
 export interface TriggerSource {
   id: number
   project_id: number

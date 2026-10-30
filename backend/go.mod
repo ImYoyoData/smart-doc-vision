@@ -1,6 +1,6 @@
 module smartdoc-vision/backend
 
-go 1.25
+go 1.25.0
 
 require (
 	github.com/Calcium-Ion/moejs v0.1.0-alpha.9
@@ -14,9 +14,10 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/redis/go-redis/v9 v9.7.0
 	github.com/tidwall/gjson v1.18.0
-	golang.org/x/crypto v0.32.0
+	github.com/wneessen/go-mail v0.8.1
+	golang.org/x/crypto v0.54.0
 	golang.org/x/image v0.23.0
-	golang.org/x/text v0.21.0
+	golang.org/x/text v0.40.0
 	gopkg.in/yaml.v3 v3.0.1
 	gorm.io/driver/mysql v1.5.7
 	gorm.io/gorm v1.25.12
@@ -53,8 +54,8 @@ require (
 	github.com/twitchyliquid64/golang-asm v0.15.1 // indirect
 	github.com/ugorji/go/codec v1.2.12 // indirect
 	golang.org/x/arch v0.12.0 // indirect
-	golang.org/x/net v0.33.0 // indirect
-	golang.org/x/sync v0.10.0 // indirect
-	golang.org/x/sys v0.29.0 // indirect
+	golang.org/x/net v0.56.0 // indirect
+	golang.org/x/sync v0.22.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
 	google.golang.org/protobuf v1.36.1 // indirect
 )

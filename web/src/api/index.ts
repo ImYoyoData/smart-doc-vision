@@ -16,6 +16,7 @@ import type {
   MFASetup,
   MFAStatus,
   MonitorData,
+  NotificationChannel,
   Paged,
   Project,
   Provider,
@@ -129,6 +130,20 @@ export const redisConnectionApi = {
   remove: (id: number) => del<{ deleted: boolean }>(`/redis-connections/${id}`),
   test: (id: number) =>
     post<{ ok: boolean; latency_ms: number; health: string; message: string }>(`/redis-connections/${id}/test`),
+}
+
+export const notificationApi = {
+  list: (projectId: number) =>
+    get<{ items: NotificationChannel[]; total: number }>(`/projects/${projectId}/notification-channels`),
+  create: (projectId: number, payload: Record<string, unknown>) =>
+    post<NotificationChannel>(`/projects/${projectId}/notification-channels`, payload),
+  update: (id: number, payload: Record<string, unknown>) =>
+    put<NotificationChannel>(`/notification-channels/${id}`, payload),
+  remove: (id: number) => del<{ deleted: boolean }>(`/notification-channels/${id}`),
+  setStatus: (id: number, status: string) =>
+    patch<NotificationChannel>(`/notification-channels/${id}/status`, { status }),
+  test: (id: number, to: string) =>
+    post<{ ok: boolean; to: string; message: string }>(`/notification-channels/${id}/test`, { to }),
 }
 
 export const auditApi = {
