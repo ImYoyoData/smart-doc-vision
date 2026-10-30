@@ -10,6 +10,7 @@ import type {
   AuditFieldAssistantResult,
   CaptchaChallenge,
   DashboardData,
+  InAppMessagePage,
   IntegrationGuide,
   LoginResult,
   MFAChallenge,
@@ -144,6 +145,12 @@ export const notificationApi = {
     patch<NotificationChannel>(`/notification-channels/${id}/status`, { status }),
   test: (id: number, to: string) =>
     post<{ ok: boolean; to: string; message: string }>(`/notification-channels/${id}/test`, { to }),
+}
+
+export const messageApi = {
+  list: (params?: Record<string, unknown>) => get<InAppMessagePage>('/messages', params),
+  markRead: (id: number) => post<{ read: boolean; unread_count: number }>(`/messages/${id}/read`),
+  markAllRead: () => post<{ read: boolean; unread_count: number }>('/messages/read-all'),
 }
 
 export const auditApi = {

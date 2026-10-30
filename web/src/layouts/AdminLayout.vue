@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { NButton, NDropdown, useMessage } from 'naive-ui'
+import { NButton, NDropdown, NModal, NPopover, useMessage } from 'naive-ui'
 import dayjs from 'dayjs'
 import {
   AddOutline,
@@ -35,7 +35,8 @@ import BrandMark from '@/components/BrandMark.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { useThemeStore } from '@/stores/theme'
-import { metaApi } from '@/api'
+import { messageApi, metaApi } from '@/api'
+import type { InAppMessage } from '@/api/types'
 import { useReviewStore } from '@/stores/review'
 
 const route = useRoute()
@@ -48,6 +49,15 @@ const theme = useThemeStore()
 const sidebarOpen = ref(false)
 const version = ref('1.0.0')
 const metaLoading = ref(false)
+const messages = ref<InAppMessage[]>([])
+const messageUnread = ref(0)
+const messageLoading = ref(false)
+const messagePopoverShow = ref(false)
+const messageModalShow = ref(false)
+const allMessages = ref<InAppMessage[]>([])
+const allMessagePage = ref(1)
+const allMessageLoading = ref(false)
+const allMessageHasMore = ref(false)
 
 const sections = [
   {
@@ -131,6 +141,100 @@ function navigate(name: string) {
   sidebarOpen.value = false
 }
 
+async function loadMessages(silent = false) {
+  if (!silent) messageLoading.value = true
+  try {
+    const data = await messageApi.list({ page: 1, page_size: 6 })
+    messages.value = data.items
+    messageUnread.value = data.unread_count
+  } catch {
+    // The inbox must never block navigation.
+  } finally {
+    if (!silent) messageLoading.value = false
+  }
+}
+
+function onMessagePopover(show: boolean) {
+  messagePopoverShow.value = show
+  if (show) void loadMessages()
+}
+
+function messageTime(value: string) {
+  return dayjs(value).format('MM-DD HH:mm')
+}
+
+function markLocalRead(id: number) {
+  let changed = false
+  for (const list of [messages.value, allMessages.value]) {
+    const item = list.find((entry) => entry.id === id)
+    if (item && !item.read) {
+      item.read = true
+      item.read_at = new Date().toISOString()
+      changed = true
+    }
+  }
+  if (changed) messageUnread.value = Math.max(0, messageUnread.value - 1)
+}
+
+async function markMessageRead(id: number) {
+  markLocalRead(id)
+  try {
+    const data = await messageApi.markRead(id)
+    messageUnread.value = data.unread_count
+  } catch {
+    void loadMessages(true)
+  }
+}
+
+async function markAllRead() {
+  try {
+    await messageApi.markAllRead()
+    messageUnread.value = 0
+    for (const list of [messages.value, allMessages.value]) {
+      for (const item of list) item.read = true
+    }
+    message.success('全部消息已标记为已读')
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : '操作失败')
+  }
+}
+
+async function loadAllMessages(reset: boolean) {
+  if (allMessageLoading.value) return
+  allMessageLoading.value = true
+  try {
+    const data = await messageApi.list({ page: allMessagePage.value, page_size: 20 })
+    allMessages.value = reset ? data.items : [...allMessages.value, ...data.items]
+    messageUnread.value = data.unread_count
+    allMessageHasMore.value = data.has_more
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : '加载消息失败')
+  } finally {
+    allMessageLoading.value = false
+  }
+}
+
+async function openMessageModal() {
+  messagePopoverShow.value = false
+  messageModalShow.value = true
+  allMessagePage.value = 1
+  await loadAllMessages(true)
+}
+
+function loadMoreMessages() {
+  if (!allMessageHasMore.value || allMessageLoading.value) return
+  allMessagePage.value += 1
+  void loadAllMessages(false)
+}
+
+function openMessage(item: InAppMessage) {
+  messagePopoverShow.value = false
+  messageModalShow.value = false
+  if (!item.read) void markMessageRead(item.id)
+  if (item.project_id) workspace.setCurrentProject(item.project_id)
+  router.push(item.link || '/reviews').catch(() => undefined)
+}
+
 function handleProject(key: string) {
   if (key === 'create-project') {
     if (canCreateProject.value) router.push({ name: 'projects', query: { create: '1' } })
@@ -177,12 +281,16 @@ async function bootstrap() {
 }
 
 let reviewTimer: ReturnType<typeof setInterval> | null = null
+let messageTimer: ReturnType<typeof setInterval> | null = null
 onMounted(() => {
   bootstrap()
+  void loadMessages(true)
   reviewTimer = setInterval(() => review.refresh(workspace.currentProjectId), 30000)
+  messageTimer = setInterval(() => loadMessages(true), 30000)
 })
 onBeforeUnmount(() => {
   if (reviewTimer) clearInterval(reviewTimer)
+  if (messageTimer) clearInterval(messageTimer)
 })
 watch(() => workspace.currentProjectId, (id) => review.refresh(id))
 </script>
@@ -276,11 +384,49 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
             </button>
           </n-dropdown>
           <div class="date-chip">{{ today }}</div>
-          <button v-if="auth.canMenu('reviews')" class="topbar-review" :class="{ active: route.name === 'reviews' }" type="button" @click="navigate('reviews')">
-            <NotificationsOutline />
-            <span>待复核</span>
-            <b v-if="review.pending > 0">{{ review.pending }}</b>
-          </button>
+          <n-popover
+            :show="messagePopoverShow"
+            trigger="click"
+            placement="bottom-end"
+            :width="360"
+            @update:show="onMessagePopover"
+          >
+            <template #trigger>
+              <button class="topbar-review message-trigger" :class="{ active: route.name === 'reviews' }" type="button" title="站内消息">
+                <NotificationsOutline />
+                <span>消息</span>
+                <b v-if="messageUnread > 0">{{ messageUnread > 99 ? '99+' : messageUnread }}</b>
+              </button>
+            </template>
+            <div class="message-popover">
+              <div class="message-popover-head">
+                <strong>站内消息</strong>
+                <div class="message-head-actions">
+                  <button type="button" class="message-text-btn" :disabled="messageUnread === 0" @click="markAllRead">全部已读</button>
+                  <button type="button" class="message-text-btn primary" @click="openMessageModal">查看全部</button>
+                </div>
+              </div>
+              <div v-if="messageLoading" class="message-loading">正在加载…</div>
+              <div v-else-if="messages.length" class="message-list">
+                <button
+                  v-for="item in messages"
+                  :key="item.id"
+                  type="button"
+                  class="message-item"
+                  :class="{ unread: !item.read }"
+                  @click="openMessage(item)"
+                >
+                  <i class="message-unread-dot" :class="{ hidden: item.read }"></i>
+                  <span class="message-item-main">
+                    <span class="message-title">{{ item.title }}</span>
+                    <span v-if="item.body" class="message-body">{{ item.body }}</span>
+                    <span class="message-meta">{{ messageTime(item.created_at) }}</span>
+                  </span>
+                </button>
+              </div>
+              <div v-else class="message-empty">暂无消息</div>
+            </div>
+          </n-popover>
           <button v-if="auth.canMenu('help')" class="icon-btn topbar-help" type="button" title="对接文档" @click="navigate('help')">
             <HelpCircleOutline />
           </button>
@@ -315,6 +461,49 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
         </router-view>
       </main>
     </div>
+
+    <n-modal v-model:show="messageModalShow">
+      <div class="message-modal">
+        <div class="message-modal-head">
+          <div>
+            <div class="message-modal-kicker">INBOX</div>
+            <h2>站内消息</h2>
+            <p>待议复核与系统通知会在这里汇总。</p>
+          </div>
+          <div class="message-modal-actions">
+            <n-button size="small" secondary :disabled="messageUnread === 0" @click="markAllRead">
+              <template #icon><CheckmarkDoneOutline /></template>
+              全部已读
+            </n-button>
+            <button type="button" class="modal-close" title="关闭" aria-label="关闭" @click="messageModalShow = false">×</button>
+          </div>
+        </div>
+        <div class="message-modal-body">
+          <div v-if="allMessageLoading && !allMessages.length" class="message-loading">正在加载…</div>
+          <div v-else-if="allMessages.length" class="message-list">
+            <button
+              v-for="item in allMessages"
+              :key="item.id"
+              type="button"
+              class="message-item"
+              :class="{ unread: !item.read }"
+              @click="openMessage(item)"
+            >
+              <i class="message-unread-dot" :class="{ hidden: item.read }"></i>
+              <span class="message-item-main">
+                <span class="message-title">{{ item.title }}</span>
+                <span v-if="item.body" class="message-body">{{ item.body }}</span>
+                <span class="message-meta">{{ messageTime(item.created_at) }}</span>
+              </span>
+            </button>
+            <div v-if="allMessageHasMore" class="message-more">
+              <n-button size="small" secondary :loading="allMessageLoading" @click="loadMoreMessages">加载更多</n-button>
+            </div>
+          </div>
+          <div v-else class="message-empty large">暂无消息</div>
+        </div>
+      </div>
+    </n-modal>
   </div>
 </template>
 
@@ -587,6 +776,222 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
   font-size: 9px;
   line-height: 17px;
   text-align: center;
+}
+
+.message-trigger {
+  max-width: 150px;
+}
+
+.message-trigger > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message-popover {
+  display: flex;
+  flex-direction: column;
+}
+
+.message-popover-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.message-popover-head strong {
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.message-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.message-text-btn {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.message-text-btn.primary {
+  color: var(--brand);
+  font-weight: 600;
+}
+
+.message-text-btn:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.message-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.message-item {
+  display: flex;
+  width: 100%;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 4px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.message-item:last-child {
+  border-bottom: 0;
+}
+
+.message-item:hover {
+  background: var(--brand-softer);
+}
+
+.message-item.unread .message-title {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.message-unread-dot {
+  width: 6px;
+  height: 6px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: var(--brand);
+  flex: none;
+}
+
+.message-unread-dot.hidden {
+  visibility: hidden;
+}
+
+.message-item-main {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.message-title {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message-body {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.message-meta {
+  color: var(--muted-light);
+  font-family: var(--mono);
+  font-size: 8.5px;
+}
+
+.message-empty,
+.message-loading {
+  padding: 20px 0;
+  color: var(--muted-light);
+  font-size: 10px;
+  text-align: center;
+}
+
+.message-empty.large {
+  padding: 48px 0;
+}
+
+.message-more {
+  display: flex;
+  justify-content: center;
+  padding: 10px 0 0;
+}
+
+.message-modal {
+  width: min(560px, calc(100vw - 32px));
+  border-radius: 18px;
+  background: var(--card);
+  box-shadow: 0 30px 80px -20px rgba(15, 23, 42, 0.35);
+}
+
+.message-modal-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 22px 24px 16px;
+  border-bottom: 1px solid var(--border);
+  border-radius: 18px 18px 0 0;
+  background: var(--surface-soft);
+}
+
+.message-modal-kicker {
+  color: var(--brand);
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 650;
+  letter-spacing: 0.13em;
+}
+
+.message-modal-head h2 {
+  margin: 4px 0 3px;
+  color: var(--ink);
+  font-size: 20px;
+  font-weight: 660;
+}
+
+.message-modal-head p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.message-modal-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+.message-modal-body {
+  max-height: min(68vh, 620px);
+  overflow-y: auto;
+  padding: 4px 24px 18px;
+}
+
+.message-modal .message-item {
+  padding: 12px 2px;
+}
+
+.modal-close {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted-light);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
 }
 
 .topbar-help {

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import {
   NButton,
   NInput,
@@ -31,6 +32,7 @@ import { REVIEW_REASON_OPTIONS } from '@/constants/reviewReasons'
 
 const workspace = useWorkspaceStore()
 const reviewStore = useReviewStore()
+const route = useRoute()
 const message = useMessage()
 const dialog = useDialog()
 
@@ -46,6 +48,15 @@ const auditFilter = ref<number | null>(null)
 const reasonCode = ref('MANUAL_CONFIRMED')
 const remark = ref('')
 const reasonOptions = REVIEW_REASON_OPTIONS
+const initialProjectId = Number(route.query.project_id)
+if (Number.isFinite(initialProjectId) && initialProjectId > 0 && initialProjectId !== workspace.currentProjectId) {
+  workspace.setCurrentProject(initialProjectId)
+}
+const initialAuditId = Number(route.query.audit_id)
+if (Number.isFinite(initialAuditId) && initialAuditId > 0) {
+  auditFilter.value = initialAuditId
+}
+const initialTaskId = Number(route.query.task_id)
 
 const selectedTask = computed(() => detail.value?.task || queue.value.find((t) => t.id === selectedId.value) || null)
 const selectedAudit = computed(() => audits.value.find((a) => a.id === selectedTask.value?.audit_id) || null)
@@ -133,7 +144,10 @@ async function loadQueue() {
       detail.value = null
     }
     if (!selectedId.value && data.items.length) {
-      await selectTask(data.items[0])
+      const target = Number.isFinite(initialTaskId) && initialTaskId > 0
+        ? data.items.find((task) => task.id === initialTaskId)
+        : undefined
+      await selectTask(target || data.items[0])
     }
   } catch (error) {
     message.error(error instanceof Error ? error.message : '加载复核队列失败')

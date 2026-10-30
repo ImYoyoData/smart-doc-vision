@@ -320,6 +320,24 @@ export interface NotificationChannel {
   updated_at: string
 }
 
+export interface InAppMessage {
+  id: number
+  type: string
+  title: string
+  body: string
+  link: string
+  project_id: number
+  audit_id: number
+  task_id: number
+  read: boolean
+  read_at?: string | null
+  created_at: string
+}
+
+export interface InAppMessagePage extends Paged<InAppMessage> {
+  unread_count: number
+}
+
 export interface TriggerSource {
   id: number
   project_id: number

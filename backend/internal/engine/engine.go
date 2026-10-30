@@ -24,6 +24,7 @@ import (
 	"smartdoc-vision/backend/internal/config"
 	"smartdoc-vision/backend/internal/media"
 	"smartdoc-vision/backend/internal/model"
+	"smartdoc-vision/backend/internal/notify"
 	"smartdoc-vision/backend/internal/rules"
 	"smartdoc-vision/backend/internal/security"
 )
@@ -433,6 +434,11 @@ func (e *Engine) process(taskID uint64) {
 	e.writeAudit(task, "TASK_COMPLETE", map[string]any{
 		"result": finalResult, "status": status, "provider": verdict.Provider, "model": verdict.Model,
 	})
+	if status == model.TaskReviewPending {
+		if err := notify.NotifyReviewPending(e.db, task, audit, verdict.Summary); err != nil {
+			log.Printf("task %s notify review pending: %v", task.TaskNo, err)
+		}
+	}
 	if status == model.TaskSuccess {
 		e.runCallback(task.ID)
 	}
