@@ -17,6 +17,7 @@ import {
   NInputNumber,
   NModal,
   NSelect,
+  NSwitch,
   useDialog,
   useMessage,
   type InputInst,
@@ -71,6 +72,7 @@ const auditPage = ref(1)
 const auditTotal = ref(0)
 const auditPageSize = 50
 const loadingMore = ref(false)
+const statusUpdatingId = ref<number | null>(null)
 const hasMoreAudits = computed(() => audits.value.length < auditTotal.value)
 const templates = ref<RuleTemplate[]>([])
 const search = ref('')
@@ -836,7 +838,6 @@ function auditMoreOptions(audit: Audit) {
       { type: 'divider', key: 'd1' },
       { label: '编辑配置', key: 'edit' },
       { label: '脚本日志', key: 'script-logs' },
-      { label: audit.status === 'ACTIVE' ? '暂停审核' : '启用审核', key: 'status' },
       { label: '复制配置', key: 'clone' },
       { type: 'divider', key: 'd2' },
       { label: '移入回收站', key: 'delete' },
@@ -862,9 +863,6 @@ function handleAuditMore(key: string, audit: Audit) {
     case 'script-logs':
       scriptLogsAudit.value = audit
       scriptLogsShow.value = true
-      break
-    case 'status':
-      toggleStatus(audit)
       break
     case 'clone':
       openClone(audit)
@@ -1516,14 +1514,19 @@ function applyFieldAssistant(text: string) {
   message.success('AI 优化后的审核要求已应用，保存审核配置后生效')
 }
 
-async function toggleStatus(audit: Audit) {
-  const next = audit.status === 'ACTIVE' ? 'PAUSED' : 'ACTIVE'
+async function setAuditStatus(audit: Audit, enabled: boolean) {
+  if (statusUpdatingId.value !== null) return
+  const next = enabled ? 'ACTIVE' : 'PAUSED'
+  if (audit.status === next) return
+  statusUpdatingId.value = audit.id
   try {
     await auditApi.setStatus(audit.id, next)
-    message.success(next === 'ACTIVE' ? '审核已启用' : '审核已暂停')
+    message.success(enabled ? '审核已启用' : '审核已暂停')
     await load()
   } catch (error) {
     message.error(error instanceof Error ? error.message : '状态更新失败')
+  } finally {
+    statusUpdatingId.value = null
   }
 }
 
@@ -1752,6 +1755,16 @@ onMounted(async () => {
               </span>
             </div>
           </div>
+          <n-switch
+            class="audit-status-switch"
+            :value="audit.status === 'ACTIVE'"
+            size="small"
+            :loading="statusUpdatingId === audit.id"
+            :disabled="!auth.can('audit:write') || (statusUpdatingId !== null && statusUpdatingId !== audit.id)"
+            :title="audit.status === 'ACTIVE' ? '点击暂停审核' : '点击启用审核'"
+            :aria-label="audit.status === 'ACTIVE' ? '暂停审核' : '启用审核'"
+            @update:value="setAuditStatus(audit, Boolean($event))"
+          />
         </div>
         <p class="audit-desc" :title="audit.description || ''">{{ audit.description || '暂无说明' }}</p>
         <div class="audit-meta">
@@ -2663,6 +2676,11 @@ onMounted(async () => {
 .audit-heading {
   min-width: 0;
   flex: 1;
+}
+
+.audit-status-switch {
+  flex: none;
+  margin-top: 3px;
 }
 
 .audit-name {

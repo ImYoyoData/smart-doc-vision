@@ -84,16 +84,15 @@ watch(
   },
 )
 
-function auditScopeText(user: User) {
-  if (user.role === 'SUPER_ADMIN' || !(user.audit_ids || []).length) return '全部审核配置'
-  return `${user.audit_ids!.length} 个指定配置`
-}
-
-function auditScopeTitle(user: User) {
-  if (user.role === 'SUPER_ADMIN' || !(user.audit_ids || []).length) {
-    return '未限制，可查看项目范围内全部审核配置'
-  }
-  return user.audit_ids!.map((id) => audits.value.find((audit) => audit.id === id)?.name || `审核 #${id}`).join('、')
+function userAudits(user: User) {
+  return (user.audit_ids || []).map((id) => {
+    const audit = audits.value.find((item) => item.id === id)
+    return {
+      id,
+      name: audit?.name || `审核 #${id}`,
+      code: audit?.code || '已删除/不可用',
+    }
+  })
 }
 const selectedRole = computed(() => roles.value.find((r) => r.code === form.role))
 const activeUsers = computed(() => users.value.filter((u) => u.status === 'ACTIVE').length)
@@ -475,7 +474,32 @@ onMounted(load)
                   <span v-if="!userScopeProjects(user).length" class="scope-empty">无</span>
                 </template>
               </span>
-              <span :title="auditScopeTitle(user)">审核范围：{{ auditScopeText(user) }}</span>
+              <span class="scope-meta audit-scope-meta">
+                <span class="scope-label">审核范围</span>
+                <span v-if="user.role === 'SUPER_ADMIN' || !userAudits(user).length" class="audit-scope-tag all">全部</span>
+                <template v-else>
+                  <span class="audit-scope-tag" :title="userAudits(user)[0]?.name">{{ userAudits(user)[0]?.name }}</span>
+                  <n-popover v-if="userAudits(user).length > 1" trigger="click" placement="top-start" :width="360">
+                    <template #trigger>
+                      <button
+                        class="audit-scope-tag more"
+                        type="button"
+                        :title="`查看全部 ${userAudits(user).length} 个审核配置`"
+                        :aria-label="`查看全部 ${userAudits(user).length} 个审核配置`"
+                      >+{{ userAudits(user).length - 1 }}</button>
+                    </template>
+                    <div class="audit-scope-popover">
+                      <strong>审核配置范围（{{ userAudits(user).length }}）</strong>
+                      <div class="audit-scope-popover-list">
+                        <span v-for="audit in userAudits(user)" :key="audit.id" class="audit-scope-item">
+                          <span>{{ audit.name }}</span>
+                          <small>{{ audit.code }}</small>
+                        </span>
+                      </div>
+                    </div>
+                  </n-popover>
+                </template>
+              </span>
               <span :class="{ 'mfa-on': user.mfa_enabled }">两步验证：{{ user.mfa_enabled ? '已开启' : '未开启' }}</span>
               <span>最近登录：{{ user.last_login_at ? user.last_login_at.replace('T', ' ').slice(0, 19) : '从未登录' }}</span>
             </div>
@@ -601,6 +625,7 @@ onMounted(load)
               multiple
               filterable
               clearable
+              :max-tag-count="3"
               :options="auditOptions"
               placeholder="不选表示全部审核配置"
             />
@@ -941,6 +966,84 @@ onMounted(load)
 
 .scope-empty {
   color: var(--muted-light);
+}
+
+.audit-scope-tag {
+  display: inline-flex;
+  max-width: 170px;
+  align-items: center;
+  overflow: hidden;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: var(--brand-soft);
+  color: var(--brand-strong);
+  font-size: 9.5px;
+  font-weight: 550;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.audit-scope-tag.all {
+  background: var(--green-soft);
+  color: var(--green);
+}
+
+.audit-scope-tag.more {
+  border: 1px dashed var(--brand-border);
+  background: transparent;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.audit-scope-tag.more:hover {
+  background: var(--brand-soft);
+}
+
+.audit-scope-popover {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.audit-scope-popover > strong {
+  color: var(--ink);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.audit-scope-popover-list {
+  display: flex;
+  max-height: 240px;
+  flex-direction: column;
+  gap: 5px;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.audit-scope-item {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: var(--surface-soft);
+}
+
+.audit-scope-item > span {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.audit-scope-item > small {
+  color: var(--muted-light);
+  font-family: var(--mono);
+  font-size: 8.5px;
+  flex: none;
 }
 
 .user-actions {
