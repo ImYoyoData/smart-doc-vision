@@ -2,22 +2,29 @@ package metrics
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
 	"runtime"
 	"runtime/pprof"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
 const (
 	// SampleInterval is how often runtime gauges and request counters are
 	// captured for the admin monitor charts.
 	SampleInterval = 10 * time.Second
-	// Retention is how much history the in-memory ring keeps.
+	// Retention is how much sample history Redis keeps.
 	Retention = 24 * time.Hour
+	// HistoryKey is the Redis sorted set holding monitor samples.
+	HistoryKey = "sdv:monitor:samples"
 )
 
 type key struct {
@@ -27,6 +34,7 @@ type key struct {
 }
 
 type sample struct {
+	instance       string
 	at             time.Time
 	heapAlloc      uint64
 	heapInuse      uint64
@@ -66,9 +74,10 @@ var (
 )
 
 var (
-	startedAt = time.Now()
-	mu        sync.Mutex
-	requests  = map[key]uint64{}
+	startedAt  = time.Now()
+	instanceID = fmt.Sprintf("%d-%d", os.Getpid(), startedAt.UnixNano())
+	mu         sync.Mutex
+	requests   = map[key]uint64{}
 
 	totalRequests atomic.Uint64
 	errorRequests atomic.Uint64
@@ -76,10 +85,27 @@ var (
 	latencyNanos  atomic.Uint64
 
 	sampleMu   sync.RWMutex
-	samples    []sample
 	latest     sample
 	samplerRun sync.Once
+
+	redisMu    sync.RWMutex
+	redisStore *redis.Client
 )
+
+// AttachRedis enables durable monitor history. When no Redis client is
+// attached, history is empty; there is no in-memory fallback.
+func AttachRedis(client *redis.Client) {
+	redisMu.Lock()
+	redisStore = client
+	redisMu.Unlock()
+}
+
+func attachedRedis() *redis.Client {
+	redisMu.RLock()
+	client := redisStore
+	redisMu.RUnlock()
+	return client
+}
 
 // Snapshot intentionally avoids runtime.ReadMemStats: that call stops the
 // world and would make every monitor poll expensive for the whole process.
@@ -163,11 +189,6 @@ func ObserveRequest(method, route string, status int, duration time.Duration) {
 // until ctx is cancelled.
 func StartSampler(ctx context.Context) {
 	samplerRun.Do(func() {
-		sampleMu.Lock()
-		if capacity := int(Retention/SampleInterval) + 16; cap(samples) < capacity {
-			samples = make([]sample, 0, capacity)
-		}
-		sampleMu.Unlock()
 		capture()
 		go func() {
 			ticker := time.NewTicker(SampleInterval)
@@ -239,19 +260,20 @@ func Snapshot() Current {
 }
 
 // History returns at most maxPoints downsampled buckets starting at since.
+// History is read from Redis only; when Redis is unavailable the result is
+// empty by design.
 func History(since time.Time, maxPoints int) []Point {
-	return historySince(since, time.Now(), maxPoints)
+	snapshot, ok := loadRedisSamples(since)
+	if !ok {
+		return []Point{}
+	}
+	return aggregateSamples(snapshot, since, time.Now(), maxPoints)
 }
 
-func historySince(since, now time.Time, maxPoints int) []Point {
+func aggregateSamples(snapshot []sample, since, now time.Time, maxPoints int) []Point {
 	if maxPoints < 2 {
 		maxPoints = 2
 	}
-	// Aggregate while holding the read lock instead of copying up to 24h of
-	// samples on every poll; this keeps monitor reads allocation-light.
-	sampleMu.RLock()
-	defer sampleMu.RUnlock()
-	snapshot := samples
 	if len(snapshot) == 0 {
 		return []Point{}
 	}
@@ -277,7 +299,8 @@ func historySince(since, now time.Time, maxPoints int) []Point {
 	}
 	buckets := map[int]*bucket{}
 	lastIndex := -1
-	for i, current := range snapshot {
+	lastByInstance := map[string]sample{}
+	for _, current := range snapshot {
 		if current.at.Before(since) {
 			continue
 		}
@@ -285,10 +308,8 @@ func historySince(since, now time.Time, maxPoints int) []Point {
 		if index >= maxPoints {
 			index = maxPoints - 1
 		}
-		previous := sample{}
-		if i > 0 {
-			previous = snapshot[i-1]
-		}
+		previous, hasPrevious := lastByInstance[current.instance]
+		lastByInstance[current.instance] = current
 		item, exists := buckets[index]
 		if !exists {
 			item = &bucket{point: Point{Time: baseSince.Add(time.Duration(index) * step).Format(time.RFC3339)}}
@@ -302,16 +323,16 @@ func historySince(since, now time.Time, maxPoints int) []Point {
 		item.point.InFlight = current.inFlight
 		item.point.HostCPUPercent = current.hostCPUPercent
 		item.point.HostMemPercent = current.hostMemPercent
-		if current.requests >= previous.requests {
+		if hasPrevious && current.requests >= previous.requests {
 			item.point.Requests += current.requests - previous.requests
 		}
-		if current.errors >= previous.errors {
+		if hasPrevious && current.errors >= previous.errors {
 			item.point.Errors += current.errors - previous.errors
 		}
-		if current.gcCount >= previous.gcCount {
+		if hasPrevious && current.gcCount >= previous.gcCount {
 			item.point.GCCount += current.gcCount - previous.gcCount
 		}
-		if current.latencyNanos >= previous.latencyNanos {
+		if hasPrevious && current.latencyNanos >= previous.latencyNanos {
 			item.latencyNanos += current.latencyNanos - previous.latencyNanos
 		}
 		lastIndex = index
@@ -357,6 +378,7 @@ func capture() {
 	runtime.ReadMemStats(&mem)
 	host := sampleHost()
 	entry := sample{
+		instance:       instanceID,
 		at:             time.Now(),
 		heapAlloc:      mem.HeapAlloc,
 		heapInuse:      mem.HeapInuse,
@@ -377,18 +399,110 @@ func capture() {
 		hostMemTotalMB: host.memTotalMB,
 		hostAvailable:  host.available,
 	}
-	cutoff := entry.at.Add(-Retention)
 	sampleMu.Lock()
 	latest = entry
-	samples = append(samples, entry)
-	trimmed := samples[:0]
-	for _, item := range samples {
-		if item.at.After(cutoff) {
-			trimmed = append(trimmed, item)
-		}
-	}
-	samples = trimmed
 	sampleMu.Unlock()
+	persistSample(entry)
+}
+
+type redisSample struct {
+	Instance       string  `json:"i"`
+	At             int64   `json:"t"`
+	HeapAlloc      uint64  `json:"ha"`
+	HeapInuse      uint64  `json:"hi"`
+	HeapSys        uint64  `json:"hs"`
+	StackInuse     uint64  `json:"si"`
+	Sys            uint64  `json:"s"`
+	PauseTotal     uint64  `json:"pt"`
+	Goroutines     int     `json:"g"`
+	Threads        int     `json:"th"`
+	InFlight       int64   `json:"if"`
+	Requests       uint64  `json:"rq"`
+	Errors         uint64  `json:"er"`
+	LatencyNanos   uint64  `json:"ln"`
+	GCCount        uint32  `json:"gc"`
+	HostCPUPercent float64 `json:"hcpu"`
+	HostMemPercent float64 `json:"hmem"`
+	HostMemUsedMB  float64 `json:"hmu"`
+	HostMemTotalMB float64 `json:"hmt"`
+	HostAvailable  bool    `json:"hok"`
+}
+
+func toRedisSample(entry sample) redisSample {
+	return redisSample{
+		Instance: entry.instance, At: entry.at.UnixMilli(),
+		HeapAlloc: entry.heapAlloc, HeapInuse: entry.heapInuse,
+		HeapSys: entry.heapSys, StackInuse: entry.stackInuse, Sys: entry.sys,
+		PauseTotal: entry.pauseTotal, Goroutines: entry.goroutines, Threads: entry.threads,
+		InFlight: entry.inFlight, Requests: entry.requests, Errors: entry.errors,
+		LatencyNanos: entry.latencyNanos, GCCount: entry.gcCount,
+		HostCPUPercent: entry.hostCPUPercent, HostMemPercent: entry.hostMemPercent,
+		HostMemUsedMB: entry.hostMemUsedMB, HostMemTotalMB: entry.hostMemTotalMB,
+		HostAvailable: entry.hostAvailable,
+	}
+}
+
+func fromRedisSample(stored redisSample) sample {
+	return sample{
+		instance: stored.Instance, at: time.UnixMilli(stored.At),
+		heapAlloc: stored.HeapAlloc, heapInuse: stored.HeapInuse,
+		heapSys: stored.HeapSys, stackInuse: stored.StackInuse, sys: stored.Sys,
+		pauseTotal: stored.PauseTotal, goroutines: stored.Goroutines, threads: stored.Threads,
+		inFlight: stored.InFlight, requests: stored.Requests, errors: stored.Errors,
+		latencyNanos: stored.LatencyNanos, gcCount: stored.GCCount,
+		hostCPUPercent: stored.HostCPUPercent, hostMemPercent: stored.HostMemPercent,
+		hostMemUsedMB: stored.HostMemUsedMB, hostMemTotalMB: stored.HostMemTotalMB,
+		hostAvailable: stored.HostAvailable,
+	}
+}
+
+func persistSample(entry sample) {
+	client := attachedRedis()
+	if client == nil {
+		return
+	}
+	raw, err := json.Marshal(toRedisSample(entry))
+	if err != nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	cutoff := entry.at.Add(-Retention).UnixMilli()
+	pipe := client.Pipeline()
+	pipe.ZAdd(ctx, HistoryKey, redis.Z{
+		Score: float64(entry.at.UnixMilli()), Member: string(raw),
+	})
+	pipe.ZRemRangeByScore(ctx, HistoryKey, "-inf", strconv.FormatInt(cutoff, 10))
+	pipe.Expire(ctx, HistoryKey, Retention+time.Hour)
+	_, _ = pipe.Exec(ctx)
+}
+
+func loadRedisSamples(since time.Time) ([]sample, bool) {
+	client := attachedRedis()
+	if client == nil {
+		return nil, false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	values, err := client.ZRangeByScore(ctx, HistoryKey, &redis.ZRangeBy{
+		Min: strconv.FormatInt(since.UnixMilli(), 10),
+		Max: "+inf",
+	}).Result()
+	if err != nil || len(values) == 0 {
+		return nil, false
+	}
+	out := make([]sample, 0, len(values))
+	for _, raw := range values {
+		var stored redisSample
+		if err := json.Unmarshal([]byte(raw), &stored); err != nil {
+			continue
+		}
+		out = append(out, fromRedisSample(stored))
+	}
+	if len(out) == 0 {
+		return nil, false
+	}
+	return out, true
 }
 
 // sampleHost computes host-wide CPU and memory usage. CPU needs two readings,

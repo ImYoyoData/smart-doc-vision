@@ -65,6 +65,7 @@ func main() {
 	defer retentionCancel()
 
 	monitorCtx, monitorCancel := context.WithCancel(context.Background())
+	metrics.AttachRedis(cache)
 	metrics.StartSampler(monitorCtx)
 	defer monitorCancel()
 

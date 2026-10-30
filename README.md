@@ -484,7 +484,7 @@ db.close()
 - MySQL / Redis 依赖状态和连接池使用情况；
 - 主机级 CPU 使用率与物理内存占用，仅作参考（Linux 读取 `/proc`，Windows 调用系统 API）。
 
-指标每 10 秒采样一次，在进程内保留 24 小时；服务重启后历史清空。Prometheus 抓取仍使用 `/metrics`，不受影响。
+指标每 10 秒采样一次，历史写入 Redis Sorted Set（`sdv:monitor:samples`）并保留 24 小时，服务重启后仍可查看；Redis 不可用时历史为空，进程内只保留当前快照，不提供内存兜底。Prometheus 抓取仍使用 `/metrics`，不受影响。
 
 为了不让监控本身拖慢服务：内存统计只在采样协程中读取（不会在每次接口请求时触发 stop-the-world 的 `ReadMemStats`），任务状态汇总缓存 30 秒，监控接口默认最多返回 120 个降采样点；前端图表关闭动画，标签页隐藏时暂停轮询，并且不会叠加并发请求。
 

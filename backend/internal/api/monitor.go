@@ -68,8 +68,8 @@ type monitorQueueItem struct {
 }
 
 // systemMonitor exposes process runtime, HTTP throughput and project worker
-// queue metrics for the super-admin monitor page. History is sampled in
-// memory every metrics.SampleInterval and kept for metrics.Retention.
+// queue metrics for the super-admin monitor page. History is sampled every
+// metrics.SampleInterval and kept in Redis for metrics.Retention.
 func (s *Server) systemMonitor(c *gin.Context) {
 	if !s.hasPermission(currentUser(c).Role, "system:monitor") {
 		forbidden(c, "当前角色无权查看运行监控")

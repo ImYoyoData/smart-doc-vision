@@ -1,25 +1,16 @@
 package metrics
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 )
 
-func TestHistorySinceAggregatesAndFillsGaps(t *testing.T) {
-	sampleMu.Lock()
-	original := samples
-	sampleMu.Unlock()
-	defer func() {
-		sampleMu.Lock()
-		samples = original
-		sampleMu.Unlock()
-	}()
-
+func TestHistoryAggregatesAndFillsGaps(t *testing.T) {
 	now := time.Now()
 	since := now.Add(-30 * time.Second)
 	latencyStep := uint64(5 * time.Millisecond)
-	sampleMu.Lock()
-	samples = []sample{
+	snapshot := []sample{
 		{
 			at: since.Add(5 * time.Second), heapAlloc: 100 << 20, heapSys: 200 << 20, sys: 300 << 20,
 			goroutines: 10, threads: 4, inFlight: 1, requests: 100,
@@ -35,9 +26,8 @@ func TestHistorySinceAggregatesAndFillsGaps(t *testing.T) {
 			latencyNanos: 20 * latencyStep,
 		},
 	}
-	sampleMu.Unlock()
 
-	points := historySince(since, now, 6)
+	points := aggregateSamples(snapshot, since, now, 6)
 	if len(points) != 3 {
 		t.Fatalf("expected 3 buckets, got %d: %+v", len(points), points)
 	}
@@ -56,30 +46,90 @@ func TestHistorySinceAggregatesAndFillsGaps(t *testing.T) {
 }
 
 func TestHistoryFillsMissingBucketsWithPreviousGauges(t *testing.T) {
-	sampleMu.Lock()
-	original := samples
-	sampleMu.Unlock()
-	defer func() {
-		sampleMu.Lock()
-		samples = original
-		sampleMu.Unlock()
-	}()
-
 	now := time.Now()
 	since := now.Add(-30 * time.Second)
-	sampleMu.Lock()
-	samples = []sample{
+	snapshot := []sample{
 		{at: since.Add(5 * time.Second), heapAlloc: 80 << 20, goroutines: 7, requests: 5},
 		{at: since.Add(25 * time.Second), heapAlloc: 90 << 20, goroutines: 9, requests: 8},
 	}
-	sampleMu.Unlock()
 
-	points := historySince(since, now, 6)
+	points := aggregateSamples(snapshot, since, now, 30)
 	if len(points) != 3 {
 		t.Fatalf("expected gap-filled 3 buckets, got %d: %+v", len(points), points)
 	}
 	if points[1].Goroutines != 7 || points[1].HeapAllocMB != 80 || points[1].Requests != 0 {
 		t.Fatalf("missing bucket should carry gauges with zero counters: %+v", points[1])
+	}
+}
+
+func TestHistoryWithoutRedisIsEmpty(t *testing.T) {
+	redisMu.Lock()
+	originalRedis := redisStore
+	redisStore = nil
+	redisMu.Unlock()
+	sampleMu.Lock()
+	originalLatest := latest
+	latest = sample{at: time.Now(), heapAlloc: 64 << 20}
+	sampleMu.Unlock()
+	defer func() {
+		redisMu.Lock()
+		redisStore = originalRedis
+		redisMu.Unlock()
+		sampleMu.Lock()
+		latest = originalLatest
+		sampleMu.Unlock()
+	}()
+
+	if points := History(time.Now().Add(-time.Hour), 60); len(points) != 0 {
+		t.Fatalf("history must be empty without Redis, got %+v", points)
+	}
+}
+
+func TestHistoryRestartsCounterDeltasPerInstance(t *testing.T) {
+	now := time.Now()
+	since := now.Add(-30 * time.Second)
+	snapshot := []sample{
+		{instance: "old", at: since.Add(5 * time.Second), requests: 500},
+		{instance: "new", at: since.Add(15 * time.Second), requests: 10},
+		{instance: "new", at: since.Add(25 * time.Second), requests: 20},
+	}
+
+	points := aggregateSamples(snapshot, since, now, 6)
+	if len(points) != 3 {
+		t.Fatalf("expected 3 buckets, got %d: %+v", len(points), points)
+	}
+	if points[1].Requests != 0 {
+		t.Fatalf("first sample of a new process must not diff against the old process: %+v", points[1])
+	}
+	if points[2].Requests != 10 {
+		t.Fatalf("new process should diff against its own previous sample: %+v", points[2])
+	}
+}
+
+func TestRedisSampleRoundTrip(t *testing.T) {
+	entry := sample{
+		instance: "test-instance",
+		at:       time.Now().Truncate(time.Millisecond), heapAlloc: 11, heapInuse: 12, heapSys: 13,
+		stackInuse: 14, sys: 15, pauseTotal: 16, goroutines: 17, threads: 18, inFlight: 19,
+		requests: 20, errors: 21, latencyNanos: 22, gcCount: 23,
+		hostCPUPercent: 24.5, hostMemPercent: 25.5, hostMemUsedMB: 26.5,
+		hostMemTotalMB: 27.5, hostAvailable: true,
+	}
+	raw, err := json.Marshal(toRedisSample(entry))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var stored redisSample
+	if err := json.Unmarshal(raw, &stored); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	got := fromRedisSample(stored)
+	if !got.at.Equal(entry.at) {
+		t.Fatalf("timestamp changed: %v -> %v", entry.at, got.at)
+	}
+	got.at = entry.at
+	if got != entry {
+		t.Fatalf("sample changed: %+v -> %+v", entry, got)
 	}
 }
 
@@ -110,11 +160,11 @@ func TestSnapshotReportsRuntime(t *testing.T) {
 
 func TestSnapshotUsesSampledMemory(t *testing.T) {
 	sampleMu.Lock()
-	originalSamples, originalLatest := samples, latest
+	originalLatest := latest
 	sampleMu.Unlock()
 	defer func() {
 		sampleMu.Lock()
-		samples, latest = originalSamples, originalLatest
+		latest = originalLatest
 		sampleMu.Unlock()
 	}()
 
@@ -125,7 +175,6 @@ func TestSnapshotUsesSampledMemory(t *testing.T) {
 	}
 	sampleMu.Lock()
 	latest = entry
-	samples = []sample{entry}
 	sampleMu.Unlock()
 
 	current := Snapshot()
