@@ -19,9 +19,19 @@ type User struct {
 	UpdatedAt    time.Time  `json:"updated_at"`
 
 	ProjectIDs  []uint64 `gorm:"-" json:"project_ids"`
+	AuditIDs    []uint64 `gorm:"-" json:"audit_ids"`
 	Permissions []string `gorm:"-" json:"permissions"`
 	Menus       []string `gorm:"-" json:"menus"`
 }
+
+// UserAuditScope limits a user to specific audit configurations. An empty set
+// means "all audits inside the user's project scope".
+type UserAuditScope struct {
+	UserID  uint64 `gorm:"primaryKey;index" json:"user_id"`
+	AuditID uint64 `gorm:"primaryKey;index" json:"audit_id"`
+}
+
+func (UserAuditScope) TableName() string { return "user_audit_scopes" }
 
 const (
 	RoleSuperAdmin = "SUPER_ADMIN"

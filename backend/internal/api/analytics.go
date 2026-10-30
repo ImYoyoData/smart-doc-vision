@@ -73,6 +73,10 @@ func (s *Server) analytics(c *gin.Context) {
 		forbidden(c, "没有该项目的报表权限")
 		return
 	}
+	if auditID > 0 && !s.canAccessAudit(user, auditID) {
+		forbidden(c, "没有该审核配置的报表权限")
+		return
+	}
 	scopeTasks := func() *gormQuery {
 		q := newGormQuery(s.db.Model(&model.Task{})).
 			Where("created_at >= ? AND created_at < ?", from, to)
@@ -81,6 +85,9 @@ func (s *Server) analytics(c *gin.Context) {
 		}
 		if auditID > 0 {
 			q = q.Where("audit_id = ?", auditID)
+		}
+		if ids := s.auditScopeIDs(user); len(ids) > 0 {
+			q = q.Where("audit_id IN ?", ids)
 		}
 		return q
 	}
@@ -142,6 +149,7 @@ func (s *Server) analytics(c *gin.Context) {
 	if auditID > 0 {
 		trendQ = trendQ.Where("audit_id = ?", auditID)
 	}
+	trendQ = s.applyTaskAuditScope(trendQ, user)
 	_ = trendQ.Group("day").Order("day asc").Scan(&trendRows).Error
 	trendMap := map[string]struct {
 		Day    string
@@ -192,6 +200,7 @@ func (s *Server) analytics(c *gin.Context) {
 	if auditID > 0 {
 		auditQ = auditQ.Where("audit_id = ?", auditID)
 	}
+	auditQ = s.applyTaskAuditScope(auditQ, user)
 	_ = auditQ.Group("audit_id").Order("total desc").Scan(&auditRows).Error
 	auditMap := map[uint64]model.Audit{}
 	byAudit := make([]gin.H, 0, len(auditRows))
@@ -224,14 +233,15 @@ func (s *Server) analytics(c *gin.Context) {
 			Failed    int64
 		}
 		var projectRows []projectAgg
-		_ = s.db.Model(&model.Task{}).
+		projectQ := s.db.Model(&model.Task{}).
 			Select("project_id, COUNT(*) AS total, "+
 				"SUM(CASE WHEN result = 'PASS' THEN 1 ELSE 0 END) AS pass, "+
 				"SUM(CASE WHEN result = 'REJECT' THEN 1 ELSE 0 END) AS reject, "+
 				"SUM(CASE WHEN result = 'REVIEW' THEN 1 ELSE 0 END) AS review, "+
 				"SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END) AS failed").
-			Where("created_at >= ? AND created_at < ?", from, to).
-			Group("project_id").Order("total desc").Scan(&projectRows).Error
+			Where("created_at >= ? AND created_at < ?", from, to)
+		projectQ = s.applyTaskAuditScope(projectQ, user)
+		_ = projectQ.Group("project_id").Order("total desc").Scan(&projectRows).Error
 		for _, row := range projectRows {
 			var project model.Project
 			_ = s.db.First(&project, row.ProjectID).Error
@@ -257,6 +267,7 @@ func (s *Server) analytics(c *gin.Context) {
 	if auditID > 0 {
 		sampleQ = sampleQ.Where("audit_id = ?", auditID)
 	}
+	sampleQ = s.applyTaskAuditScope(sampleQ, user)
 	_ = sampleQ.Order("created_at desc").Limit(5000).Find(&samples).Error
 
 	labelCounts := map[string]int{}
@@ -343,6 +354,7 @@ func (s *Server) analytics(c *gin.Context) {
 	if auditID > 0 {
 		pendingQ = pendingQ.Where("audit_id = ?", auditID)
 	}
+	pendingQ = s.applyTaskAuditScope(pendingQ, user)
 	_ = pendingQ.Order("created_at asc").Limit(6).Find(&pendingTasks).Error
 	s.populateTaskNames(pendingTasks)
 

@@ -263,7 +263,8 @@ func userView(user model.User) gin.H {
 		"email": user.Email,
 		"role":  user.Role, "status": user.Status, "last_login_at": user.LastLoginAt,
 		"mfa_enabled": user.MFAEnabled,
-		"project_ids": user.ProjectIDs, "permissions": user.Permissions, "menus": user.Menus,
+		"project_ids": user.ProjectIDs, "audit_ids": user.AuditIDs,
+		"permissions": user.Permissions, "menus": user.Menus,
 	}
 }
 
@@ -277,11 +278,15 @@ func (s *Server) hydrateUser(user *model.User) {
 	}
 	if user.Role == model.RoleSuperAdmin {
 		user.ProjectIDs = nil
+		user.AuditIDs = nil
 		return
 	}
 	var ids []uint64
 	_ = s.db.Model(&model.ProjectMember{}).Where("user_id = ?", user.ID).Pluck("project_id", &ids).Error
 	user.ProjectIDs = ids
+	var auditIDs []uint64
+	_ = s.db.Model(&model.UserAuditScope{}).Where("user_id = ?", user.ID).Order("audit_id asc").Pluck("audit_id", &auditIDs).Error
+	user.AuditIDs = auditIDs
 }
 
 func (s *Server) loginLocked(ctx context.Context, username, ip string) (time.Time, string) {

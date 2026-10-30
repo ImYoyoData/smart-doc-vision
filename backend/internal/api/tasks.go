@@ -26,6 +26,7 @@ type submitTaskRequest struct {
 }
 
 func (s *Server) listTasks(c *gin.Context) {
+	user := currentUser(c)
 	page, pageSize := pagination(c)
 	q := s.db.Model(&model.Task{})
 	if pid := c.Query("project_id"); pid != "" {
@@ -39,12 +40,17 @@ func (s *Server) listTasks(c *gin.Context) {
 		}
 		q = q.Where("project_id = ?", id)
 	} else {
-		q = s.applyProjectScope(q, currentUser(c))
+		q = s.applyProjectScope(q, user)
 	}
+	q = s.applyTaskAuditScope(q, user)
 	if aid := c.Query("audit_id"); aid != "" {
 		id, okID := parseUint(aid)
 		if !okID {
 			badRequest(c, "audit_id 无效")
+			return
+		}
+		if !s.canAccessAudit(user, id) {
+			forbidden(c, "当前账号无权访问该审核配置的任务")
 			return
 		}
 		q = q.Where("audit_id = ?", id)
@@ -115,6 +121,12 @@ func (s *Server) submitTask(c *gin.Context) {
 	var req submitTaskRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		badRequest(c, "参数格式错误")
+		return
+	}
+	if !s.requireProjectAccess(c, req.ProjectID) {
+		return
+	}
+	if !s.requireAuditScope(c, req.AuditID) {
 		return
 	}
 	input := model.TaskInput{
@@ -197,6 +209,10 @@ func (s *Server) batchRetryTasks(c *gin.Context) {
 		}
 		if !s.hasProjectAccess(user, task.ProjectID) {
 			failed = append(failed, gin.H{"id": id, "reason": "无项目访问权限"})
+			continue
+		}
+		if !s.canAccessAudit(user, task.AuditID) {
+			failed = append(failed, gin.H{"id": id, "reason": "无审核配置访问权限"})
 			continue
 		}
 		if err := s.resetForRetry(&task); err != nil {
@@ -328,6 +344,9 @@ func (s *Server) findTask(c *gin.Context) (*model.Task, error) {
 	}
 	if !s.requireProjectAccess(c, task.ProjectID) {
 		return nil, fmt.Errorf("task out of scope")
+	}
+	if !s.requireAuditScope(c, task.AuditID) {
+		return nil, fmt.Errorf("task audit out of scope")
 	}
 	return &task, nil
 }

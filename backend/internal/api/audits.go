@@ -64,6 +64,7 @@ func (s *Server) listAudits(c *gin.Context) {
 	} else {
 		q = s.applyProjectScope(q, currentUser(c))
 	}
+	q = s.applyAuditScope(q, currentUser(c))
 	if status := c.Query("status"); status != "" {
 		q = q.Where("status IN ?", splitList(status))
 	}
@@ -492,6 +493,9 @@ func (s *Server) findAudit(c *gin.Context) (*model.Audit, error) {
 	}
 	if !s.requireProjectAccess(c, audit.ProjectID) {
 		return nil, fmt.Errorf("audit out of scope")
+	}
+	if !s.requireAuditScope(c, audit.ID) {
+		return nil, fmt.Errorf("audit scope denied")
 	}
 	return &audit, nil
 }

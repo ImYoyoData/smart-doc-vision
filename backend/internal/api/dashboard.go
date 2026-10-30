@@ -38,6 +38,7 @@ func (s *Server) dashboard(c *gin.Context) {
 		if projectID != nil {
 			q = q.Where("project_id = ?", *projectID)
 		}
+		q = s.applyTaskAuditScope(q, user)
 		var n int64
 		_ = q.Count(&n).Error
 		return n
@@ -48,6 +49,7 @@ func (s *Server) dashboard(c *gin.Context) {
 		if projectID != nil {
 			q = q.Where("project_id = ?", *projectID)
 		}
+		q = s.applyTaskAuditScope(q, user)
 		var n int64
 		_ = q.Count(&n).Error
 		return n
@@ -59,6 +61,7 @@ func (s *Server) dashboard(c *gin.Context) {
 	if projectID != nil {
 		pendingQ = pendingQ.Where("project_id = ?", *projectID)
 	}
+	pendingQ = s.applyTaskAuditScope(pendingQ, user)
 	_ = pendingQ.Count(&pending).Error
 
 	var failedToday int64
@@ -66,6 +69,7 @@ func (s *Server) dashboard(c *gin.Context) {
 	if projectID != nil {
 		failQ = failQ.Where("project_id = ?", *projectID)
 	}
+	failQ = s.applyTaskAuditScope(failQ, user)
 	_ = failQ.Count(&failedToday).Error
 
 	var activeAudits int64
@@ -73,6 +77,7 @@ func (s *Server) dashboard(c *gin.Context) {
 	if projectID != nil {
 		auditQ = auditQ.Where("project_id = ?", *projectID)
 	}
+	auditQ = s.applyAuditScope(auditQ, user)
 	_ = auditQ.Count(&activeAudits).Error
 
 	var activeProjects int64
@@ -99,6 +104,7 @@ func (s *Server) dashboard(c *gin.Context) {
 	if projectID != nil {
 		q = q.Where("project_id = ?", *projectID)
 	}
+	q = s.applyTaskAuditScope(q, user)
 	if err := q.Group("day").Order("day asc").Scan(&rows).Error; err != nil {
 		serverError(c, err)
 		return
@@ -152,6 +158,7 @@ func (s *Server) dashboard(c *gin.Context) {
 	if projectID != nil {
 		recentQ = recentQ.Where("project_id = ?", *projectID)
 	}
+	recentQ = s.applyTaskAuditScope(recentQ, user)
 	var recent []model.Task
 	_ = recentQ.Find(&recent).Error
 	s.populateTaskNames(recent)

@@ -100,6 +100,9 @@ func PurgeAudit(db *gorm.DB, auditID uint64) error {
 		if err := tx.Where("audit_id = ?", auditID).Delete(&model.ScriptExecution{}).Error; err != nil {
 			return err
 		}
+		if err := tx.Where("audit_id = ?", auditID).Delete(&model.UserAuditScope{}).Error; err != nil {
+			return err
+		}
 		if err := tx.Delete(&model.Audit{}, auditID).Error; err != nil {
 			return err
 		}
@@ -117,6 +120,15 @@ func PurgeProject(db *gorm.DB, projectID uint64) error {
 		}
 		if err := tx.Where("project_id = ?", projectID).Delete(&model.TriggerSource{}).Error; err != nil {
 			return err
+		}
+		var auditIDs []uint64
+		if err := tx.Model(&model.Audit{}).Where("project_id = ?", projectID).Pluck("id", &auditIDs).Error; err != nil {
+			return err
+		}
+		if len(auditIDs) > 0 {
+			if err := tx.Where("audit_id IN ?", auditIDs).Delete(&model.UserAuditScope{}).Error; err != nil {
+				return err
+			}
 		}
 		if err := tx.Where("project_id = ?", projectID).Delete(&model.Audit{}).Error; err != nil {
 			return err

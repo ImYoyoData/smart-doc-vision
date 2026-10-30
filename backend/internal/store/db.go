@@ -39,6 +39,7 @@ func Open(cfg config.Config) (*gorm.DB, error) {
 	if err := migrateDB.AutoMigrate(
 		&model.User{},
 		&model.ProjectMember{},
+		&model.UserAuditScope{},
 		&model.Project{},
 		&model.APICredential{},
 		&model.AIProvider{},

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import {
   NButton,
   NCheckbox,
@@ -25,8 +25,8 @@ import {
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import EmptyState from '@/components/EmptyState.vue'
-import { userApi } from '@/api'
-import type { RoleDefinition, User } from '@/api/types'
+import { auditApi, userApi } from '@/api'
+import type { Audit, RoleDefinition, User } from '@/api/types'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { useAuthStore } from '@/stores/auth'
 import { isValidEmail } from '@/utils/validation'
@@ -38,6 +38,7 @@ const dialog = useDialog()
 const loading = ref(false)
 const saving = ref(false)
 const users = ref<User[]>([])
+const audits = ref<Audit[]>([])
 const roles = ref<RoleDefinition[]>([])
 const allPermissions = ref<string[]>([])
 const allMenus = ref<string[]>([])
@@ -63,10 +64,37 @@ const form = reactive({
   role: 'VIEWER',
   status: 'ACTIVE',
   project_ids: [] as number[],
+  audit_ids: [] as number[],
 })
 
 const roleOptions = computed(() => roles.value.map((r) => ({ label: `${r.name}（${r.code}）`, value: r.code })))
 const projectOptions = computed(() => workspace.projects.map((p) => ({ label: p.name, value: p.id })))
+const auditOptions = computed(() => {
+  const selected = new Set(form.project_ids)
+  return audits.value
+    .filter((audit) => selected.has(audit.project_id))
+    .map((audit) => ({ label: `${audit.name} · ${audit.code}`, value: audit.id }))
+})
+
+watch(
+  () => [...form.project_ids],
+  (ids) => {
+    const allowed = new Set(audits.value.filter((audit) => ids.includes(audit.project_id)).map((audit) => audit.id))
+    form.audit_ids = form.audit_ids.filter((id) => allowed.has(id))
+  },
+)
+
+function auditScopeText(user: User) {
+  if (user.role === 'SUPER_ADMIN' || !(user.audit_ids || []).length) return '全部审核配置'
+  return `${user.audit_ids!.length} 个指定配置`
+}
+
+function auditScopeTitle(user: User) {
+  if (user.role === 'SUPER_ADMIN' || !(user.audit_ids || []).length) {
+    return '未限制，可查看项目范围内全部审核配置'
+  }
+  return user.audit_ids!.map((id) => audits.value.find((audit) => audit.id === id)?.name || `审核 #${id}`).join('、')
+}
 const selectedRole = computed(() => roles.value.find((r) => r.code === form.role))
 const activeUsers = computed(() => users.value.filter((u) => u.status === 'ACTIVE').length)
 
@@ -107,12 +135,27 @@ const permissionLabels: Record<string, string> = {
   'log:read': '查看审计日志', 'recycle:write': '回收站操作', 'system:monitor': '查看运行监控',
 }
 
+async function loadAuditOptions() {
+  const items: Audit[] = []
+  for (let page = 1; page <= 20; page += 1) {
+    const data = await auditApi.list({ page, page_size: 100 })
+    items.push(...data.items)
+    if (!data.has_more) break
+  }
+  return items
+}
+
 async function load() {
   loading.value = true
   try {
     await workspace.loadProjects(true)
-    const [data, meta] = await Promise.all([userApi.list(), userApi.roles()])
+    const [data, meta, auditItems] = await Promise.all([
+      userApi.list(),
+      userApi.roles(),
+      loadAuditOptions(),
+    ])
     users.value = data.items
+    audits.value = auditItems
     roles.value = data.roles || meta.items || []
     allPermissions.value = meta.all_permissions || []
     allMenus.value = meta.all_menus || []
@@ -213,6 +256,7 @@ function openCreate() {
   form.role = 'VIEWER'
   form.status = 'ACTIVE'
   form.project_ids = workspace.projects.map((p) => p.id)
+  form.audit_ids = []
   errorText.value = ''
   modalShow.value = true
 }
@@ -226,6 +270,7 @@ function openEdit(user: User) {
   form.role = user.role
   form.status = user.status
   form.project_ids = [...(user.project_ids || [])]
+  form.audit_ids = [...(user.audit_ids || [])]
   errorText.value = ''
   modalShow.value = true
 }
@@ -258,6 +303,7 @@ async function save() {
         role: form.role,
         status: form.status,
         project_ids: form.project_ids,
+        audit_ids: form.role === 'SUPER_ADMIN' ? [] : form.audit_ids,
       }
       if (form.password) payload.password = form.password
       await userApi.update(editing.value.id, payload)
@@ -271,6 +317,7 @@ async function save() {
         role: form.role,
         status: form.status,
         project_ids: form.project_ids,
+        audit_ids: form.role === 'SUPER_ADMIN' ? [] : form.audit_ids,
       })
       message.success('账号已创建')
     }
@@ -428,6 +475,7 @@ onMounted(load)
                   <span v-if="!userScopeProjects(user).length" class="scope-empty">无</span>
                 </template>
               </span>
+              <span :title="auditScopeTitle(user)">审核范围：{{ auditScopeText(user) }}</span>
               <span :class="{ 'mfa-on': user.mfa_enabled }">两步验证：{{ user.mfa_enabled ? '已开启' : '未开启' }}</span>
               <span>最近登录：{{ user.last_login_at ? user.last_login_at.replace('T', ' ').slice(0, 19) : '从未登录' }}</span>
             </div>
@@ -545,6 +593,18 @@ onMounted(load)
                 placeholder="选择项目范围"
               />
             </div>
+          </div>
+          <div v-if="form.role !== 'SUPER_ADMIN'" class="field">
+            <label>审核配置范围</label>
+            <n-select
+              v-model:value="form.audit_ids"
+              multiple
+              filterable
+              clearable
+              :options="auditOptions"
+              placeholder="不选表示全部审核配置"
+            />
+            <div class="form-hint">不选择时默认可查看账号项目范围内的全部审核配置；选择后只能查看、提交和复核这些审核配置。</div>
           </div>
           <div v-if="selectedRole" class="role-preview">
             <div class="role-preview-head"><ShieldCheckmarkOutline /><strong>{{ selectedRole.name }} 的菜单权限</strong></div>

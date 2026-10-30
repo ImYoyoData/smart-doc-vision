@@ -16,6 +16,7 @@ export interface User {
   mfa_enabled?: boolean
   last_login_at?: string | null
   project_ids?: number[]
+  audit_ids?: number[]
   permissions?: string[]
   menus?: string[]
 }

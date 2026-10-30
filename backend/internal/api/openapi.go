@@ -278,6 +278,7 @@ func (s *Server) reviewSummary(c *gin.Context) {
 			return
 		}
 	}
+	q = s.applyTaskAuditScope(q, user)
 	var total int64
 	q.Count(&total)
 	var recent []model.Task
@@ -294,6 +295,7 @@ func (s *Server) reviewSummary(c *gin.Context) {
 		if projectID != 0 {
 			oldestQuery = oldestQuery.Where("project_id = ?", projectID)
 		}
+		oldestQuery = s.applyTaskAuditScope(oldestQuery, user)
 		_ = oldestQuery.Order("created_at asc").Limit(1).Pluck("created_at", &oldestValue).Error
 		if !oldestValue.IsZero() {
 			oldest = &oldestValue
@@ -304,10 +306,14 @@ func (s *Server) reviewSummary(c *gin.Context) {
 		Count   int64  `json:"count"`
 	}
 	var counts []auditCount
-	_ = s.db.Model(&model.Task{}).
+	countQuery := s.db.Model(&model.Task{}).
 		Select("audit_id, COUNT(*) AS count").
-		Where("status = ?", model.TaskReviewPending).
-		Group("audit_id").Order("count desc").Scan(&counts).Error
+		Where("status = ?", model.TaskReviewPending)
+	if projectID != 0 {
+		countQuery = countQuery.Where("project_id = ?", projectID)
+	}
+	countQuery = s.applyTaskAuditScope(countQuery, user)
+	_ = countQuery.Group("audit_id").Order("count desc").Scan(&counts).Error
 	byAudit := make([]gin.H, 0, len(counts))
 	for _, c := range counts {
 		var audit model.Audit
