@@ -297,6 +297,21 @@ async function toggleTrigger(type: 'OPENAPI' | 'REDIS' | 'WEBSOCKET', value: boo
   }
 }
 
+function generateCallbackSecret() {
+  const bytes = new Uint8Array(32)
+  crypto.getRandomValues(bytes)
+  let binary = ''
+  for (const byte of bytes) binary += String.fromCharCode(byte)
+  callbackForm.secret = btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+  message.success('已生成 32 字节随机 Secret，请复制后妥善保存')
+}
+
+async function copyCallbackSecret() {
+  const ok = await copyText(callbackForm.secret)
+  if (ok) message.success('Secret 已复制')
+  else message.error('复制失败，请点击眼睛图标后手动复制')
+}
+
 async function saveCallback() {
   if (callbackForm.enabled && !callbackForm.url.trim()) {
     message.warning('启用回调前请填写回调地址')
@@ -698,7 +713,20 @@ watch(
             </div>
             <div class="form-grid">
               <label class="full"><span>回调 URL</span><n-input v-model:value="callbackForm.url" placeholder="https://your-service/api/audit-callback" /></label>
-              <label class="full"><span>签名 Secret</span><n-input v-model:value="callbackForm.secret" type="password" show-password-on="click" :placeholder="showCallbackSecret ? '已配置，留空保留' : '可选；配置后回调带 HMAC 签名'" /></label>
+              <div class="full secret-field">
+                <div class="field-head">
+                  <span>签名 Secret</span>
+                  <div class="field-head-actions">
+                    <n-button text type="primary" size="tiny" :disabled="!callbackForm.secret" @click="copyCallbackSecret">复制</n-button>
+                    <n-button text type="primary" size="tiny" :disabled="!canWrite" @click="generateCallbackSecret">
+                      <template #icon><RefreshOutline /></template>
+                      随机生成
+                    </n-button>
+                  </div>
+                </div>
+                <n-input v-model:value="callbackForm.secret" type="password" show-password-on="click" :placeholder="showCallbackSecret ? '已配置，留空保留' : '可选；配置后回调带 HMAC 签名'" />
+                <div class="secret-hint">不填则回调不带 X-SmartDoc-Signature；已配置时留空保存会保留原值。保存后无法再次查看，生成后请先复制给业务方。</div>
+              </div>
               <label class="full"><span>回调结论</span>
                 <n-checkbox-group v-model:value="callbackForm.results">
                   <n-checkbox value="PASS">通过</n-checkbox>
@@ -1267,6 +1295,37 @@ watch(
   color: var(--text);
   font-size: 10px;
   font-weight: 500;
+}
+
+.form-grid .secret-field {
+  grid-column: 1 / -1;
+}
+
+.form-grid .field-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.form-grid .field-head > span {
+  color: var(--text);
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.field-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.secret-hint {
+  margin-top: 4px;
+  color: var(--muted-light);
+  font-size: 9px;
+  line-height: 1.5;
 }
 
 .form-grid .checkbox-field {
