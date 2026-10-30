@@ -23,7 +23,8 @@ import (
 )
 
 const (
-	treatyUploadMaxBytes      = 12 << 20
+	treatyUploadMaxBytes      = 20 << 20
+	treatyRequestMaxBytes     = treatyUploadMaxBytes + (1 << 20)
 	treatyMaxTextRunes        = 80000
 	treatyMinTextRunes        = 20
 	treatyMaxContentRunes     = 5000

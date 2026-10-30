@@ -83,9 +83,9 @@ func (s *Server) addAuditTreaty(c *gin.Context) {
 	if err != nil {
 		return
 	}
-	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, treatyUploadMaxBytes)
-	if err := c.Request.ParseMultipartForm(treatyUploadMaxBytes); err != nil {
-		badRequest(c, "上传内容过大或格式不正确（单文件不能超过 12MB）")
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, treatyRequestMaxBytes)
+	if err := c.Request.ParseMultipartForm(treatyRequestMaxBytes); err != nil {
+		badRequest(c, "上传内容过大或格式不正确（单文件不能超过 20MB）")
 		return
 	}
 
@@ -99,7 +99,7 @@ func (s *Server) addAuditTreaty(c *gin.Context) {
 	fileHeader, fileErr := c.FormFile("file")
 	if fileErr == nil {
 		if fileHeader.Size > treatyUploadMaxBytes {
-			extractErr = fmt.Errorf("文件不能超过 12MB")
+			extractErr = fmt.Errorf("文件不能超过 20MB")
 		} else {
 			file, openErr := fileHeader.Open()
 			if openErr != nil {
@@ -110,7 +110,7 @@ func (s *Server) addAuditTreaty(c *gin.Context) {
 				if readErr != nil {
 					extractErr = fmt.Errorf("读取上传文件失败")
 				} else if len(data) > treatyUploadMaxBytes {
-					extractErr = fmt.Errorf("文件不能超过 12MB")
+					extractErr = fmt.Errorf("文件不能超过 20MB")
 				} else {
 					fileName = fileHeader.Filename
 					text, detectedMime, parseErr := extractTreatyText(fileName, data)

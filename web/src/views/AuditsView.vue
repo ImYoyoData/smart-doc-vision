@@ -100,6 +100,8 @@ const treatyTextParsing = ref(false)
 let treatyPollTimer: ReturnType<typeof setInterval> | null = null
 const uploadControllers = new Map<string, AbortController>()
 const treatyPlaceholder = '{{AUDIT_TREATY}}'
+const TREATY_MAX_COUNT = 30
+const TREATY_MAX_FILE_BYTES = 20 * 1024 * 1024
 const treatyAddOptions = [
   { label: '上传文件（TXT / Markdown / DOCX）', key: 'file' },
   { label: '录入纯文本', key: 'text' },
@@ -766,6 +768,10 @@ function handleTreatyAdd(key: string) {
     message.warning('请先保存审核配置，再添加审核条约')
     return
   }
+  if (treatyDocs.value.length >= TREATY_MAX_COUNT) {
+    message.warning(`每个审核配置最多保存 ${TREATY_MAX_COUNT} 份审核条约`)
+    return
+  }
   if (key === 'file') {
     triggerTreatyUpload()
     return
@@ -782,6 +788,14 @@ function updateTreatyDoc(id: string, patch: Partial<AuditTreaty>) {
 
 async function parseTreatyFile(file: File) {
   if (!editing.value) return
+  if (treatyDocs.value.length >= TREATY_MAX_COUNT) {
+    message.warning(`每个审核配置最多保存 ${TREATY_MAX_COUNT} 份审核条约`)
+    return
+  }
+  if (file.size > TREATY_MAX_FILE_BYTES) {
+    message.warning(`${file.name} 超过 20MB，已跳过`)
+    return
+  }
   const localID = `upload-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
   treatyDocs.value.push({
     id: localID,
@@ -837,12 +851,24 @@ async function handleTreatyFiles(event: Event) {
   const files = Array.from(input.files || [])
   input.value = ''
   if (!editing.value || !files.length) return
-  await Promise.all(files.map((file) => parseTreatyFile(file)))
+  const remaining = TREATY_MAX_COUNT - treatyDocs.value.length
+  if (remaining <= 0) {
+    message.warning(`每个审核配置最多保存 ${TREATY_MAX_COUNT} 份审核条约`)
+    return
+  }
+  if (files.length > remaining) {
+    message.warning(`最多还能添加 ${remaining} 份审核条约，已忽略多余文件`)
+  }
+  await Promise.all(files.slice(0, remaining).map((file) => parseTreatyFile(file)))
 }
 
 async function addTextTreaty() {
   if (!editing.value) {
     message.warning('请先保存审核配置，再添加审核条约')
+    return
+  }
+  if (treatyDocs.value.length >= TREATY_MAX_COUNT) {
+    message.warning(`每个审核配置最多保存 ${TREATY_MAX_COUNT} 份审核条约`)
     return
   }
   const content = treatyText.value.trim()
@@ -2476,7 +2502,7 @@ onMounted(async () => {
           </div>
           <div class="modal-head-actions">
             <n-dropdown :options="treatyAddOptions" trigger="click" @select="handleTreatyAdd">
-              <n-button size="small" type="primary" secondary :disabled="!editing">
+              <n-button size="small" type="primary" secondary :disabled="!editing || treatyDocs.length >= TREATY_MAX_COUNT" title="每个审核配置最多 30 份">
                 <template #icon><AddOutline /></template>
                 添加条约
               </n-button>
@@ -2500,7 +2526,7 @@ onMounted(async () => {
               <span>已生效条约会自动追加到审核要求，也可以用 <code>{{ treatyPlaceholder }}</code> 指定插入位置；解析完成后立即生效。</span>
             </div>
           </div>
-          <p class="treaty-formats">支持 TXT / Markdown / DOCX；旧版 .doc 请另存为 .docx，单文件不超过 12MB。</p>
+          <p class="treaty-formats">已添加 {{ treatyDocs.length }} / {{ TREATY_MAX_COUNT }} 条 · 支持 TXT / Markdown / DOCX；旧版 .doc 请另存为 .docx，单文件不超过 20MB。</p>
 
           <div v-if="!treatyDocs.length" class="treaty-empty">
             <strong>还没有审核条约</strong>
