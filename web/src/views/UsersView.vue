@@ -6,6 +6,7 @@ import {
   NCheckboxGroup,
   NInput,
   NModal,
+  NPopover,
   NSelect,
   useDialog,
   useMessage,
@@ -68,12 +69,21 @@ const selectedRole = computed(() => roles.value.find((r) => r.code === form.role
 const activeUsers = computed(() => users.value.filter((u) => u.status === 'ACTIVE').length)
 
 const ENV_LABELS: Record<string, string> = { dev: '开发', test: '测试', staging: '预发', prod: '生产' }
+const VISIBLE_SCOPE_LIMIT = 2
 
 function userScopeProjects(user: User) {
   return (user.project_ids || []).map((id) => {
     const project = workspace.projects.find((p) => p.id === id)
     return { id, name: project?.name || `项目 #${id}`, env: project?.env || '' }
   })
+}
+
+function visibleScopeProjects(user: User) {
+  return userScopeProjects(user).slice(0, VISIBLE_SCOPE_LIMIT)
+}
+
+function hiddenScopeCount(user: User) {
+  return Math.max(0, userScopeProjects(user).length - VISIBLE_SCOPE_LIMIT)
 }
 
 function envLabel(env: string) {
@@ -370,7 +380,7 @@ onMounted(load)
                 <span v-if="user.role === 'SUPER_ADMIN'" class="scope-tag all">全部项目</span>
                 <template v-else>
                   <span
-                    v-for="project in userScopeProjects(user)"
+                    v-for="project in visibleScopeProjects(user)"
                     :key="project.id"
                     class="scope-tag"
                     :class="[project.env, { missing: !project.env }]"
@@ -378,6 +388,30 @@ onMounted(load)
                   >
                     <i v-if="project.env"></i>{{ project.name }}
                   </span>
+                  <n-popover v-if="hiddenScopeCount(user) > 0" trigger="click" placement="top-start" :width="340">
+                    <template #trigger>
+                      <button
+                        class="scope-tag more"
+                        type="button"
+                        :title="`查看全部 ${userScopeProjects(user).length} 个项目`"
+                        :aria-label="`查看全部 ${userScopeProjects(user).length} 个项目`"
+                      >+{{ hiddenScopeCount(user) }}</button>
+                    </template>
+                    <div class="scope-popover">
+                      <strong>全部项目范围（{{ userScopeProjects(user).length }}）</strong>
+                      <div class="scope-popover-list">
+                        <span
+                          v-for="project in userScopeProjects(user)"
+                          :key="project.id"
+                          class="scope-tag"
+                          :class="[project.env, { missing: !project.env }]"
+                          :title="project.env ? `${project.name} · ${envLabel(project.env)}环境` : project.name"
+                        >
+                          <i v-if="project.env"></i>{{ project.name }}
+                        </span>
+                      </div>
+                    </div>
+                  </n-popover>
                   <span v-if="!userScopeProjects(user).length" class="scope-empty">无</span>
                 </template>
               </span>
@@ -793,6 +827,38 @@ onMounted(load)
 .scope-tag.missing {
   background: var(--surface-strong);
   color: var(--muted-light);
+}
+
+.scope-tag.more {
+  border: 1px dashed var(--border);
+  background: transparent;
+  color: var(--brand-strong);
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.scope-tag.more:hover {
+  border-color: var(--brand-border);
+  background: var(--brand-soft);
+}
+
+.scope-popover {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.scope-popover > strong {
+  color: var(--ink);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.scope-popover-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-width: 300px;
 }
 
 .scope-empty {
