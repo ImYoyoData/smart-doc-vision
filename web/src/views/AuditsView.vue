@@ -50,6 +50,7 @@ import TaskSubmitModal from '@/components/TaskSubmitModal.vue'
 import AuditIntegrationDrawer from '@/components/AuditIntegrationDrawer.vue'
 import AuditFieldAssistantModal from '@/components/AuditFieldAssistantModal.vue'
 import ResultRoutesEditor from '@/components/ResultRoutesEditor.vue'
+import RuleGroupsEditor from '@/components/RuleGroupsEditor.vue'
 import TriggerManageModal from '@/components/TriggerManageModal.vue'
 import ScriptLogsModal from '@/components/ScriptLogsModal.vue'
 import VoiceInputButton from '@/components/VoiceInputButton.vue'
@@ -502,7 +503,7 @@ const templateOptions = computed(() => [
   ...templates.value
     .filter((t) => (t.kind || 'REVIEW') === form.decisionMode)
     .map((t) => ({ label: `${t.name} · ${t.description}`, value: t.key })),
-  { label: '自定义规则 · 直接编辑 JSON', value: 'custom' },
+  { label: '自定义规则 · 可视化编辑', value: 'custom' },
 ])
 
 function rulesTextForPreset(key: string) {
@@ -2015,18 +2016,14 @@ onMounted(async () => {
             <div class="template-desc">
               <span v-if="selectedTemplate">{{ selectedTemplate.description }}</span>
               <span v-else-if="form.rulesPreset === 'keep'">保持当前已有规则，不会覆盖自定义条件。</span>
-              <span v-else-if="form.rulesPreset === 'custom'">当前为自定义规则，下方 JSON 会直接保存。</span>
+              <span v-else-if="form.rulesPreset === 'custom'">当前为自定义规则，可在下方直接增删规则组和条件。</span>
             </div>
             <div class="json-editor-grid">
               <div class="field">
-                <label>规则组 JSON <span>条件按优先级执行，未命中时使用默认结论</span></label>
-                <n-input
-                  v-model:value="form.rulesText"
-                  type="textarea"
-                  :autosize="{ minRows: 6, maxRows: 14 }"
-                  class="code-input"
-                  spellcheck="false"
-                  placeholder='[{"name":"高风险直接驳回","priority":10,"logic":"OR","stop_on_hit":true,"on_hit_result":"REJECT","items":[{"field":"model.score","operator":"gte","value":0.85}]}]'
+                <label>规则组 <span>按优先级执行，未命中时使用默认结论</span></label>
+                <RuleGroupsEditor
+                  v-model="form.rulesText"
+                  @change="form.rulesPreset = 'custom'"
                 />
               </div>
               <div class="field routes-field">
