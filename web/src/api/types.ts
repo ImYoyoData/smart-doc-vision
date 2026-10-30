@@ -10,6 +10,7 @@ export interface User {
   id: number
   username: string
   display_name: string
+  email?: string
   role: string
   status: string
   mfa_enabled?: boolean

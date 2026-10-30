@@ -7,6 +7,7 @@ type User struct {
 	Username     string     `gorm:"size:64;uniqueIndex;not null" json:"username"`
 	PasswordHash string     `gorm:"size:255;not null" json:"-"`
 	DisplayName  string     `gorm:"size:64" json:"display_name"`
+	Email        string     `gorm:"size:128" json:"email"`
 	Role         string     `gorm:"size:32;not null;index" json:"role"`
 	Status       string     `gorm:"size:16;not null;default:ACTIVE" json:"status"`
 	TokenVersion int        `gorm:"not null;default:1" json:"-"`

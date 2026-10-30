@@ -3,6 +3,7 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"net/mail"
 	"regexp"
 	"strings"
 
@@ -18,10 +19,26 @@ var usernamePattern = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_.-]{2,31}$`)
 type userInput struct {
 	Username    string    `json:"username"`
 	DisplayName string    `json:"display_name"`
+	Email       *string   `json:"email"`
 	Password    string    `json:"password"`
 	Role        string    `json:"role"`
 	Status      string    `json:"status"`
 	ProjectIDs  *[]uint64 `json:"project_ids"`
+}
+
+func normalizeEmail(raw string) (string, error) {
+	email := strings.TrimSpace(raw)
+	if email == "" {
+		return "", nil
+	}
+	if len(email) > 128 {
+		return "", fmt.Errorf("邮箱地址不能超过 128 个字符")
+	}
+	addr, err := mail.ParseAddress(email)
+	if err != nil || addr.Address != email {
+		return "", fmt.Errorf("邮箱地址格式不正确")
+	}
+	return email, nil
 }
 
 func (s *Server) listUsers(c *gin.Context) {
@@ -56,6 +73,15 @@ func (s *Server) createUser(c *gin.Context) {
 	req.Username = strings.TrimSpace(req.Username)
 	req.DisplayName = strings.TrimSpace(req.DisplayName)
 	req.Role = strings.ToUpper(strings.TrimSpace(req.Role))
+	email := ""
+	if req.Email != nil {
+		normalized, err := normalizeEmail(*req.Email)
+		if err != nil {
+			badRequest(c, err.Error())
+			return
+		}
+		email = normalized
+	}
 	if !usernamePattern.MatchString(req.Username) {
 		badRequest(c, "账号需以字母开头，3~32 位，仅支持字母、数字、点、下划线和连字符")
 		return
@@ -108,7 +134,7 @@ func (s *Server) createUser(c *gin.Context) {
 	}
 	user := model.User{
 		Username: req.Username, PasswordHash: hash, DisplayName: req.DisplayName,
-		Role: req.Role, Status: status,
+		Email: email, Role: req.Role, Status: status,
 	}
 	err = s.db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(&user).Error; err != nil {
@@ -199,6 +225,14 @@ func (s *Server) updateUser(c *gin.Context) {
 			return
 		}
 		user.DisplayName = name
+	}
+	if req.Email != nil {
+		email, err := normalizeEmail(*req.Email)
+		if err != nil {
+			badRequest(c, err.Error())
+			return
+		}
+		user.Email = email
 	}
 	if req.Password != "" {
 		if err := validatePassword(req.Password); err != nil {

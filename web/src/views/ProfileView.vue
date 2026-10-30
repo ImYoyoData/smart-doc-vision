@@ -194,6 +194,7 @@ async function logout() {
         <span class="profile-username mono">@{{ auth.user?.username }}</span>
         <span class="profile-role"><ShieldCheckmarkOutline />{{ auth.roleLabel }}</span>
         <div class="identity-meta">
+          <div><span>邮箱</span><strong>{{ auth.user?.email || '未填写' }}</strong></div>
           <div><span>账号状态</span><strong>{{ auth.user?.status === 'ACTIVE' ? '正常' : auth.user?.status }}</strong></div>
           <div><span>最近登录</span><strong>{{ auth.user?.last_login_at ? auth.user.last_login_at.replace('T', ' ').slice(0, 19) : '—' }}</strong></div>
           <div><span>项目范围</span><strong>{{ auth.user?.role === 'SUPER_ADMIN' ? '全部项目' : `${scopedProjects.length} 个项目` }}</strong></div>

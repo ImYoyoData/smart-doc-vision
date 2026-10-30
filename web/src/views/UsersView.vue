@@ -57,6 +57,7 @@ const errorText = ref('')
 const form = reactive({
   username: '',
   display_name: '',
+  email: '',
   password: '',
   role: 'VIEWER',
   status: 'ACTIVE',
@@ -205,6 +206,7 @@ function openCreate() {
   editing.value = null
   form.username = ''
   form.display_name = ''
+  form.email = ''
   form.password = ''
   form.role = 'VIEWER'
   form.status = 'ACTIVE'
@@ -217,6 +219,7 @@ function openEdit(user: User) {
   editing.value = user
   form.username = user.username
   form.display_name = user.display_name
+  form.email = user.email || ''
   form.password = ''
   form.role = user.role
   form.status = user.status
@@ -244,6 +247,7 @@ async function save() {
     if (editing.value) {
       const payload: Record<string, unknown> = {
         display_name: form.display_name.trim(),
+        email: form.email.trim(),
         role: form.role,
         status: form.status,
         project_ids: form.project_ids,
@@ -255,6 +259,7 @@ async function save() {
       await userApi.create({
         username: form.username.trim(),
         display_name: form.display_name.trim(),
+        email: form.email.trim(),
         password: form.password,
         role: form.role,
         status: form.status,
@@ -375,6 +380,7 @@ onMounted(load)
               <span v-if="user.id === auth.user?.id" class="self-chip">当前账号</span>
             </div>
             <div class="user-meta">
+              <span :class="{ 'meta-empty': !user.email }">邮箱：{{ user.email || '未填写' }}</span>
               <span class="scope-meta">
                 <span class="scope-label">项目范围</span>
                 <span v-if="user.role === 'SUPER_ADMIN'" class="scope-tag all">全部项目</span>
@@ -500,6 +506,11 @@ onMounted(load)
               <label>显示名称</label>
               <n-input v-model:value="form.display_name" placeholder="张三" />
             </div>
+          </div>
+          <div class="field">
+            <label>邮箱地址</label>
+            <n-input v-model:value="form.email" placeholder="name@example.com" />
+            <div class="form-hint">用于账号联系与通知，可留空。</div>
           </div>
           <div class="two-col">
             <div class="field">
