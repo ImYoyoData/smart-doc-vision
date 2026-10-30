@@ -242,6 +242,20 @@ export interface AuditCategory {
   result: string
 }
 
+export interface AuditTreaty {
+  id: string
+  name: string
+  source_type: 'FILE' | 'TEXT' | string
+  file_name?: string
+  mime_type?: string
+  status: 'READY' | 'FAILED' | 'PARSING' | string
+  content: string
+  original_chars: number
+  content_chars: number
+  error?: string
+  created_at?: string
+}
+
 export interface Audit {
   id: number
   project_id: number
@@ -255,6 +269,7 @@ export interface Audit {
   provider_name?: string
   provider_kind?: string
   review_prompt: string
+  treaties?: AuditTreaty[]
   rules: RuleGroup[]
   routes: Record<string, unknown>
   default_result: string
@@ -806,6 +821,13 @@ export interface AuditAssistantResult {
   config?: AuditAssistantConfig
   steps?: AuditAssistantStep[]
   images?: number
+}
+
+export interface TreatyParseResult {
+  treaty: AuditTreaty
+  provider_id: number
+  provider_name: string
+  model: string
 }
 
 export interface AuditFieldAssistantResult {

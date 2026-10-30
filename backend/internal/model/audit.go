@@ -13,6 +13,7 @@ type Audit struct {
 	Categories    JSONText `gorm:"type:longtext" json:"categories"`
 	ProviderID    uint64   `gorm:"not null;index" json:"provider_id"`
 	ReviewPrompt  string   `gorm:"type:text" json:"review_prompt"`
+	Treaties      JSONText `gorm:"type:longtext" json:"treaties"`
 	Rules         JSONText `gorm:"type:longtext" json:"rules"`
 	Routes        JSONText `gorm:"type:longtext" json:"routes"`
 	DefaultResult string   `gorm:"size:16;not null;default:REVIEW" json:"default_result"`
@@ -73,6 +74,30 @@ type AuditCategory struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
 	Result      string `json:"result"`
+}
+
+const (
+	TreatySourceFile = "FILE"
+	TreatySourceText = "TEXT"
+
+	TreatyStatusReady  = "READY"
+	TreatyStatusFailed = "FAILED"
+)
+
+// AuditTreaty is one parsed document of the review treaty. Only READY
+// documents with compiled content are injected into model prompts.
+type AuditTreaty struct {
+	ID            string    `json:"id"`
+	Name          string    `json:"name"`
+	SourceType    string    `json:"source_type"`
+	FileName      string    `json:"file_name,omitempty"`
+	MimeType      string    `json:"mime_type,omitempty"`
+	Status        string    `json:"status"`
+	Content       string    `json:"content"`
+	OriginalChars int       `json:"original_chars"`
+	ContentChars  int       `json:"content_chars"`
+	Error         string    `json:"error,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 type TriggerSource struct {

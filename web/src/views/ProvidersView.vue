@@ -209,6 +209,7 @@ function usageSourceLabel(source: string) {
   if (source === 'REVIEW') return '审核任务'
   if (source === 'SCRIPT_ASSISTANT') return '脚本助手'
   if (source === 'AUDIT_ASSISTANT') return '配置助手'
+  if (source === 'TREATY') return '审核条约'
   return source || '—'
 }
 

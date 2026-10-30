@@ -32,6 +32,7 @@ type auditInput struct {
 	Categories      []model.AuditCategory `json:"categories"`
 	ProviderID      uint64                `json:"provider_id"`
 	ReviewPrompt    string                `json:"review_prompt"`
+	Treaties        *[]model.AuditTreaty  `json:"treaties"`
 	Strictness      string                `json:"strictness"`
 	Rules           json.RawMessage       `json:"rules"`
 	Routes          json.RawMessage       `json:"routes"`
@@ -87,7 +88,7 @@ func (s *Server) listAudits(c *gin.Context) {
 		return
 	}
 	var audits []model.Audit
-	if err := q.Order("updated_at DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&audits).Error; err != nil {
+	if err := q.Omit("treaties").Order("updated_at DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&audits).Error; err != nil {
 		serverError(c, err)
 		return
 	}
@@ -188,6 +189,14 @@ func (s *Server) createAudit(c *gin.Context) {
 	if audit.ReviewPrompt == "" {
 		audit.ReviewPrompt = catalog.DefaultReviewPrompt
 	}
+	if req.Treaties != nil {
+		treaties, err := normalizeAuditTreaties(*req.Treaties)
+		if err != nil {
+			badRequest(c, err.Error())
+			return
+		}
+		audit.Treaties = model.JSONBytes(treaties)
+	}
 	if err := s.db.Create(&audit).Error; err != nil {
 		serverError(c, err)
 		return
@@ -225,6 +234,14 @@ func (s *Server) updateAudit(c *gin.Context) {
 	}
 	if req.ReviewPrompt != "" {
 		audit.ReviewPrompt = req.ReviewPrompt
+	}
+	if req.Treaties != nil {
+		treaties, err := normalizeAuditTreaties(*req.Treaties)
+		if err != nil {
+			badRequest(c, err.Error())
+			return
+		}
+		audit.Treaties = model.JSONBytes(treaties)
 	}
 	if len(req.MediaTypes) > 0 {
 		if err := validateMediaTypes(req.MediaTypes); err != nil {

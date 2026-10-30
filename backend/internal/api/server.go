@@ -167,6 +167,7 @@ func (s *Server) Router() *gin.Engine {
 			auth.POST("/audits/assistant", s.auditAssistant)
 			auth.POST("/audits/assistant/stream", s.auditAssistantStream)
 			auth.POST("/audits/assistant/field", s.auditFieldAssistant)
+			auth.POST("/audit-treaties/parse", s.parseAuditTreaty)
 			auth.POST("/scripts/assistant/stream", s.scriptAssistantStream)
 			auth.POST("/scripts/simulate", s.simulateScript)
 			auth.GET("/audits/:id", s.getAudit)

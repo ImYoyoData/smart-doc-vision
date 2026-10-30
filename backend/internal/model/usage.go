@@ -30,6 +30,7 @@ const (
 	UsageSourceReview          = "REVIEW"
 	UsageSourceScriptAssistant = "SCRIPT_ASSISTANT"
 	UsageSourceAuditAssistant  = "AUDIT_ASSISTANT"
+	UsageSourceTreaty          = "TREATY"
 
 	UsageStatusSuccess = "SUCCESS"
 	UsageStatusError   = "ERROR"

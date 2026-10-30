@@ -32,6 +32,7 @@ import {
   CreateOutline,
   DownloadOutline,
   EllipsisHorizontalOutline,
+  EyeOutline,
   FlashOutline,
   PersonOutline,
   RefreshOutline,
@@ -51,12 +52,13 @@ import AuditIntegrationDrawer from '@/components/AuditIntegrationDrawer.vue'
 import AuditFieldAssistantModal from '@/components/AuditFieldAssistantModal.vue'
 import ResultRoutesEditor from '@/components/ResultRoutesEditor.vue'
 import RuleGroupsEditor from '@/components/RuleGroupsEditor.vue'
+import VirtualTextEditor from '@/components/VirtualTextEditor.vue'
 import TriggerManageModal from '@/components/TriggerManageModal.vue'
 import ScriptLogsModal from '@/components/ScriptLogsModal.vue'
 import VoiceInputButton from '@/components/VoiceInputButton.vue'
 import { analyticsApi, auditApi, metaApi, providerApi } from '@/api'
 import { copyText } from '@/utils/clipboard'
-import type { Audit, AuditAssistantConfig, AuditAssistantMessage, AuditAssistantResult, AuditAssistantStep, AuditCategory, Provider, RuleTemplate, TriggerSource } from '@/api/types'
+import type { Audit, AuditAssistantConfig, AuditAssistantMessage, AuditAssistantResult, AuditAssistantStep, AuditCategory, AuditTreaty, Provider, RuleTemplate, TriggerSource } from '@/api/types'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { useAuthStore } from '@/stores/auth'
 
@@ -84,6 +86,19 @@ const categoryModalShow = ref(false)
 const rulesModalShow = ref(false)
 const routeModalShow = ref(false)
 const policyModalShow = ref(false)
+const treatyModalShow = ref(false)
+const treatyTextModalShow = ref(false)
+const treatyPreviewShow = ref(false)
+const treatyPreviewDoc = ref<AuditTreaty | null>(null)
+const treatyFileInput = ref<HTMLInputElement | null>(null)
+const treatyText = ref('')
+const treatyTextName = ref('')
+const treatyTextParsing = ref(false)
+const treatyPlaceholder = '{{AUDIT_TREATY}}'
+const treatyAddOptions = [
+  { label: '上传文件（TXT / Markdown / DOCX）', key: 'file' },
+  { label: '录入纯文本', key: 'text' },
+]
 const editing = ref<Audit | null>(null)
 const errorText = ref('')
 const cloneShow = ref(false)
@@ -308,6 +323,7 @@ const form = reactive({
   categories: [] as AuditCategory[],
   providerId: null as number | null,
   reviewPrompt: defaultPrompt,
+  treaties: [] as AuditTreaty[],
   rulesPreset: 'standard',
   rulesText: '',
   routesText: defaultRoutesText,
@@ -608,6 +624,23 @@ const policySummary = computed(() =>
   ].join(' · '),
 )
 
+const readyTreaties = computed(() =>
+  form.treaties.filter((treaty) => treaty.status === 'READY' && treaty.content.trim()),
+)
+
+const treatySummary = computed(() => {
+  const names = readyTreaties.value.slice(0, 3).map((treaty) => treaty.name)
+  const preview = names.length
+    ? `${names.join('、')}${readyTreaties.value.length > names.length ? ` 等 ${readyTreaties.value.length} 份` : ''}`
+    : '尚未添加审核条约，模型仅按审核要求判断'
+  return {
+    ready: readyTreaties.value.length,
+    total: form.treaties.length,
+    preview,
+    parsing: form.treaties.some((treaty) => treaty.status === 'PARSING'),
+  }
+})
+
 const exportSummary = computed(() => {
   const target = exportForm.range
     ? `${dayjs(exportForm.range[0]).format('MM-DD')} 至 ${dayjs(exportForm.range[1]).format('MM-DD')}`
@@ -624,6 +657,158 @@ function closeConfigEditors() {
   rulesModalShow.value = false
   routeModalShow.value = false
   policyModalShow.value = false
+  treatyModalShow.value = false
+  treatyTextModalShow.value = false
+  treatyPreviewShow.value = false
+  treatyPreviewDoc.value = null
+}
+
+function treatyStatusLabel(status: string) {
+  if (status === 'READY') return '已生效'
+  if (status === 'PARSING') return '解析中'
+  if (status === 'FAILED') return '解析失败'
+  return status || '未知'
+}
+
+function treatyStatusType(status: string): 'default' | 'success' | 'info' | 'error' {
+  if (status === 'READY') return 'success'
+  if (status === 'PARSING') return 'info'
+  if (status === 'FAILED') return 'error'
+  return 'default'
+}
+
+function treatySourceLabel(sourceType: string) {
+  return sourceType === 'FILE' ? '文档上传' : '手动文本'
+}
+
+function treatyNameFromFile(fileName: string) {
+  const name = fileName.replace(/\.[^.]+$/, '').trim()
+  return (name || fileName || '未命名条约').slice(0, 255)
+}
+
+function triggerTreatyUpload() {
+  treatyFileInput.value?.click()
+}
+
+function handleTreatyAdd(key: string) {
+  if (key === 'file') {
+    triggerTreatyUpload()
+    return
+  }
+  if (key === 'text') {
+    treatyTextModalShow.value = true
+  }
+}
+
+function treatyLocalID() {
+  return `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+async function requestTreatyParse(payload: FormData): Promise<{ treaty: AuditTreaty | null; error: string }> {
+  if (!workspace.currentProjectId) {
+    return { treaty: null, error: '请先选择项目' }
+  }
+  payload.append('project_id', String(workspace.currentProjectId))
+  if (form.providerId) payload.append('provider_id', String(form.providerId))
+  try {
+    const result = await auditApi.parseTreaty(payload)
+    return { treaty: result.treaty, error: '' }
+  } catch (error) {
+    return { treaty: null, error: error instanceof Error ? error.message : '审核条约解析失败' }
+  }
+}
+
+async function parseTreatyFile(file: File) {
+  const local: AuditTreaty = {
+    id: treatyLocalID(),
+    name: treatyNameFromFile(file.name),
+    source_type: 'FILE',
+    file_name: file.name,
+    mime_type: file.type,
+    status: 'PARSING',
+    content: '',
+    original_chars: 0,
+    content_chars: 0,
+    created_at: new Date().toISOString(),
+  }
+  form.treaties.push(local)
+  const payload = new FormData()
+  payload.append('name', local.name)
+  payload.append('file', file)
+  const result = await requestTreatyParse(payload)
+  const index = form.treaties.findIndex((treaty) => treaty.id === local.id)
+  if (index < 0) return
+  if (result.treaty) {
+    form.treaties[index] = result.treaty
+    return
+  }
+  form.treaties[index] = { ...local, status: 'FAILED', error: result.error }
+  message.error(`${local.name}：${result.error}`)
+}
+
+async function handleTreatyFiles(event: Event) {
+  const input = event.target as HTMLInputElement
+  const files = Array.from(input.files || [])
+  input.value = ''
+  for (const file of files) {
+    await parseTreatyFile(file)
+  }
+}
+
+async function addTextTreaty() {
+  const content = treatyText.value.trim()
+  if (content.length < 20) {
+    message.warning('请输入至少 20 个字符的条约文本')
+    return
+  }
+  if (content.length > 80000) {
+    message.warning('条约文本不能超过 8 万字，请拆分后再上传')
+    return
+  }
+  treatyTextParsing.value = true
+  try {
+    const payload = new FormData()
+    payload.append('name', treatyTextName.value.trim() || '手动输入条约')
+    payload.append('text', content)
+    const result = await requestTreatyParse(payload)
+    if (!result.treaty) {
+      message.error(result.error)
+      return
+    }
+    form.treaties.push(result.treaty)
+    treatyText.value = ''
+    treatyTextName.value = ''
+    treatyTextModalShow.value = false
+    message.success('审核条约已解析并加入列表')
+  } finally {
+    treatyTextParsing.value = false
+  }
+}
+
+function removeTreaty(id: string) {
+  form.treaties = form.treaties.filter((treaty) => treaty.id !== id)
+  if (treatyPreviewDoc.value?.id === id) {
+    treatyPreviewShow.value = false
+    treatyPreviewDoc.value = null
+  }
+}
+
+function openTreatyPreview(treaty: AuditTreaty) {
+  treatyPreviewDoc.value = treaty
+  treatyPreviewShow.value = true
+}
+
+function insertTreatyPlaceholder() {
+  if (!readyTreaties.value.length) {
+    message.warning('请先添加并成功解析至少一份审核条约')
+    return
+  }
+  if (form.reviewPrompt.includes(treatyPlaceholder)) {
+    message.info('审核要求中已经有条约占位符')
+    return
+  }
+  form.reviewPrompt = `${form.reviewPrompt.trimEnd()}\n\n【审核条约】\n${treatyPlaceholder}`
+  message.success('已插入审核条约占位符')
 }
 
 function resetForm() {
@@ -635,6 +820,7 @@ function resetForm() {
   form.categories = []
   form.providerId = providers.value.find((p) => p.status === 'ACTIVE')?.id || providers.value[0]?.id || null
   form.reviewPrompt = defaultPrompt
+  form.treaties = []
   form.rulesPreset = 'standard'
   form.rulesText = rulesTextForPreset('standard')
   form.routesText = defaultRoutesText
@@ -657,24 +843,32 @@ function openCreate() {
   modalShow.value = true
 }
 
-function openEdit(audit: Audit) {
+async function openEdit(audit: Audit) {
   closeConfigEditors()
-  editing.value = audit
-  form.name = audit.name
-  form.code = audit.code
-  form.description = audit.description || ''
-  form.mediaTypes = [...(audit.media_types || [])]
-  form.decisionMode = audit.decision_mode === 'CLASSIFY_ONLY' ? 'CLASSIFY_ONLY' : audit.decision_mode === 'CLASSIFY' ? 'CLASSIFY' : 'REVIEW'
-  form.categories = (audit.categories || []).map((category) => ({ ...category }))
-  form.providerId = audit.provider_id
-  form.reviewPrompt = audit.review_prompt || defaultPrompt
+  let detail = audit
+  try {
+    detail = (await auditApi.get(audit.id)).audit
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : '读取审核配置失败')
+    return
+  }
+  editing.value = detail
+  form.name = detail.name
+  form.code = detail.code
+  form.description = detail.description || ''
+  form.mediaTypes = [...(detail.media_types || [])]
+  form.decisionMode = detail.decision_mode === 'CLASSIFY_ONLY' ? 'CLASSIFY_ONLY' : detail.decision_mode === 'CLASSIFY' ? 'CLASSIFY' : 'REVIEW'
+  form.categories = (detail.categories || []).map((category) => ({ ...category }))
+  form.providerId = detail.provider_id
+  form.reviewPrompt = detail.review_prompt || defaultPrompt
+  form.treaties = (detail.treaties || []).map((treaty) => ({ ...treaty }))
   form.rulesPreset = 'keep'
-  form.rulesText = JSON.stringify(audit.rules || [], null, 2)
-  form.routesText = JSON.stringify(audit.routes || JSON.parse(defaultRoutesText), null, 2)
-  form.defaultResult = audit.decision_mode === 'CLASSIFY_ONLY' ? 'PASS' : audit.default_result
-  form.onModelFail = audit.on_model_fail
-  form.reviewMode = audit.review_mode === 'EXTERNAL' ? 'EXTERNAL' : 'INTERNAL'
-  form.dedupeWindowSec = audit.dedupe_window_sec
+  form.rulesText = JSON.stringify(detail.rules || [], null, 2)
+  form.routesText = JSON.stringify(detail.routes || JSON.parse(defaultRoutesText), null, 2)
+  form.defaultResult = detail.decision_mode === 'CLASSIFY_ONLY' ? 'PASS' : detail.default_result
+  form.onModelFail = detail.on_model_fail
+  form.reviewMode = detail.review_mode === 'EXTERNAL' ? 'EXTERNAL' : 'INTERNAL'
+  form.dedupeWindowSec = detail.dedupe_window_sec
   errorText.value = ''
   snapshotFormBaseline()
   modalShow.value = true
@@ -1110,6 +1304,10 @@ async function save(openGuide = true): Promise<Audit | null> {
       return null
     }
   }
+  if (form.treaties.some((treaty) => treaty.status === 'PARSING')) {
+    errorText.value = '审核条约仍在解析中，请等待解析完成后再保存'
+    return null
+  }
   let rules: unknown
   let routes: unknown
   try {
@@ -1142,6 +1340,19 @@ async function save(openGuide = true): Promise<Audit | null> {
     categories,
     provider_id: form.providerId,
     review_prompt: form.reviewPrompt,
+    treaties: form.treaties.map((treaty) => ({
+      id: treaty.id,
+      name: treaty.name,
+      source_type: treaty.source_type,
+      file_name: treaty.file_name || '',
+      mime_type: treaty.mime_type || '',
+      status: treaty.status,
+      content: treaty.content,
+      original_chars: treaty.original_chars,
+      content_chars: treaty.content_chars,
+      error: treaty.error || '',
+      created_at: treaty.created_at,
+    })),
     default_result: form.defaultResult,
     on_model_fail: form.onModelFail,
     review_mode: form.reviewMode,
@@ -1221,7 +1432,7 @@ function confirmAssistantEditPick() {
   startAssistant('edit', audit)
 }
 
-function startAssistant(mode: 'create' | 'edit', audit?: Audit) {
+async function startAssistant(mode: 'create' | 'edit', audit?: Audit) {
   if (!workspace.currentProjectId) {
     message.warning('请先选择项目')
     return
@@ -1247,7 +1458,7 @@ function startAssistant(mode: 'create' | 'edit', audit?: Audit) {
     editing.value = null
     if (assistantProviderId.value) form.providerId = assistantProviderId.value
   } else if (audit) {
-    openEdit(audit)
+    await openEdit(audit)
     modalShow.value = false
   }
   assistantMessages.value = [{
@@ -1280,6 +1491,10 @@ function buildAssistantCurrentConfig() {
     decision_mode: form.decisionMode,
     categories: form.categories,
     review_prompt: form.reviewPrompt,
+    treaties: readyTreaties.value.map((treaty) => ({
+      name: treaty.name,
+      content_chars: treaty.content_chars,
+    })),
     rules,
     routes,
     default_result: form.defaultResult,
@@ -1594,6 +1809,11 @@ function openFieldAssistant(field: 'rules' | 'review_prompt') {
       code: category.code,
       name: category.name,
       result: category.result,
+    })),
+    treaty_count: readyTreaties.value.length,
+    treaties: readyTreaties.value.map((treaty) => ({
+      name: treaty.name,
+      content_chars: treaty.content_chars,
     })),
   }
   fieldAssistantShow.value = true
@@ -2007,6 +2227,17 @@ onMounted(async () => {
             </div>
             <div class="config-section-row">
               <div class="config-section-main">
+                <div class="config-section-title">
+                  审核条约
+                  <span>{{ treatySummary.ready }} 份已生效 / 共 {{ treatySummary.total }} 份</span>
+                  <n-tag v-if="treatySummary.parsing" size="small" type="info" :bordered="false">解析中</n-tag>
+                </div>
+                <p class="config-section-text">{{ treatySummary.preview }}</p>
+              </div>
+              <n-button size="small" secondary aria-label="管理审核条约" @click="treatyModalShow = true">编辑</n-button>
+            </div>
+            <div class="config-section-row">
+              <div class="config-section-main">
                 <div class="config-section-title">审核要求 <span>发送给模型的审核 Prompt</span></div>
                 <p class="config-section-text">{{ promptSummary }}</p>
               </div>
@@ -2084,16 +2315,27 @@ onMounted(async () => {
           <div class="field">
             <div class="field-label-row">
               <label>审核要求 Prompt</label>
-              <n-button
-                size="tiny"
-                secondary
-                :disabled="!hasGeneralProvider"
-                title="根据你的描述优化当前审核要求"
-                @click="openFieldAssistant('review_prompt')"
-              >
-                <template #icon><SparklesOutline /></template>
-                AI 优化提示词
-              </n-button>
+              <div class="prompt-actions">
+                <n-button
+                  size="tiny"
+                  secondary
+                  :disabled="!readyTreaties.length"
+                  title="在审核要求中插入审核条约占位符"
+                  @click="insertTreatyPlaceholder"
+                >
+                  插入条约占位符
+                </n-button>
+                <n-button
+                  size="tiny"
+                  secondary
+                  :disabled="!hasGeneralProvider"
+                  title="根据你的描述优化当前审核要求"
+                  @click="openFieldAssistant('review_prompt')"
+                >
+                  <template #icon><SparklesOutline /></template>
+                  AI 优化提示词
+                </n-button>
+              </div>
             </div>
             <n-input
               v-model:value="form.reviewPrompt"
@@ -2101,11 +2343,191 @@ onMounted(async () => {
               :autosize="{ minRows: 12, maxRows: 24 }"
               placeholder="告诉模型该审核什么、什么情况通过/驳回/转人工"
             />
-            <div class="form-hint">这段要求会作为审核 Prompt 发送给通用模型，并作为 JEV 的 state 审核要求。</div>
+            <div class="form-hint">
+              这段要求会作为审核 Prompt 发送给通用模型，并作为 JEV 的 state 审核要求。已生效的审核条约会自动追加；
+              也可以用 <code>{{ treatyPlaceholder }}</code> 指定插入位置。
+            </div>
           </div>
         </div>
         <div class="modal-footer">
           <n-button type="primary" @click="promptModalShow = false">完成</n-button>
+        </div>
+      </div>
+    </n-modal>
+
+    <n-modal v-model:show="treatyModalShow">
+      <div class="config-submodal wide treaty-modal">
+        <div class="modal-head">
+          <div>
+            <div class="modal-kicker">REVIEW TREATY</div>
+            <h2>审核条约</h2>
+            <p>上传条约文档或粘贴文本，由大模型整理成可执行的审核依据；只有成功解析的文件会参与判定。</p>
+          </div>
+          <div class="modal-head-actions">
+            <n-dropdown :options="treatyAddOptions" trigger="click" @select="handleTreatyAdd">
+              <n-button size="small" type="primary" secondary>
+                <template #icon><AddOutline /></template>
+                添加条约
+              </n-button>
+            </n-dropdown>
+            <button class="modal-close" type="button" title="关闭" aria-label="关闭" @click="treatyModalShow = false">×</button>
+          </div>
+        </div>
+        <div class="submodal-body">
+          <input
+            ref="treatyFileInput"
+            type="file"
+            accept=".txt,.md,.markdown,.docx,.doc"
+            multiple
+            hidden
+            @change="handleTreatyFiles"
+          />
+          <div class="treaty-banner">
+            <ShieldCheckmarkOutline />
+            <div>
+              <strong>已生效条约会自动追加到审核要求</strong>
+              <span>也可以在审核要求中使用 <code>{{ treatyPlaceholder }}</code> 指定插入位置。条约修改随审核配置保存后生效。</span>
+            </div>
+          </div>
+          <p class="treaty-formats">支持 TXT / Markdown / DOCX；旧版 .doc 请另存为 .docx，单文件不超过 12MB。</p>
+
+          <div v-if="!form.treaties.length" class="treaty-empty">
+            <strong>还没有审核条约</strong>
+            <p>点击右上角「添加条约」，选择上传文件或录入纯文本。解析后会去掉口水话和格式噪音，只保留审核条件、阈值、例外和判定结论。</p>
+          </div>
+
+          <div v-else class="treaty-table-wrap">
+            <table class="treaty-table">
+              <thead>
+                <tr>
+                  <th>条约名称</th>
+                  <th>来源</th>
+                  <th>状态</th>
+                  <th class="num">原文</th>
+                  <th class="num">整理后</th>
+                  <th class="actions">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="treaty in form.treaties"
+                  :key="treaty.id"
+                  :class="{ failed: treaty.status === 'FAILED' }"
+                >
+                  <td>
+                    <div class="treaty-name">
+                      <strong>{{ treaty.name }}</strong>
+                      <small v-if="treaty.file_name">{{ treaty.file_name }}</small>
+                      <small v-if="treaty.error" class="error">{{ treaty.error }}</small>
+                    </div>
+                  </td>
+                  <td><span class="treaty-source">{{ treatySourceLabel(treaty.source_type) }}</span></td>
+                  <td>
+                    <n-tag size="small" :bordered="false" :type="treatyStatusType(treaty.status)">
+                      {{ treatyStatusLabel(treaty.status) }}
+                    </n-tag>
+                  </td>
+                  <td class="num">{{ treaty.original_chars ? `${treaty.original_chars} 字` : '—' }}</td>
+                  <td class="num">{{ treaty.status === 'READY' ? `${treaty.content_chars} 字` : '—' }}</td>
+                  <td class="actions">
+                    <div class="treaty-row-actions">
+                      <n-button
+                        v-if="treaty.status === 'READY'"
+                        quaternary
+                        circle
+                        size="tiny"
+                        type="primary"
+                        title="查看条约内容"
+                        aria-label="查看条约内容"
+                        @click="openTreatyPreview(treaty)"
+                      >
+                        <template #icon><EyeOutline /></template>
+                      </n-button>
+                      <n-button
+                        quaternary
+                        circle
+                        size="tiny"
+                        type="error"
+                        title="删除条约"
+                        aria-label="删除条约"
+                        :disabled="treaty.status === 'PARSING'"
+                        @click="removeTreaty(treaty.id)"
+                      >
+                        <template #icon><TrashOutline /></template>
+                      </n-button>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+        </div>
+        <div class="modal-footer">
+          <span class="treaty-footer-note">解析完成的条约会随审核配置保存后生效</span>
+          <n-button type="primary" @click="treatyModalShow = false">完成</n-button>
+        </div>
+      </div>
+    </n-modal>
+
+    <n-modal v-model:show="treatyTextModalShow">
+      <div class="config-submodal compact treaty-text-modal">
+        <div class="modal-head">
+          <div>
+            <div class="modal-kicker">NEW TREATY</div>
+            <h2>录入纯文本条约</h2>
+            <p>粘贴原始条款，解析完成后加入审核条约列表。</p>
+          </div>
+          <div class="modal-head-actions">
+            <button class="modal-close" type="button" title="关闭" aria-label="关闭" @click="treatyTextModalShow = false">×</button>
+          </div>
+        </div>
+        <div class="submodal-body">
+          <div class="field">
+            <label>条约名称 <span class="form-optional">可选</span></label>
+            <n-input v-model:value="treatyTextName" size="small" placeholder="例如：工程档案归档规范" />
+          </div>
+          <div class="field">
+            <label>原始文本 <span class="form-optional">最多 8 万字</span></label>
+            <VirtualTextEditor v-model="treatyText" :max-length="80000" height="300px" />
+            <div class="form-hint">编辑器使用虚拟渲染，长文本不会卡住页面；解析会调用通用大模型，文档较长时需要一些时间。</div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <n-button :disabled="treatyTextParsing" @click="treatyTextModalShow = false">取消</n-button>
+          <n-button
+            type="primary"
+            :loading="treatyTextParsing"
+            :disabled="!treatyText.trim()"
+            @click="addTextTreaty"
+          >
+            解析并添加
+          </n-button>
+        </div>
+      </div>
+    </n-modal>
+
+    <n-modal v-model:show="treatyPreviewShow">
+      <div class="config-submodal compact treaty-preview-modal">
+        <div class="modal-head">
+          <div>
+            <div class="modal-kicker">TREATY CONTENT</div>
+            <h2>{{ treatyPreviewDoc?.name || '审核条约' }}</h2>
+            <p>
+              <template v-if="treatyPreviewDoc">
+                {{ treatySourceLabel(treatyPreviewDoc.source_type) }} · 原文 {{ treatyPreviewDoc.original_chars }} 字 · 整理后 {{ treatyPreviewDoc.content_chars }} 字
+              </template>
+            </p>
+          </div>
+          <div class="modal-head-actions">
+            <button class="modal-close" type="button" title="关闭" aria-label="关闭" @click="treatyPreviewShow = false">×</button>
+          </div>
+        </div>
+        <div class="submodal-body">
+          <pre class="treaty-content">{{ treatyPreviewDoc?.content || '暂无内容' }}</pre>
+        </div>
+        <div class="modal-footer">
+          <n-button type="primary" @click="treatyPreviewShow = false">关闭</n-button>
         </div>
       </div>
     </n-modal>
@@ -3085,6 +3507,238 @@ onMounted(async () => {
   height: min(620px, calc(100vh - 40px));
 }
 
+.config-submodal.treaty-modal {
+  height: min(760px, calc(100vh - 40px));
+}
+
+.prompt-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.form-hint code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: #eef2f8;
+  font-family: var(--mono);
+  font-size: 9.5px;
+}
+
+.treaty-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 10px 12px;
+  border: 1px solid var(--brand-border);
+  border-radius: 10px;
+  background: var(--brand-softer);
+}
+
+.treaty-banner :deep(svg) {
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+  color: var(--brand);
+  flex: none;
+}
+
+.treaty-banner strong,
+.treaty-banner span {
+  display: block;
+}
+
+.treaty-banner strong {
+  color: var(--text);
+  font-size: 10.5px;
+  font-weight: 620;
+}
+
+.treaty-banner span {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 9.5px;
+  line-height: 1.55;
+}
+
+.treaty-banner code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.7);
+  font-family: var(--mono);
+  font-size: 9px;
+}
+
+.treaty-formats {
+  margin: 7px 0 0;
+  color: var(--muted-light);
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.treaty-empty {
+  margin-top: 12px;
+  padding: 26px 14px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  background: #fbfcfe;
+  color: var(--muted);
+  text-align: center;
+}
+
+.treaty-empty strong {
+  display: block;
+  color: var(--text);
+  font-size: 11px;
+}
+
+.treaty-empty p {
+  margin: 5px auto 0;
+  max-width: 540px;
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.treaty-table-wrap {
+  overflow-x: auto;
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.treaty-table {
+  width: 100%;
+  min-width: 700px;
+  border-collapse: collapse;
+}
+
+.treaty-table th {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  background: #f8fafd;
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 550;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.treaty-table td {
+  padding: 9px 10px;
+  border-bottom: 1px solid #f1f4f9;
+  color: var(--text);
+  font-size: 10px;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.treaty-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.treaty-table tbody tr:hover {
+  background: #fbfcff;
+}
+
+.treaty-table tbody tr.failed {
+  background: #fffafa;
+}
+
+.treaty-table .num {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 9.5px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.treaty-table .actions {
+  text-align: center;
+  white-space: nowrap;
+}
+
+.treaty-row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.treaty-name {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  text-align: center;
+}
+
+.treaty-name strong,
+.treaty-name small {
+  overflow: hidden;
+  max-width: 320px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.treaty-name strong {
+  color: var(--text);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.treaty-name small {
+  color: var(--muted-light);
+  font-size: 8.5px;
+}
+
+.treaty-name small.error {
+  max-width: 360px;
+  color: #d03050;
+  white-space: normal;
+}
+
+.treaty-source {
+  color: var(--muted);
+  font-size: 9.5px;
+}
+
+.treaty-table :deep(.n-tag) {
+  font-size: 9px;
+}
+
+.treaty-content {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fbfcfe;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  line-height: 1.75;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.treaty-preview-modal {
+  height: min(640px, calc(100vh - 40px));
+}
+
+.form-optional {
+  color: var(--muted-light);
+  font-size: 9px;
+  font-weight: 400;
+}
+
+.treaty-footer-note {
+  margin-right: auto;
+  color: var(--muted-light);
+  font-size: 9.5px;
+}
+
 .config-submodal.rules-editor-modal .submodal-body {
   scrollbar-gutter: stable;
 }
@@ -3270,6 +3924,24 @@ onMounted(async () => {
 
   .config-submodal .modal-footer {
     padding: 12px 18px 16px;
+  }
+
+  .config-submodal.treaty-modal,
+  .config-submodal.treaty-preview-modal {
+    height: calc(100vh - 20px);
+  }
+
+  .treaty-table {
+    min-width: 640px;
+  }
+
+  .treaty-name strong,
+  .treaty-name small {
+    max-width: 180px;
+  }
+
+  .treaty-footer-note {
+    display: none;
   }
 }
 

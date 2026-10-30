@@ -34,6 +34,7 @@ import type {
   RoleDefinition,
   RuleTemplate,
   SystemConfigData,
+  TreatyParseResult,
   UpdateCheck,
   Task,
   TaskDetail,
@@ -183,6 +184,7 @@ export const auditApi = {
     postSSE('/audits/assistant/stream', payload, handlers),
   assistantField: (payload: Record<string, unknown>) =>
     post<AuditFieldAssistantResult>('/audits/assistant/field', payload),
+  parseTreaty: (payload: FormData) => post<TreatyParseResult>('/audit-treaties/parse', payload),
   update: (id: number, payload: Record<string, unknown>) => put<Audit>(`/audits/${id}`, payload),
   setStatus: (id: number, status: string) => patch<{ status: string }>(`/audits/${id}/status`, { status }),
   clone: (id: number, payload: { name: string; code: string }) => post<Audit>(`/audits/${id}/clone`, payload),

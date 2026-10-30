@@ -418,16 +418,30 @@ func (s *Server) projectCode(projectID uint64) string {
 
 func auditSnapshotJSON(audit model.Audit, triggers map[string]string) string {
 	var mediaTypes, categories, rules, routes any
+	var treaties []model.AuditTreaty
 	_ = model.DecodeJSON(audit.MediaTypes, &mediaTypes)
 	_ = model.DecodeJSON(audit.Categories, &categories)
 	_ = model.DecodeJSON(audit.Rules, &rules)
 	_ = model.DecodeJSON(audit.Routes, &routes)
+	_ = model.DecodeJSON(audit.Treaties, &treaties)
+	treatySummary := make([]map[string]any, 0, len(treaties))
+	for _, treaty := range treaties {
+		if treaty.Status != model.TreatyStatusReady {
+			continue
+		}
+		treatySummary = append(treatySummary, map[string]any{
+			"name": treaty.Name, "content_chars": treaty.ContentChars,
+		})
+	}
 	payload := map[string]any{
 		"name": audit.Name, "code": audit.Code, "description": audit.Description,
 		"media_types": mediaTypes, "decision_mode": audit.DecisionMode,
 		"categories": categories, "review_prompt": audit.ReviewPrompt,
 		"rules": rules, "routes": routes, "default_result": audit.DefaultResult,
 		"on_model_fail": audit.OnModelFail, "dedupe_window_sec": audit.DedupeWindowSec,
+	}
+	if len(treatySummary) > 0 {
+		payload["treaties"] = treatySummary
 	}
 	if len(triggers) > 0 {
 		payload["triggers"] = triggers
@@ -767,5 +781,6 @@ const assistantSystemPrompt = `你是「智审图档 SmartDoc Vision」的审核
   - redis_trigger.stream 是要监听的业务队列名；consumer_group 可留空，平台会自动生成；start_position 只能是 "$"（只消费新消息）或 "0"（从头消费）。
   - 新建且用户完全未提及接入方式时，可省略 triggers，平台默认启用开放 API；编辑且用户未提及接入方式时，必须省略 triggers，保持现有触发源不变。
 - 接入方式不能写进 review_prompt、rules 或 routes。
+- 如果【当前配置快照】中有非空 treaties（已生效审核条约），review_prompt 必须包含占位符 {{AUDIT_TREATY}}，表示运行时注入条约内容；不要自行复述或编造条约条款。没有条约时不要输出该占位符。
 - 编辑已有配置时，只修改用户要求的部分，保留未提及的字段和名称；code 由平台保持原值。
 - 不要输出任何密钥、内网地址或虚构的业务事实。`

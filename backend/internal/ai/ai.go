@@ -50,6 +50,64 @@ func AdapterFor(kind string) (Adapter, error) {
 // reject values above what their selected model actually supports.
 const MaxOutputTokensLimit = 200000
 
+// TreatyPlaceholder can appear in an audit review prompt. It is replaced by
+// the compiled content of every READY treaty document at review time.
+const TreatyPlaceholder = "{{AUDIT_TREATY}}"
+
+const maxTreatyPromptRunes = 30000
+
+// AuditTreatyPrompt returns the compiled treaty text that is allowed to be
+// injected into a model prompt. Failed or empty documents are ignored.
+func AuditTreatyPrompt(audit model.Audit) string {
+	var treaties []model.AuditTreaty
+	if err := model.DecodeJSON(audit.Treaties, &treaties); err != nil {
+		return ""
+	}
+	parts := make([]string, 0, len(treaties))
+	for _, treaty := range treaties {
+		if treaty.Status != model.TreatyStatusReady {
+			continue
+		}
+		content := strings.TrimSpace(treaty.Content)
+		if content == "" {
+			continue
+		}
+		name := strings.TrimSpace(treaty.Name)
+		if name == "" {
+			name = "未命名条约"
+		}
+		parts = append(parts, "《"+name+"》\n"+content)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return truncatePromptRunes(strings.Join(parts, "\n\n"), maxTreatyPromptRunes,
+		"\n…（审核条约内容过长已截断）")
+}
+
+// ApplyTreatyPrompt injects treaty content into a review prompt. When the
+// prompt has no placeholder, the treaty is appended automatically so existing
+// audit configurations also benefit from newly attached treaties.
+func ApplyTreatyPrompt(requirements string, audit model.Audit) string {
+	treaty := AuditTreatyPrompt(audit)
+	if treaty == "" {
+		return strings.ReplaceAll(requirements, TreatyPlaceholder, "（未配置审核条约）")
+	}
+	injected := "以下审核条约是本次判定的正式依据，必须优先遵守；条约未覆盖的事项再按审核要求判断，不得编造条款：\n" + treaty
+	if strings.Contains(requirements, TreatyPlaceholder) {
+		return strings.ReplaceAll(requirements, TreatyPlaceholder, injected)
+	}
+	return strings.TrimSpace(requirements) + "\n\n【审核条约】\n" + injected
+}
+
+func truncatePromptRunes(value string, limit int, suffix string) string {
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value
+	}
+	return string(runes[:limit]) + suffix
+}
+
 // ApplyCustomHeaders adds provider-defined headers (for example a session ID
 // required by a proxy) without letting them replace the protocol's auth headers.
 func ApplyCustomHeaders(req *http.Request, headers map[string]string) {

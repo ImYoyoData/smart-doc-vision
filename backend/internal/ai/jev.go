@@ -91,21 +91,23 @@ func (a *JEVAdapter) Review(ctx context.Context, req Request) (*model.Verdict, e
 		fetcher = media.NewFetcher(false)
 	}
 	assets := map[string]jevImageAsset{}
+	requirements := strings.TrimSpace(req.Audit.ReviewPrompt)
+	if requirements == "" {
+		requirements = "审核文档内容安全、完整性与敏感信息；无法确认时转人工复核。"
+	}
+	requirements = ApplyTreatyPrompt(requirements, req.Audit)
 	state := map[string]any{
 		"task": map[string]any{
 			"biz_key": req.Input.BizKey,
 			"ext":     req.Input.Ext,
 		},
 		"document_text":      text,
-		"audit_requirements": req.Audit.ReviewPrompt,
+		"audit_requirements": requirements,
 		"provider_note":      req.Provider.Prompt,
 		"decision_mode":      req.Audit.DecisionMode,
 	}
 	if classify {
 		state["categories"] = categories
-	}
-	if req.Audit.ReviewPrompt == "" {
-		state["audit_requirements"] = "审核文档内容安全、完整性与敏感信息；无法确认时转人工复核。"
 	}
 	var imageRefs []string
 	for i, img := range images {

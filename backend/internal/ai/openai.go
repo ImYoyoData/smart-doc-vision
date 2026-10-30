@@ -74,6 +74,7 @@ func (a *OpenAIAdapter) Review(ctx context.Context, req Request) (*model.Verdict
 	if requirements == "" {
 		requirements = "依据内容安全、档案完整性和敏感信息规范进行审核；无法确认时给出 REVIEW。"
 	}
+	requirements = ApplyTreatyPrompt(requirements, req.Audit)
 	categories := AuditCategories(req.Audit)
 	classify := IsClassification(req.Audit) && len(categories) > 0
 	schema := reviewSchema
