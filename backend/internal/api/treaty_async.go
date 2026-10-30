@@ -491,3 +491,30 @@ func filepathExt(name string) string {
 	}
 	return name[index:]
 }
+
+// RecoverInterruptedTreaties marks documents that were still parsing when the
+// previous process stopped as retryable failures. The raw text remains in Redis
+// so the administrator can retry from the table. This assumes the normal
+// single-instance deployment used by this project.
+func (s *Server) RecoverInterruptedTreaties() {
+	var auditIDs []uint64
+	if err := s.db.Model(&model.Audit{}).
+		Where("deleted_at IS NULL AND treaties LIKE ?", `%"PARSING"%`).
+		Pluck("id", &auditIDs).Error; err != nil {
+		return
+	}
+	for _, auditID := range auditIDs {
+		_ = s.mutateAuditTreaties(auditID, func(items []model.AuditTreaty) ([]model.AuditTreaty, error) {
+			for index := range items {
+				if items[index].Status != model.TreatyStatusPARSING {
+					continue
+				}
+				items[index].Status = model.TreatyStatusFailed
+				items[index].Error = "服务重启导致解析中断，可点击重新解析"
+				items[index].Retryable = true
+				items[index].ParseMS = 0
+			}
+			return items, nil
+		})
+	}
+}

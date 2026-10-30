@@ -19,6 +19,16 @@ import (
 // models; the request context still provides the per-call deadline.
 const chatHTTPTimeout = 10 * time.Minute
 
+// First-response (headers) timeout is deliberately short so a dead provider
+// fails over quickly; after headers arrive the body may stream/write for up to
+// chatHTTPTimeout. This is the 20s first-response limit used by the treaty and
+// assistant paths.
+var chatHTTPClient = func() *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.ResponseHeaderTimeout = 20 * time.Second
+	return &http.Client{Timeout: chatHTTPTimeout, Transport: transport}
+}()
+
 type ChatImage struct {
 	DataURL string
 }
@@ -209,7 +219,7 @@ func callOpenAI(ctx context.Context, req ChatRequest, useReasoning bool) ([]byte
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+req.APIKey)
 	ApplyCustomHeaders(httpReq, ParseConfig(req.Provider).Headers)
-	client := &http.Client{Timeout: chatHTTPTimeout}
+	client := chatHTTPClient
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		return nil, 0, chatTransportError(err)
@@ -289,7 +299,7 @@ func chatAnthropic(ctx context.Context, req ChatRequest) (*ChatResult, error) {
 	httpReq.Header.Set("x-api-key", req.APIKey)
 	httpReq.Header.Set("anthropic-version", "2023-06-01")
 	ApplyCustomHeaders(httpReq, ParseConfig(req.Provider).Headers)
-	client := &http.Client{Timeout: chatHTTPTimeout}
+	client := chatHTTPClient
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		return nil, chatTransportError(err)

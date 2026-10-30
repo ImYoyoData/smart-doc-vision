@@ -70,11 +70,12 @@ func main() {
 	defer monitorCancel()
 
 	server := api.NewServer(cfg, db, cache, cipher, eng, tasks)
+	server.RecoverInterruptedTreaties()
 	httpServer := &http.Server{
 		Addr:              ":" + cfg.ServerPort,
 		Handler:           server.Router(),
 		ReadHeaderTimeout: 10 * time.Second,
-		ReadTimeout:       30 * time.Second,
+		ReadTimeout:       5 * time.Minute,
 		WriteTimeout:      0,
 		IdleTimeout:       120 * time.Second,
 	}
