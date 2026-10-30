@@ -117,6 +117,7 @@ func (s *Server) Router() *gin.Engine {
 			auth.GET("/auth/me", s.me)
 			auth.POST("/auth/logout", s.logout)
 			auth.POST("/auth/change-password", s.changePassword)
+			auth.PATCH("/auth/profile", s.updateProfile)
 			auth.GET("/auth/mfa", s.mfaStatus)
 			auth.POST("/auth/mfa/setup", s.mfaSetup)
 			auth.POST("/auth/mfa/enable", s.mfaEnable)

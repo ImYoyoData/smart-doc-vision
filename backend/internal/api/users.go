@@ -313,6 +313,33 @@ func (s *Server) changePassword(c *gin.Context) {
 	ok(c, gin.H{"changed": true})
 }
 
+func (s *Server) updateProfile(c *gin.Context) {
+	user := currentUser(c)
+	if user.ID == 0 {
+		fail(c, http.StatusUnauthorized, "UNAUTHORIZED", "请先登录", nil)
+		return
+	}
+	var req struct {
+		Email string `json:"email"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		badRequest(c, "参数格式错误")
+		return
+	}
+	email, err := normalizeEmail(req.Email)
+	if err != nil {
+		badRequest(c, err.Error())
+		return
+	}
+	if err := s.db.Model(&model.User{}).Where("id = ?", user.ID).Update("email", email).Error; err != nil {
+		serverError(c, err)
+		return
+	}
+	user.Email = email
+	s.writeAudit(c, nil, "PROFILE_UPDATE", "USER", fmt.Sprint(user.ID), "SUCCESS", map[string]any{"email": email})
+	ok(c, gin.H{"user": userView(*user)})
+}
+
 func (s *Server) validateProjectIDs(projectIDs []uint64) error {
 	if len(projectIDs) == 0 {
 		return nil

@@ -32,6 +32,10 @@ const mfaConfirmCode = ref('')
 const mfaError = ref('')
 const mfaBusy = ref(false)
 const mfaQrDataUrl = ref('')
+const emailEditing = ref(false)
+const emailDraft = ref('')
+const emailSaving = ref(false)
+const emailError = ref('')
 
 onMounted(async () => {
   try {
@@ -136,6 +140,34 @@ const scopedProjects = computed(() => {
   return workspace.projects.filter((p) => ids.includes(p.id))
 })
 
+function startEmailEdit() {
+  emailDraft.value = auth.user?.email || ''
+  emailError.value = ''
+  emailEditing.value = true
+}
+
+function cancelEmailEdit() {
+  if (emailSaving.value) return
+  emailEditing.value = false
+  emailError.value = ''
+}
+
+async function saveEmail() {
+  if (emailSaving.value) return
+  emailSaving.value = true
+  emailError.value = ''
+  try {
+    const result = await authApi.updateProfile(emailDraft.value.trim())
+    if (auth.user) auth.user.email = result.user.email
+    emailEditing.value = false
+    message.success('邮箱已更新')
+  } catch (error) {
+    emailError.value = error instanceof Error ? error.message : '更新邮箱失败'
+  } finally {
+    emailSaving.value = false
+  }
+}
+
 async function changePassword() {
   errorText.value = ''
   if (!form.old || !form.next) {
@@ -194,7 +226,27 @@ async function logout() {
         <span class="profile-username mono">@{{ auth.user?.username }}</span>
         <span class="profile-role"><ShieldCheckmarkOutline />{{ auth.roleLabel }}</span>
         <div class="identity-meta">
-          <div><span>邮箱</span><strong>{{ auth.user?.email || '未填写' }}</strong></div>
+          <div class="email-row" :class="{ editing: emailEditing }">
+            <span>邮箱</span>
+            <div v-if="!emailEditing" class="email-display">
+              <strong :title="auth.user?.email || ''">{{ auth.user?.email || '未填写' }}</strong>
+              <n-button text type="primary" size="tiny" @click="startEmailEdit">修改</n-button>
+            </div>
+            <div v-else class="email-editor">
+              <n-input
+                v-model:value="emailDraft"
+                size="small"
+                placeholder="name@example.com"
+                :disabled="emailSaving"
+                @keyup.enter="saveEmail"
+              />
+              <div class="email-editor-actions">
+                <n-button size="tiny" type="primary" :loading="emailSaving" @click="saveEmail">保存</n-button>
+                <n-button size="tiny" quaternary :disabled="emailSaving" @click="cancelEmailEdit">取消</n-button>
+              </div>
+              <div v-if="emailError" class="email-error">{{ emailError }}</div>
+            </div>
+          </div>
           <div><span>账号状态</span><strong>{{ auth.user?.status === 'ACTIVE' ? '正常' : auth.user?.status }}</strong></div>
           <div><span>最近登录</span><strong>{{ auth.user?.last_login_at ? auth.user.last_login_at.replace('T', ' ').slice(0, 19) : '—' }}</strong></div>
           <div><span>项目范围</span><strong>{{ auth.user?.role === 'SUPER_ADMIN' ? '全部项目' : `${scopedProjects.length} 个项目` }}</strong></div>
@@ -393,6 +445,46 @@ async function logout() {
   color: var(--text);
   font-size: 9.5px;
   font-weight: 500;
+}
+
+.identity-meta .email-row.editing {
+  align-items: stretch;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.email-display {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.email-display strong {
+  overflow: hidden;
+  max-width: 160px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.email-editor {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.email-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.email-error {
+  color: var(--red);
+  font-size: 9px;
+  line-height: 1.4;
 }
 
 .project-scope {

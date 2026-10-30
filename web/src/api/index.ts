@@ -51,6 +51,7 @@ export const authApi = {
   logout: () => post<{ logged_out: boolean }>('/auth/logout'),
   changePassword: (payload: { old_password: string; new_password: string }) =>
     post<{ changed: boolean }>('/auth/change-password', payload),
+  updateProfile: (email: string) => patch<{ user: User }>('/auth/profile', { email }),
 }
 
 export const userApi = {
