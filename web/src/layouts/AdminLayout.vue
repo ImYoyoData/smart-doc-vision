@@ -100,6 +100,8 @@ const today = dayjs().format('YYYY.MM.DD')
 const avatarText = computed(() => (auth.displayName || 'U').slice(0, 1).toUpperCase())
 
 const canCreateProject = computed(() => auth.user?.role === 'SUPER_ADMIN')
+const ENV_LABELS: Record<string, string> = { dev: '开发', test: '测试', staging: '预发', prod: '生产' }
+const currentEnvLabel = computed(() => ENV_LABELS[workspace.currentProject?.env || ''] || '')
 const projectOptions = computed(() => {
   const items = workspace.projects.map((p) => ({
     label: `${p.name}　${p.env.toUpperCase()}`,
@@ -262,6 +264,12 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
             <button class="project-chip" type="button" :title="workspace.currentProject?.name || '选择项目'">
               <LayersOutline />
               <span class="project-chip-name">{{ workspace.currentProject?.name || '选择项目' }}</span>
+              <span
+                v-if="workspace.currentProject && currentEnvLabel"
+                class="env-mini project-chip-env"
+                :class="workspace.currentProject.env"
+                :title="`环境：${currentEnvLabel}`"
+              >{{ currentEnvLabel }}</span>
               <ChevronDownOutline class="project-chip-chev" />
             </button>
           </n-dropdown>
@@ -742,6 +750,11 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
   white-space: nowrap;
 }
 
+.project-chip-env {
+  flex: none;
+  font-size: 8px;
+}
+
 .project-chip-chev {
   color: var(--muted-light);
 }
@@ -914,6 +927,10 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
 
   .project-chip {
     max-width: 118px;
+  }
+
+  .project-chip-env {
+    display: none;
   }
 
   .project-chip-name {
