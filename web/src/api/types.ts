@@ -12,6 +12,7 @@ export interface User {
   display_name: string
   email?: string
   email_notify_enabled?: boolean
+  auto_update_check?: boolean
   role: string
   status: string
   mfa_enabled?: boolean
@@ -359,6 +360,27 @@ export interface SystemConfigData {
   env_file: string
   config_file: string
   groups: SystemConfigGroup[]
+}
+
+export interface UpdateAsset {
+  name: string
+  size: number
+  url: string
+  kind: string
+}
+
+export interface UpdateCheck {
+  current_version: string
+  latest_version: string
+  has_update: boolean
+  release_name: string
+  release_url: string
+  published_at: string
+  notes: string
+  assets: UpdateAsset[]
+  checksums_url: string
+  repo_url: string
+  checked_at: string
 }
 
 export interface NotificationPreference {

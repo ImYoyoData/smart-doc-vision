@@ -34,6 +34,7 @@ import type {
   RoleDefinition,
   RuleTemplate,
   SystemConfigData,
+  UpdateCheck,
   Task,
   TaskDetail,
   TriggerSource,
@@ -151,6 +152,13 @@ export const notificationApi = {
 
 export const systemConfigApi = {
   get: () => get<SystemConfigData>('/system/config'),
+}
+
+export const updateApi = {
+  check: (refresh = false) =>
+    get<UpdateCheck>('/system/update', refresh ? { refresh: 1 } : undefined),
+  setAutoCheck: (enabled: boolean) =>
+    put<{ enabled: boolean }>('/system/update/auto-check', { enabled }),
 }
 
 export const notificationPreferenceApi = {

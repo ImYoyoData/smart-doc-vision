@@ -327,6 +327,16 @@ SHA256SUMS.txt
 
 UPX 压缩版本体积更小，但部分杀毒软件会对 UPX 壳产生误报；生产部署建议优先使用未压缩版本，或在受控环境验证后再使用压缩版本。
 
+### 版本更新检查
+
+拥有「系统配置」权限（`system:config`）的账号，可通过侧边栏版本号或「系统配置 → 检查更新」查看 GitHub 最新 Release：
+
+- 每个账号的「自动检查更新」开关默认关闭，需在更新弹窗中手动开启；开启后进入后台时会静默检查一次；
+- 检查结果在 Redis 缓存 6 小时，避免触发 GitHub API 匿名限流；
+- 有新版本时侧边栏显示提示，弹窗展示版本对比、Release 说明、Windows / Linux 下载入口和 `SHA256SUMS.txt` 地址；
+- 同时提供原生二进制、Docker Compose、宝塔 / 进程守护的升级步骤；
+- 更新功能**只检查和提示，不会自动替换程序或重启服务**。升级前请备份数据库和 `.env`，数据库结构会在新版本启动时自动迁移。
+
 ## Docker 部署
 
 仓库提供多阶段构建和后端 / 前端镜像：
@@ -691,6 +701,8 @@ smart-doc-vision/
 | POST | `/messages/read-all` | 标记全部站内消息已读 |
 | GET/PUT | `/notification-preferences` | 查询/更新个人邮箱通知偏好与可用性 |
 | GET | `/system/config` | 只读系统启动配置（敏感字段已脱敏，需 `system:config`） |
+| GET | `/system/update` | 检查 GitHub 最新 Release（Redis 缓存，需 `system:config`） |
+| PUT | `/system/update/auto-check` | 设置当前账号是否自动检查更新（默认关闭） |
 | GET/POST | `/projects/:id/credentials` | 查询/创建项目接入凭证（创建时返回一次 AppSecret） |
 | PUT | `/projects/:id/credentials/:cid` | 修改凭证授权审核范围/状态 |
 | POST | `/projects/:id/credentials/:cid/rotate` | 轮换凭证密钥 |

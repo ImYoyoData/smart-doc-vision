@@ -9,6 +9,7 @@ type User struct {
 	DisplayName        string     `gorm:"size:64" json:"display_name"`
 	Email              string     `gorm:"size:128" json:"email"`
 	EmailNotifyEnabled bool       `gorm:"not null;default:false" json:"email_notify_enabled"`
+	AutoUpdateCheck    bool       `gorm:"not null;default:false" json:"auto_update_check"`
 	Role               string     `gorm:"size:32;not null;index" json:"role"`
 	Status             string     `gorm:"size:16;not null;default:ACTIVE" json:"status"`
 	TokenVersion       int        `gorm:"not null;default:1" json:"-"`

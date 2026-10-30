@@ -62,6 +62,12 @@ export const useAuthStore = defineStore('auth', () => {
     localStorage.setItem(USER_KEY, JSON.stringify(data.user))
   }
 
+  function patchUser(patch: Partial<User>) {
+    if (!user.value) return
+    user.value = { ...user.value, ...patch }
+    localStorage.setItem(USER_KEY, JSON.stringify(user.value))
+  }
+
   async function login(username: string, password: string, captcha: { id: string; x: number }): Promise<LoginResult | MFAChallenge> {
     const data = await authApi.login({
       username,
@@ -120,6 +126,7 @@ export const useAuthStore = defineStore('auth', () => {
     login,
     verifyMFA,
     loadMe,
+    patchUser,
     hydrate,
     clear,
     logout,

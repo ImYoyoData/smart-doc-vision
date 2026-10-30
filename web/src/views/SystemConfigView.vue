@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { NButton, useMessage } from 'naive-ui'
 import {
+  CloudDownloadOutline,
   LinkOutline,
   LockClosedOutline,
   RefreshOutline,
@@ -13,8 +14,12 @@ import {
 import PageHeader from '@/components/PageHeader.vue'
 import { systemConfigApi } from '@/api'
 import type { SystemConfigData, SystemConfigGroup } from '@/api/types'
+import { useAuthStore } from '@/stores/auth'
+import { useUpdateStore } from '@/stores/update'
 
 const message = useMessage()
+const auth = useAuthStore()
+const update = useUpdateStore()
 const loading = ref(false)
 const data = ref<SystemConfigData | null>(null)
 const errorText = ref('')
@@ -61,6 +66,15 @@ onMounted(load)
       subtitle="只读查看当前进程启动时加载的配置；密码和密钥字段已脱敏。"
     >
       <template #actions>
+        <n-button
+          v-if="auth.can('system:config')"
+          secondary
+          :loading="update.loading"
+          @click="update.openAndCheck(true)"
+        >
+          <template #icon><CloudDownloadOutline /></template>
+          检查更新
+        </n-button>
         <n-button secondary :loading="loading" @click="load">
           <template #icon><RefreshOutline /></template>
           刷新

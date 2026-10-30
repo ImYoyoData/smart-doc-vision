@@ -5,9 +5,11 @@ import { NButton, NDropdown, NPopover, useMessage } from 'naive-ui'
 import dayjs from 'dayjs'
 import {
   AddOutline,
+  ArrowUpCircleOutline,
   BarChartOutline,
   CheckmarkDoneOutline,
   ChevronDownOutline,
+  ChevronForwardOutline,
   CloudOutline,
   HelpCircleOutline,
   KeyOutline,
@@ -34,9 +36,11 @@ import {
 } from '@vicons/ionicons5'
 import BrandMark from '@/components/BrandMark.vue'
 import MessageDetailModal from '@/components/MessageDetailModal.vue'
+import UpdateModal from '@/components/UpdateModal.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { useThemeStore } from '@/stores/theme'
+import { useUpdateStore } from '@/stores/update'
 import { messageApi, metaApi } from '@/api'
 import type { InAppMessage } from '@/api/types'
 import { useReviewStore } from '@/stores/review'
@@ -48,6 +52,7 @@ const auth = useAuthStore()
 const workspace = useWorkspaceStore()
 const review = useReviewStore()
 const theme = useThemeStore()
+const update = useUpdateStore()
 const sidebarOpen = ref(false)
 const githubURL = 'https://github.com/ImYoyoData/smart-doc-vision'
 const version = ref('1.0.0')
@@ -113,6 +118,7 @@ const today = dayjs().format('YYYY.MM.DD')
 const avatarText = computed(() => (auth.displayName || 'U').slice(0, 1).toUpperCase())
 
 const canCreateProject = computed(() => auth.user?.role === 'SUPER_ADMIN')
+const canCheckUpdate = computed(() => auth.can('system:config'))
 const ENV_LABELS: Record<string, string> = { dev: '开发', test: '测试', staging: '预发', prod: '生产' }
 const currentEnvLabel = computed(() => ENV_LABELS[workspace.currentProject?.env || ''] || '')
 const projectOptions = computed(() => {
@@ -256,6 +262,7 @@ async function bootstrap() {
     await review.refresh(workspace.currentProjectId)
     const meta = await metaApi.system()
     version.value = meta.version
+    if (canCheckUpdate.value && update.autoCheck && !update.checked) void update.check(false)
   } catch (error) {
     if (error instanceof Error) message.error(error.message)
   } finally {
@@ -335,8 +342,29 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
           <span class="live-dot"></span>
           <span>审核引擎运行中</span>
         </div>
+        <button
+          v-if="canCheckUpdate && update.hasUpdate"
+          type="button"
+          class="update-hint"
+          @click="update.open()"
+        >
+          <ArrowUpCircleOutline />
+          <span>发现新版本 <strong>v{{ update.info?.latest_version }}</strong></span>
+          <ChevronForwardOutline class="chev" />
+        </button>
         <div class="footer-meta">
-          <span>SmartDoc Vision v{{ version }}</span>
+          <button
+            v-if="canCheckUpdate"
+            type="button"
+            class="footer-version"
+            title="检查更新"
+            aria-label="检查更新"
+            @click="update.openAndCheck()"
+          >
+            <span>SmartDoc Vision v{{ version }}</span>
+            <span v-if="update.hasUpdate" class="version-dot"></span>
+          </button>
+          <span v-else>SmartDoc Vision v{{ version }}</span>
           <span class="footer-meta-right">
             <span class="mono">Redis DB 3</span>
             <a
@@ -465,6 +493,7 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
       @read="handleMessageRead"
       @action="goMessageAction"
     />
+    <UpdateModal />
   </div>
 </template>
 
@@ -951,6 +980,45 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
   box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.12);
 }
 
+.update-hint {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 7px;
+  margin-top: 9px;
+  padding: 8px 9px;
+  border: 1px solid var(--brand-border);
+  border-radius: 8px;
+  background: var(--brand-softer);
+  color: var(--brand-strong);
+  font-size: 10px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.update-hint:hover {
+  background: var(--brand-soft);
+}
+
+.update-hint :deep(svg) {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+
+.update-hint strong {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.update-hint .chev {
+  width: 12px;
+  height: 12px;
+  margin-left: auto;
+  color: var(--muted-light);
+}
+
 .footer-meta {
   display: flex;
   align-items: center;
@@ -958,6 +1026,30 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
   margin-top: 7px;
   color: #a6b0c0;
   font-size: 9.5px;
+}
+
+.footer-version {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.footer-version:hover {
+  color: var(--brand);
+}
+
+.version-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--brand);
+  box-shadow: 0 0 0 3px var(--brand-soft);
 }
 
 .footer-meta-right {
