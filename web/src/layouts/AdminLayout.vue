@@ -832,7 +832,22 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
 }
 
 .nav :deep(.n-menu-item-content::before) {
+  left: 0;
+  right: 0;
   border-radius: 10px;
+}
+
+.nav :deep(.n-menu-item-content--selected::after) {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: -12px;
+  width: 3px;
+  height: 18px;
+  border-radius: 0 3px 3px 0;
+  background: var(--brand);
+  transform: translateY(-50%);
+  pointer-events: none;
 }
 
 .nav :deep(.n-menu-item-content-header) {
