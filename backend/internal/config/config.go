@@ -43,6 +43,23 @@ type Config struct {
 	JEVBaseURL string
 	JEVModel   string
 
+	StorageDriver           string
+	StorageLocalDir         string
+	StoragePublicBaseURL    string
+	StorageS3Provider       string
+	StorageS3Endpoint       string
+	StorageS3Region         string
+	StorageS3Bucket         string
+	StorageS3AccessKey      string
+	StorageS3SecretKey      string
+	StorageS3Prefix         string
+	StorageS3ForcePathStyle bool
+
+	// Configured reports whether a config file or config environment variable
+	// was found. When false the installer must run instead of connecting to
+	// MySQL/Redis with built-in development defaults.
+	Configured bool
+
 	// Sources is for diagnostics only and is safe to log.
 	ConfigFile string
 	EnvFile    string
@@ -97,15 +114,6 @@ func Load() Config {
 	envPath := findConfigFile(".env")
 	yamlPath := findConfigFile("config.yml")
 
-	if envPath == "" && yamlPath == "" && !hasConfigEnv() {
-		envPath = ".env"
-		if err := writeDefaultEnv(envPath); err != nil {
-			log.Printf("config: cannot generate %s: %v", envPath, err)
-		} else {
-			log.Printf("config: generated default %s (edit it before production)", envPath)
-		}
-	}
-
 	dotenvValues := map[string]string{}
 	if envPath != "" {
 		values, err := godotenv.Read(envPath)
@@ -115,6 +123,18 @@ func Load() Config {
 			dotenvValues = values
 		}
 	}
+	// A file that only sets a port or AI defaults is not a complete deployment;
+	// database/Redis settings (or a legacy config.yml) make it "configured".
+	// A shipped .env template with placeholder secrets also counts as
+	// unconfigured so the web installer can still run.
+	dotenvConfigured := dotenvHas(dotenvValues,
+		"MYSQL_DSN", "MYSQL_HOST", "MYSQL_USER", "MYSQL_DATABASE",
+		"REDIS_ADDR", "REDIS_HOST", "REDIS_DB",
+	)
+	if envLooksLikeTemplate(dotenvValues) {
+		dotenvConfigured = false
+	}
+	configured := yamlPath != "" || hasConfigEnv() || dotenvConfigured
 
 	fileCfg := yamlConfig{}
 	if yamlPath != "" && envPath != "" {
@@ -180,6 +200,18 @@ func Load() Config {
 		DefaultAISupportsVision: pickBool("DEFAULT_AI_SUPPORTS_VISION", fileCfg.AI.DefaultSupportsVision, dotenvValues, false),
 		JEVBaseURL:              fallbackString(pickString("JEV_BASE_URL", fileCfg.AI.JEVBaseURL, dotenvValues, "https://api.typesafe.ai/v1"), "https://api.typesafe.ai/v1"),
 		JEVModel:                fallbackString(pickString("JEV_MODEL", fileCfg.AI.JEVModel, dotenvValues, "jev-latest"), "jev-latest"),
+		StorageDriver:           fallbackString(pickString("STORAGE_DRIVER", nil, dotenvValues, "local"), "local"),
+		StorageLocalDir:         fallbackString(pickString("STORAGE_LOCAL_DIR", nil, dotenvValues, filepath.Join("data", "uploads")), filepath.Join("data", "uploads")),
+		StoragePublicBaseURL:    pickString("STORAGE_PUBLIC_BASE_URL", nil, dotenvValues, ""),
+		StorageS3Provider:       fallbackString(pickString("STORAGE_S3_PROVIDER", nil, dotenvValues, "custom"), "custom"),
+		StorageS3Endpoint:       pickString("STORAGE_S3_ENDPOINT", nil, dotenvValues, ""),
+		StorageS3Region:         pickString("STORAGE_S3_REGION", nil, dotenvValues, ""),
+		StorageS3Bucket:         pickString("STORAGE_S3_BUCKET", nil, dotenvValues, ""),
+		StorageS3AccessKey:      pickString("STORAGE_S3_ACCESS_KEY", nil, dotenvValues, ""),
+		StorageS3SecretKey:      pickString("STORAGE_S3_SECRET_KEY", nil, dotenvValues, ""),
+		StorageS3Prefix:         pickString("STORAGE_S3_PREFIX", nil, dotenvValues, ""),
+		StorageS3ForcePathStyle: pickBool("STORAGE_S3_FORCE_PATH_STYLE", nil, dotenvValues, false),
+		Configured:              configured,
 		ConfigFile:              yamlPath,
 		EnvFile:                 envPath,
 	}
@@ -206,9 +238,26 @@ func findConfigFile(name string) string {
 	return ""
 }
 
+// FindConfigFile exposes the config search order to the installer.
+func FindConfigFile(name string) string { return findConfigFile(name) }
+
+// DefaultEnvPath is where the installer writes .env when no config exists.
+func DefaultEnvPath() string {
+	wd, err := os.Getwd()
+	if err != nil {
+		return ".env"
+	}
+	return filepath.Join(wd, ".env")
+}
+
+// RandomSecret generates a hex secret for JWT_SECRET / MASTER_KEY.
+func RandomSecret(size int) string { return randomHex(size) }
+
 func hasConfigEnv() bool {
+	// SERVER_PORT alone must not count as a configured installation: a bare
+	// port override is common even on a first run that still needs the wizard.
 	for _, key := range []string{
-		"SERVER_PORT", "MYSQL_DSN", "MYSQL_HOST", "MYSQL_USER", "MYSQL_DATABASE",
+		"MYSQL_DSN", "MYSQL_HOST", "MYSQL_USER", "MYSQL_DATABASE",
 		"REDIS_ADDR", "REDIS_HOST", "REDIS_DB", "JWT_SECRET", "MASTER_KEY",
 		"ADMIN_USERNAME", "ADMIN_PASSWORD",
 	} {
@@ -217,6 +266,37 @@ func hasConfigEnv() bool {
 		}
 	}
 	return false
+}
+
+// EnvFileLooksLikeTemplate reports whether path is an untouched copy of
+// .env.example (placeholder secrets or example MySQL password). The installer
+// may safely back it up and replace it.
+func EnvFileLooksLikeTemplate(path string) bool {
+	values, err := godotenv.Read(path)
+	if err != nil {
+		return false
+	}
+	return envLooksLikeTemplate(values)
+}
+
+func envLooksLikeTemplate(values map[string]string) bool {
+	if len(values) == 0 {
+		return false
+	}
+	jwt := strings.TrimSpace(values["JWT_SECRET"])
+	master := strings.TrimSpace(values["MASTER_KEY"])
+	password := strings.TrimSpace(values["MYSQL_PASSWORD"])
+	dsn := strings.TrimSpace(values["MYSQL_DSN"])
+	switch {
+	case jwt == "replace-with-a-long-random-secret":
+		return true
+	case master == "replace-with-at-least-32-characters-master-key":
+		return true
+	case password == "your_password" && dsn == "":
+		return true
+	default:
+		return false
+	}
 }
 
 func resolveMySQLDSN(fileCfg yamlConfig, dotenv map[string]string, host string, port int, user, password, database, charset string) string {
@@ -436,6 +516,19 @@ DEFAULT_AI_SUPPORTS_VISION=false
 
 JEV_BASE_URL=https://api.typesafe.ai/v1
 JEV_MODEL=jev-latest
+
+# File storage: local directory by default, or any S3-compatible object storage.
+STORAGE_DRIVER=local
+STORAGE_LOCAL_DIR=data/uploads
+STORAGE_PUBLIC_BASE_URL=
+STORAGE_S3_PROVIDER=custom
+STORAGE_S3_ENDPOINT=
+STORAGE_S3_REGION=
+STORAGE_S3_BUCKET=
+STORAGE_S3_ACCESS_KEY=
+STORAGE_S3_SECRET_KEY=
+STORAGE_S3_PREFIX=
+STORAGE_S3_FORCE_PATH_STYLE=false
 `, jwtSecret, masterKey)
 	return os.WriteFile(path, []byte(content), 0o600)
 }

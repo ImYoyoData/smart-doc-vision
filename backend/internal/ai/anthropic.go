@@ -19,6 +19,7 @@ import (
 type AnthropicAdapter struct {
 	Client  *http.Client
 	Fetcher *media.Fetcher
+	Loader  *media.Loader
 }
 
 type anthropicRequest struct {
@@ -133,12 +134,9 @@ func (a *AnthropicAdapter) Review(ctx context.Context, req Request) (*model.Verd
 
 	blocks := []anthropicContentBlock{{Type: "text", Text: userPrompt}}
 	if cfg.SupportsVision && len(images) > 0 {
-		fetcher := a.Fetcher
-		if fetcher == nil {
-			fetcher = media.NewFetcher(false)
-		}
+		loader := resolveLoader(a.Loader, a.Fetcher)
 		for i, img := range images {
-			prepared, err := fetcher.FetchImage(ctx, img.URL)
+			prepared, err := loader.Fetch(ctx, img)
 			if err != nil {
 				return nil, fmt.Errorf("准备第 %d 张图片失败: %w", i+1, err)
 			}

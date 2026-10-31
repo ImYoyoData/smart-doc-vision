@@ -107,9 +107,37 @@ func (s *Server) getTask(c *gin.Context) {
 	taskList := []model.Task{*task}
 	s.populateTaskNames(taskList)
 	*task = taskList[0]
+	s.decorateTaskMedia(task)
 	var events []model.TaskEvent
 	_ = s.db.Where("task_id = ?", task.ID).Order("created_at asc").Find(&events).Error
 	ok(c, gin.H{"task": task, "events": events})
+}
+
+// decorateTaskMedia fills display URLs for images stored outside the database.
+func (s *Server) decorateTaskMedia(task *model.Task) {
+	if s.filestore == nil || len(task.InputJSON) == 0 {
+		return
+	}
+	var input model.TaskInput
+	if err := model.DecodeJSON(task.InputJSON, &input); err != nil {
+		return
+	}
+	changed := false
+	for i := range input.Media {
+		key := input.Media[i].Key
+		if key == "" {
+			continue
+		}
+		url, err := s.filestore.URL(context.Background(), key, 2*time.Hour)
+		if err != nil {
+			continue
+		}
+		input.Media[i].URL = url
+		changed = true
+	}
+	if changed {
+		task.InputJSON = model.JSONBytes(input)
+	}
 }
 
 func (s *Server) submitTask(c *gin.Context) {

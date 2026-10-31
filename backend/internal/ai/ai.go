@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"smartdoc-vision/backend/internal/media"
 	"smartdoc-vision/backend/internal/model"
 	"smartdoc-vision/backend/internal/textenc"
 )
@@ -33,17 +34,34 @@ type Adapter interface {
 	Test(ctx context.Context, req Request) (TestResult, error)
 }
 
-func AdapterFor(kind string) (Adapter, error) {
+func AdapterFor(kind string, loader *media.Loader) (Adapter, error) {
 	switch strings.ToUpper(strings.TrimSpace(kind)) {
 	case model.ProviderOpenAI, "OPENAI":
-		return &OpenAIAdapter{}, nil
+		return &OpenAIAdapter{Loader: loader}, nil
 	case model.ProviderAnthropic, "CLAUDE":
-		return &AnthropicAdapter{}, nil
+		return &AnthropicAdapter{Loader: loader}, nil
 	case model.ProviderJEV, "TYPESAFE", "TYPESAFE_JEV":
-		return &JEVAdapter{}, nil
+		return &JEVAdapter{Loader: loader}, nil
 	default:
 		return nil, fmt.Errorf("unsupported provider kind %q", kind)
 	}
+}
+
+func resolveLoader(loader *media.Loader, fetcher *media.Fetcher) *media.Loader {
+	if loader != nil {
+		return loader
+	}
+	return media.NewLoader(fetcher, nil)
+}
+
+func imageLabel(img model.MediaItem, index int) string {
+	if name := strings.TrimSpace(img.Name); name != "" {
+		return name
+	}
+	if url := strings.TrimSpace(img.URL); url != "" && !strings.HasPrefix(url, "data:") {
+		return url
+	}
+	return fmt.Sprintf("图片 %d", index+1)
 }
 
 // MaxOutputTokensLimit is a safety ceiling only. Individual providers still
@@ -191,7 +209,7 @@ func CollectImages(input model.TaskInput) []model.MediaItem {
 		if !strings.EqualFold(m.Type, "image") {
 			continue
 		}
-		if strings.TrimSpace(m.URL) != "" {
+		if strings.TrimSpace(m.URL) != "" || strings.TrimSpace(m.Key) != "" {
 			out = append(out, m)
 			continue
 		}

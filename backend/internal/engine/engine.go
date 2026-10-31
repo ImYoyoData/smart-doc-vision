@@ -43,16 +43,16 @@ type ProjectQueueStat struct {
 }
 
 type Engine struct {
-	db      *gorm.DB
-	redis   *redis.Client
-	cipher  *security.Cipher
-	cfg     config.Config
-	fetcher *media.Fetcher
-	queue   chan queueEntry
-	ctx     context.Context
-	cancel  context.CancelFunc
-	wg      sync.WaitGroup
-	once    sync.Once
+	db     *gorm.DB
+	redis  *redis.Client
+	cipher *security.Cipher
+	cfg    config.Config
+	loader *media.Loader
+	queue  chan queueEntry
+	ctx    context.Context
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
+	once   sync.Once
 
 	// Per-project scheduler: each project has a bounded concurrency slot and
 	// its own pending FIFO. The dispatcher round-robins projects, so a single
@@ -70,14 +70,14 @@ type Engine struct {
 	scriptSlots map[uint64]chan struct{}
 }
 
-func New(db *gorm.DB, cache *redis.Client, cipher *security.Cipher, cfg config.Config) *Engine {
+func New(db *gorm.DB, cache *redis.Client, cipher *security.Cipher, cfg config.Config, loader *media.Loader) *Engine {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Engine{
 		db:      db,
 		redis:   cache,
 		cipher:  cipher,
 		cfg:     cfg,
-		fetcher: media.NewFetcher(cfg.AllowPrivate),
+		loader:  loader,
 		queue:   make(chan queueEntry, 2000),
 		ctx:     ctx,
 		cancel:  cancel,

@@ -125,8 +125,8 @@ CREATE DATABASE IF NOT EXISTS `smart-doc-vision`
 
 - 管理后台固定入口：`http://127.0.0.1:<SERVER_PORT>/admin`，根路径 `/` 会自动跳转。
 - MySQL 和 Redis 配置全部写在同一个 `.env` 中；MySQL 可用独立字段或完整 `MYSQL_DSN`，Redis 可用 `REDIS_ADDR` 或 `REDIS_HOST` + `REDIS_PORT`。
-- 如果当前目录及其上级目录没有 `.env`，程序首次启动会自动生成一个带默认值和随机 JWT/MASTER 密钥的 `.env`。
-- `build.ps1` 会把 `.env.example` 复制为 `dist/.env`（仅在不存在时），不会再生成其他配置文件。
+- 如果当前目录及其上级目录没有 `.env`、`config.yml`，也没有数据库/Redis 相关环境变量，程序会以「安装模式」启动，通过 `/admin` 的安装向导生成配置和随机 JWT/MASTER 密钥，不会用默认值连接数据库。
+- `build.ps1` 会把 `.env.example` 复制到 `dist/.env.example`，不再自动生成 `dist/.env`；首次启动会进入安装向导。
 - 旧版 `config.yml` 仅作为兼容兜底读取，但 `.env` 中的同名配置优先；新部署不再需要它。
 
 `.env` 至少修改：
@@ -184,6 +184,48 @@ npm run dev
 ```
 
 **首次登录后请立即修改管理员密码，并在生产环境更换 `JWT_SECRET`、`MASTER_KEY`。**
+
+#### 首次安装向导
+
+当前版本起，全新部署不需要预先准备 `.env`：当程序没有找到任何配置（`.env`、`config.yml` 或配置环境变量）时，会以「安装模式」启动，不连接 MySQL/Redis，直接打开 `/admin` 进入安装向导：
+
+1. 阅读并滚动到底部后同意 MIT 许可证与免责声明；
+2. 填写 MySQL（数据库不存在时自动创建）与 Redis（密码可为空）；
+3. 选择文件存储：本地目录，或阿里云 OSS / 腾讯云 COS / 七牛云 Kodo / AWS S3 / MinIO 等 S3 兼容对象存储；
+4. 设置超级管理员账号密码；
+5. 点击「开始检测并安装」，系统检测三项依赖后创建数据表、基础数据和管理员账号。
+
+安装完成后会生成：
+
+- `.env`：包含数据库、Redis、`JWT_SECRET`、`MASTER_KEY`、管理员和存储配置，权限 `0600`；
+- `.install.txt`：安装标记，记录安装时间与版本。
+
+安装标记存在时，即使 `.env` 丢失也不会再次进入安装向导，而是提示恢复配置文件，避免误重装覆盖数据。刷新页面即可使用刚设置的管理员账号登录，无需重启进程。如果目录中只有构建模板生成的占位 `.env`，安装器会先将其备份为 `.env.bak.<时间戳>` 再写入新配置；真实配置不会被覆盖。
+
+> Docker 部署请在 `docker-compose.yml` 中保留 `app-data:/app/data` 数据卷；本地文件存储默认写入 `/app/data/uploads`，不挂载会导致容器重建后文件丢失。
+
+#### 文件存储
+
+上传的图片和文件不再写入 MySQL。平台默认保存到 `data/uploads`，按 `tasks/<项目>/<年月>/<uuid>.<jpg|png>` 组织目录；数据库中只保留对象路径、类型和大小。
+
+对象存储使用 S3 兼容协议，多个服务商共用一套配置：
+
+```dotenv
+STORAGE_DRIVER=s3
+STORAGE_S3_PROVIDER=aliyun        # aliyun | tencent | qiniu | aws | minio | custom
+STORAGE_S3_REGION=cn-hangzhou
+STORAGE_S3_BUCKET=smartdoc-uploads
+STORAGE_S3_ACCESS_KEY=...
+STORAGE_S3_SECRET_KEY=...
+# 留空时按服务商与 Region 自动推导；自建 MinIO/自定义 S3 必须填写完整 Endpoint
+STORAGE_S3_ENDPOINT=
+STORAGE_S3_PREFIX=
+STORAGE_S3_FORCE_PATH_STYLE=false
+# 可选：CDN 或公开访问域名
+STORAGE_PUBLIC_BASE_URL=
+```
+
+本地存储的预览地址由后端使用 HMAC 签名生成；对象存储默认返回有时效的预签名地址，也可以配置公开访问前缀。存储配置可以在「系统配置 → 文件存储」中查看（密钥已脱敏），修改 `.env` 后重启生效。
 
 登录安全：
 
@@ -255,12 +297,12 @@ dist/smartdoc-vision-1.4.0-windows-amd64-upx.exe
 dist/smartdoc-vision-1.4.0-linux-amd64
 dist/smartdoc-vision-1.4.0-linux-amd64-upx
 dist/smartdoc-vision-1.4.0-linux-arm64
-dist/.env
+dist/.env.example
 ```
 
-构建时会生成 `dist/.env` 配置模板（已存在则不覆盖）。操作系统环境变量优先级最高，其余配置统一放在 `.env`。首次运行如果当前目录没有 `.env`，程序会自动生成带默认值和随机密钥的 `.env`。
+构建时会复制 `dist/.env.example` 配置模板。操作系统环境变量优先级最高，其余配置统一放在 `.env`。首次运行如果当前目录没有完整配置，程序会进入安装向导，而不是用默认值连接数据库。
 
-运行（需要同目录或当前工作目录存在 `.env`）：
+运行（首次启动会进入安装向导；当前目录或上级已有 `.env` 时直接启动）：
 
 ```powershell
 .\dist\smartdoc-vision-1.0.0-windows-amd64.exe

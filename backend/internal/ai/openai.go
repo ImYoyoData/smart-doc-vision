@@ -18,6 +18,7 @@ import (
 type OpenAIAdapter struct {
 	Client  *http.Client
 	Fetcher *media.Fetcher
+	Loader  *media.Loader
 }
 
 type openAIMessage struct {
@@ -102,7 +103,7 @@ func (a *OpenAIAdapter) Review(ctx context.Context, req Request) (*model.Verdict
 	if len(images) > 0 {
 		imageNote.WriteString("\n附件图片：\n")
 		for i, img := range images {
-			fmt.Fprintf(&imageNote, "%d. %s\n", i+1, img.URL)
+			fmt.Fprintf(&imageNote, "%d. %s\n", i+1, imageLabel(img, i))
 		}
 	}
 
@@ -128,13 +129,10 @@ func (a *OpenAIAdapter) Review(ctx context.Context, req Request) (*model.Verdict
 	if cfg.SupportsVision && len(images) > 0 {
 		// 平台先下载图片转 base64：既统一走 SSRF 防护，也避免上游模型
 		// 服务器无法访问外链图片（返回 400）被误判为模型故障。
-		fetcher := a.Fetcher
-		if fetcher == nil {
-			fetcher = media.NewFetcher(false)
-		}
+		loader := resolveLoader(a.Loader, a.Fetcher)
 		parts := []map[string]any{{"type": "text", "text": userPrompt}}
 		for i, img := range images {
-			prepared, err := fetcher.FetchImage(ctx, img.URL)
+			prepared, err := loader.Fetch(ctx, img)
 			if err != nil {
 				return nil, fmt.Errorf("准备第 %d 张图片失败: %w", i+1, err)
 			}

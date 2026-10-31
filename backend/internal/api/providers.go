@@ -310,7 +310,7 @@ func (s *Server) testProvider(c *gin.Context) {
 		serverError(c, fmt.Errorf("密钥解密失败: %w", err))
 		return
 	}
-	adapter, err := ai.AdapterFor(provider.Kind)
+	adapter, err := ai.AdapterFor(provider.Kind, s.media)
 	if err != nil {
 		serverError(c, err)
 		return

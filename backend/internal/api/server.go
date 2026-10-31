@@ -17,28 +17,32 @@ import (
 	"smartdoc-vision/backend/internal/catalog"
 	"smartdoc-vision/backend/internal/config"
 	"smartdoc-vision/backend/internal/engine"
+	"smartdoc-vision/backend/internal/media"
 	"smartdoc-vision/backend/internal/model"
 	"smartdoc-vision/backend/internal/security"
 	"smartdoc-vision/backend/internal/service"
+	"smartdoc-vision/backend/internal/storage"
 	appversion "smartdoc-vision/backend/internal/version"
 	"smartdoc-vision/backend/internal/webui"
 )
 
 type Server struct {
-	cfg    config.Config
-	db     *gorm.DB
-	redis  *redis.Client
-	cipher *security.Cipher
-	tokens *security.TokenManager
-	engine *engine.Engine
-	tasks  *service.TaskService
+	cfg       config.Config
+	db        *gorm.DB
+	redis     *redis.Client
+	cipher    *security.Cipher
+	tokens    *security.TokenManager
+	engine    *engine.Engine
+	tasks     *service.TaskService
+	media     *media.Loader
+	filestore storage.Store
 
 	rolesMu   sync.RWMutex
 	roles     map[string]catalog.RoleDefinition
 	rolesList []catalog.RoleDefinition
 }
 
-func NewServer(cfg config.Config, db *gorm.DB, cache *redis.Client, cipher *security.Cipher, eng *engine.Engine, tasks *service.TaskService) *Server {
+func NewServer(cfg config.Config, db *gorm.DB, cache *redis.Client, cipher *security.Cipher, eng *engine.Engine, tasks *service.TaskService, loader *media.Loader) *Server {
 	server := &Server{
 		cfg:    cfg,
 		db:     db,
@@ -47,7 +51,11 @@ func NewServer(cfg config.Config, db *gorm.DB, cache *redis.Client, cipher *secu
 		tokens: security.NewTokenManager(cfg.JWTSecret),
 		engine: eng,
 		tasks:  tasks,
+		media:  loader,
 		roles:  map[string]catalog.RoleDefinition{},
+	}
+	if loader != nil {
+		server.filestore = loader.Store()
 	}
 	if err := server.refreshRoleCache(); err != nil {
 		for _, definition := range catalog.Roles() {
@@ -58,7 +66,7 @@ func NewServer(cfg config.Config, db *gorm.DB, cache *redis.Client, cipher *secu
 	return server
 }
 
-func (s *Server) registerAdminUI(r *gin.Engine) {
+func registerAdminUI(r *gin.Engine) {
 	handler, ok := webui.New()
 	if !ok {
 		message := "管理界面尚未打包。请先运行 build.ps1（或 npm run build）生成前端资源。"
@@ -96,7 +104,9 @@ func (s *Server) Router() *gin.Engine {
 	r.Use(cors.New(corsCfg))
 	r.GET("/health", s.health)
 	r.GET("/metrics", s.prometheusMetrics)
-	s.registerAdminUI(r)
+	r.GET("/api/install/status", s.installStatus)
+	r.GET("/api/media/*key", s.serveMedia)
+	registerAdminUI(r)
 
 	open := r.Group("/open/v1")
 	{

@@ -19,6 +19,36 @@ type Seeder struct {
 	Cfg    config.Config
 }
 
+// EnsureAdmin creates or updates the super administrator chosen in the web
+// installer. Seeder.ensureAdmin never changes an existing password, so this
+// runs first during installation to make retries deterministic.
+func EnsureAdmin(db *gorm.DB, username, password string) error {
+	hash, err := security.HashPassword(password)
+	if err != nil {
+		return err
+	}
+	var user model.User
+	err = db.Where("username = ?", username).First(&user).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		user = model.User{
+			Username:     username,
+			PasswordHash: hash,
+			DisplayName:  "系统管理员",
+			Role:         model.RoleSuperAdmin,
+			Status:       "ACTIVE",
+		}
+		return db.Create(&user).Error
+	}
+	if err != nil {
+		return err
+	}
+	return db.Model(&model.User{}).Where("id = ?", user.ID).Updates(map[string]any{
+		"password_hash": hash,
+		"role":          model.RoleSuperAdmin,
+		"status":        "ACTIVE",
+	}).Error
+}
+
 func (s *Seeder) Run() error {
 	if err := s.ensureRoles(); err != nil {
 		return err

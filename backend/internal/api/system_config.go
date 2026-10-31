@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	mysqldriver "github.com/go-sql-driver/mysql"
 
+	"smartdoc-vision/backend/internal/config"
 	"smartdoc-vision/backend/internal/security"
 	appversion "smartdoc-vision/backend/internal/version"
 )
@@ -84,7 +85,43 @@ func (s *Server) systemConfigGroups() []systemConfigGroup {
 				secretConfigField("REDIS_PASSWORD", "访问密码", cfg.RedisPassword),
 			},
 		},
+		{
+			Key: "storage", Title: "文件存储", Description: "上传图片与文件的外部存储位置；对象存储密钥已脱敏。",
+			Fields: storageConfigFields(cfg),
+		},
 	}
+}
+
+func storageConfigFields(cfg config.Config) []systemConfigField {
+	driver := strings.ToLower(strings.TrimSpace(cfg.StorageDriver))
+	label := "本地文件存储"
+	if driver == "s3" {
+		label = "对象存储（S3 兼容）"
+	}
+	fields := []systemConfigField{
+		plainConfigField("STORAGE_DRIVER", "存储方式", label),
+		plainConfigField("STORAGE_PUBLIC_BASE_URL", "公开访问前缀", cfg.StoragePublicBaseURL),
+	}
+	if driver == "s3" {
+		provider := strings.TrimSpace(cfg.StorageS3Provider)
+		endpoint := strings.TrimSpace(cfg.StorageS3Endpoint)
+		if endpoint == "" {
+			endpoint = "按服务商默认端点"
+		}
+		fields = append(fields,
+			plainConfigField("STORAGE_S3_PROVIDER", "服务商", provider),
+			plainConfigField("STORAGE_S3_ENDPOINT", "Endpoint", endpoint),
+			plainConfigField("STORAGE_S3_REGION", "Region", cfg.StorageS3Region),
+			plainConfigField("STORAGE_S3_BUCKET", "Bucket", cfg.StorageS3Bucket),
+			plainConfigField("STORAGE_S3_PREFIX", "路径前缀", cfg.StorageS3Prefix),
+			secretConfigField("STORAGE_S3_ACCESS_KEY", "AccessKey", cfg.StorageS3AccessKey),
+			secretConfigField("STORAGE_S3_SECRET_KEY", "SecretKey", cfg.StorageS3SecretKey),
+			plainConfigField("STORAGE_S3_FORCE_PATH_STYLE", "强制 Path-Style", yesNo(cfg.StorageS3ForcePathStyle)),
+		)
+	} else {
+		fields = append(fields, plainConfigField("STORAGE_LOCAL_DIR", "本地目录", cfg.StorageLocalDir))
+	}
+	return fields
 }
 
 func mysqlConfigFields(dsn string) []systemConfigField {

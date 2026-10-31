@@ -66,6 +66,12 @@ type MediaItem struct {
 	Content string `json:"content,omitempty"`
 	URL     string `json:"url,omitempty"`
 	Name    string `json:"name,omitempty"`
+	// Key identifies an object in the configured file storage. New uploads
+	// store the image outside the database; URL is filled only for display.
+	Key     string `json:"key,omitempty"`
+	Storage string `json:"storage,omitempty"`
+	MIME    string `json:"mime,omitempty"`
+	Size    int64  `json:"size,omitempty"`
 }
 
 type TaskInput struct {

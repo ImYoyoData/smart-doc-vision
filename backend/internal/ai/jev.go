@@ -23,6 +23,7 @@ import (
 type JEVAdapter struct {
 	Client  *http.Client
 	Fetcher *media.Fetcher
+	Loader  *media.Loader
 }
 
 type jevRequest struct {
@@ -86,10 +87,7 @@ func (a *JEVAdapter) Review(ctx context.Context, req Request) (*model.Verdict, e
 
 	categories := AuditCategories(req.Audit)
 	classify := IsClassification(req.Audit) && len(categories) > 0
-	fetcher := a.Fetcher
-	if fetcher == nil {
-		fetcher = media.NewFetcher(false)
-	}
+	loader := resolveLoader(a.Loader, a.Fetcher)
 	assets := map[string]jevImageAsset{}
 	requirements := strings.TrimSpace(req.Audit.ReviewPrompt)
 	if requirements == "" {
@@ -111,7 +109,7 @@ func (a *JEVAdapter) Review(ctx context.Context, req Request) (*model.Verdict, e
 	}
 	var imageRefs []string
 	for i, img := range images {
-		prepared, err := fetcher.FetchImage(ctx, img.URL)
+		prepared, err := loader.Fetch(ctx, img)
 		if err != nil {
 			return nil, fmt.Errorf("准备第 %d 张图片失败: %w", i+1, err)
 		}

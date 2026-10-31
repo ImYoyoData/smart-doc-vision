@@ -11,6 +11,7 @@ RUN apk add --no-cache ca-certificates tzdata && adduser -D -u 10001 smartdoc
 ENV TZ=Asia/Shanghai
 WORKDIR /app
 COPY --from=build /out/smartdoc-server /app/smartdoc-server
+RUN mkdir -p /app/data && chown -R smartdoc:smartdoc /app/data
 USER smartdoc
 EXPOSE 8080
 ENTRYPOINT ["/app/smartdoc-server"]

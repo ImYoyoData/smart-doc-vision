@@ -98,6 +98,12 @@ func (f *Fetcher) FetchImage(ctx context.Context, rawURL string) (*PreparedImage
 			return nil, errors.New("图片超过 20MB 上限")
 		}
 	}
+	return PrepareImage(data)
+}
+
+// PrepareImage decodes, validates and normalizes an image payload. It is shared
+// by remote URL fetches and by files read back from the storage backend.
+func PrepareImage(data []byte) (*PreparedImage, error) {
 	img, format, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
 		return nil, fmt.Errorf("图片格式无效（仅支持 PNG/JPEG）: %w", err)

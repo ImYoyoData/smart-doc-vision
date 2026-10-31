@@ -150,11 +150,7 @@ try {
 $envTemplate = Join-Path $Root '.env.example'
 if (Test-Path $envTemplate) {
     Copy-Item -Path $envTemplate -Destination (Join-Path $outputDir '.env.example') -Force
-    $targetEnv = Join-Path $outputDir '.env'
-    if (-not (Test-Path $targetEnv)) {
-        Copy-Item -Path $envTemplate -Destination $targetEnv -Force
-        Write-Host "  已生成 dist/.env 配置模板（可直接编辑）" -ForegroundColor Yellow
-    }
+    Write-Host "  已复制 dist/.env.example；首次启动会进入安装向导，也可手动复制为 .env 后使用" -ForegroundColor Yellow
 }
 
 # UPX variants are only produced for the two x64 targets; arm64 keeps the

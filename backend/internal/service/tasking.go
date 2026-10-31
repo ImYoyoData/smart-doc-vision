@@ -25,6 +25,7 @@ type TaskService struct {
 	db           *gorm.DB
 	redis        *redis.Client
 	engine       *engine.Engine
+	mediaLoader  *media.Loader
 	allowPrivate bool
 }
 
@@ -50,8 +51,8 @@ type SubmitError struct {
 
 func (e *SubmitError) Error() string { return e.Message }
 
-func NewTaskService(db *gorm.DB, cache *redis.Client, eng *engine.Engine, allowPrivate bool) *TaskService {
-	return &TaskService{db: db, redis: cache, engine: eng, allowPrivate: allowPrivate}
+func NewTaskService(db *gorm.DB, cache *redis.Client, eng *engine.Engine, allowPrivate bool, loader *media.Loader) *TaskService {
+	return &TaskService{db: db, redis: cache, engine: eng, allowPrivate: allowPrivate, mediaLoader: loader}
 }
 
 func (s *TaskService) Submit(ctx context.Context, in SubmitInput) (*SubmitOutcome, error) {
@@ -149,6 +150,23 @@ func (s *TaskService) Submit(ctx context.Context, in SubmitInput) (*SubmitOutcom
 		}
 	}
 
+	// Move browser-inline images into the configured storage backend only
+	// after dedupe/quota checks, so duplicate submissions do not write files.
+	var storedKeys []string
+	if s.mediaLoader != nil {
+		for i := range in.Input.Media {
+			updated, persisted, err := s.mediaLoader.PersistInline(ctx, in.Input.Media[i], in.ProjectID)
+			if err != nil {
+				return nil, submitErr(http.StatusBadGateway, "STORAGE_ERROR", "图片保存失败: "+err.Error())
+			}
+			if !persisted {
+				continue
+			}
+			in.Input.Media[i] = updated
+			storedKeys = append(storedKeys, updated.Key)
+		}
+	}
+
 	task := model.Task{
 		TaskNo:     NewTaskNo(),
 		ProjectID:  in.ProjectID,
@@ -164,6 +182,11 @@ func (s *TaskService) Submit(ctx context.Context, in SubmitInput) (*SubmitOutcom
 		ProviderID: provider.ID,
 	}
 	if err := s.db.Create(&task).Error; err != nil {
+		if len(storedKeys) > 0 && s.mediaLoader.Store() != nil {
+			for _, key := range storedKeys {
+				_ = s.mediaLoader.Store().Delete(context.Background(), key)
+			}
+		}
 		if hash != "" {
 			var existing model.Task
 			if findErr := s.db.Where("project_id = ? AND dedupe_hash = ?", in.ProjectID, hash).First(&existing).Error; findErr == nil {

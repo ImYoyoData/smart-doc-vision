@@ -169,6 +169,7 @@ func (s *Server) openTask(c *gin.Context) {
 		fail(c, http.StatusNotFound, "NOT_FOUND", "任务不存在", nil)
 		return
 	}
+	s.decorateTaskMedia(&task)
 	ok(c, openTaskView(task, true))
 }
 

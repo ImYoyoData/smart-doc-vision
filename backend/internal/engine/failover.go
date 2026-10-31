@@ -145,7 +145,7 @@ func (e *Engine) reviewWithFailover(
 			e.recordProviderFailure(candidate, lastErr)
 			continue
 		}
-		adapter, adapterErr := ai.AdapterFor(candidate.Kind)
+		adapter, adapterErr := ai.AdapterFor(candidate.Kind, e.loader)
 		if adapterErr != nil {
 			lastErr = adapterErr
 			e.recordProviderFailure(candidate, adapterErr)
@@ -292,7 +292,7 @@ func (e *Engine) recoverBreakers() {
 			e.recordProviderFailure(provider, err)
 			continue
 		}
-		adapter, err := ai.AdapterFor(provider.Kind)
+		adapter, err := ai.AdapterFor(provider.Kind, e.loader)
 		if err != nil {
 			e.recordProviderFailure(provider, err)
 			continue

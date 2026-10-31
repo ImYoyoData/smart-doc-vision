@@ -1,7 +1,14 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { useInstallStore } from '@/stores/install'
 
 const routes: RouteRecordRaw[] = [
+  {
+    path: '/install',
+    name: 'install',
+    component: () => import('@/views/InstallView.vue'),
+    meta: { public: true, title: '安装系统' },
+  },
   {
     path: '/login',
     name: 'login',
@@ -132,9 +139,21 @@ const router = createRouter({
   scrollBehavior: () => ({ top: 0 }),
 })
 
-router.beforeEach((to) => {
+router.beforeEach(async (to) => {
+  const install = useInstallStore()
+  if (!install.checked) {
+    await install.load()
+  }
+  if (install.isInstallerState()) {
+    if (to.name !== 'install') return { name: 'install' }
+    document.title = `${String(to.meta.title || '')} · 智审图档`
+    return true
+  }
   const auth = useAuthStore()
   auth.hydrate()
+  if (to.name === 'install') {
+    return auth.isAuthenticated ? { path: '/dashboard' } : { path: '/login' }
+  }
   if (!to.meta.public && !auth.isAuthenticated) {
     return { path: '/login', query: { redirect: to.fullPath } }
   }

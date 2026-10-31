@@ -50,12 +50,26 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8088,http://127.0.0.1:8088}
       WORKER_COUNT: ${WORKER_COUNT:-4}
       MEDIA_ALLOW_PRIVATE: "false"
+      STORAGE_DRIVER: ${STORAGE_DRIVER:-local}
+      STORAGE_LOCAL_DIR: ${STORAGE_LOCAL_DIR:-/app/data/uploads}
+      STORAGE_PUBLIC_BASE_URL: ${STORAGE_PUBLIC_BASE_URL:-}
+      STORAGE_S3_PROVIDER: ${STORAGE_S3_PROVIDER:-}
+      STORAGE_S3_ENDPOINT: ${STORAGE_S3_ENDPOINT:-}
+      STORAGE_S3_REGION: ${STORAGE_S3_REGION:-}
+      STORAGE_S3_BUCKET: ${STORAGE_S3_BUCKET:-}
+      STORAGE_S3_ACCESS_KEY: ${STORAGE_S3_ACCESS_KEY:-}
+      STORAGE_S3_SECRET_KEY: ${STORAGE_S3_SECRET_KEY:-}
+      STORAGE_S3_PREFIX: ${STORAGE_S3_PREFIX:-}
+      STORAGE_S3_FORCE_PATH_STYLE: ${STORAGE_S3_FORCE_PATH_STYLE:-false}
       DEFAULT_AI_BASE_URL: ${DEFAULT_AI_BASE_URL:-}
       DEFAULT_AI_MODEL: ${DEFAULT_AI_MODEL:-}
       DEFAULT_AI_API_KEY: ${DEFAULT_AI_API_KEY:-}
       DEFAULT_AI_SUPPORTS_VISION: ${DEFAULT_AI_SUPPORTS_VISION:-false}
       JEV_BASE_URL: ${JEV_BASE_URL:-https://api.typesafe.ai/v1}
       JEV_MODEL: ${JEV_MODEL:-jev-latest}
+    volumes:
+      # Uploaded files must survive container recreation; do not remove this.
+      - app-data:/app/data
     depends_on:
       mysql:
         condition: service_healthy
@@ -81,3 +95,4 @@ services:
 volumes:
   mysql-data:
   redis-data:
+  app-data:

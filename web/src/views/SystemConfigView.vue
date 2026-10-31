@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { NButton, useMessage } from 'naive-ui'
 import {
   CloudDownloadOutline,
+  CloudUploadOutline,
   LinkOutline,
   LockClosedOutline,
   RefreshOutline,
@@ -30,6 +31,7 @@ const groupIcons: Record<string, unknown> = {
   redis: LinkOutline,
   security: ShieldCheckmarkOutline,
   ai: SparklesOutline,
+  storage: CloudUploadOutline,
 }
 
 const runtimeFields = computed(() => data.value?.groups.find((group) => group.key === 'runtime')?.fields || [])
