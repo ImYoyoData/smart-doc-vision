@@ -587,7 +587,7 @@ watch(
             <h3 class="guide-section-title">推荐接入方式</h3>
             <div class="recommend-grid">
               <div><span class="rec-icon"><GlobeOutline /></span><strong>已有服务端</strong><p>开放 API + HMAC，业务主动提交并拿到 task_no。</p></div>
-              <div><span class="rec-icon"><LayersOutline /></span><strong>已有 Redis</strong><p>启用 Redis 触发，业务向 Stream 写入标准 TaskInput。</p></div>
+              <div><span class="rec-icon"><LayersOutline /></span><strong>已有 Redis</strong><p>启用 Redis 触发，业务向 Stream 写入带 request_id 的标准 TaskInput。</p></div>
               <div><span class="rec-icon"><SwapHorizontalOutline /></span><strong>需要实时结果</strong><p>WebSocket 提交，平台主动推送终态结果帧。</p></div>
             </div>
           </div>
@@ -620,7 +620,7 @@ watch(
             <CodeBlock :code="guide.openapi.sample_body_raw" title="JSON Body" />
             <div class="guide-note">
               <HelpCircleOutline />
-              <span>{{ guide.openapi.signing_note }} 查询结果：<code>{{ guide.openapi.query_task_path }}</code>。签名与请求体严格绑定，业务系统需按 Canonical 规范自行计算。</span>
+              <span>{{ guide.openapi.signing_note }} 查询结果：<code>{{ guide.openapi.query_task_path }}</code>；也可按 request_id 查询：<code>{{ guide.openapi.query_request_path }}</code>。相同 request_id + 相同内容幂等返回原任务，内容不同返回 409 REQUEST_ID_CONFLICT。</span>
               <n-button text type="primary" @click="openDocs('openapi')">查看签名算法</n-button>
             </div>
           </div>
@@ -677,7 +677,11 @@ watch(
             <div class="field-label-row"><span>消息格式：单个 data 字段（或 payload），值为 TaskInput JSON</span><copy-button :text="JSON.stringify(guide.redis.example, null, 2)" label="复制消息示例" size="tiny" /></div>
             <CodeBlock :code="JSON.stringify(guide.redis.example, null, 2)" title="TaskInput Message" />
             <CodeBlock :code="guide.redis.xadd_command" title="XADD Command" />
-            <div class="guide-note"><HelpCircleOutline /><span>一个 Stream 只允许一个审核消费。非法消息会被 ACK 并写入 <code>{{ redisForm.stream }}:dlq</code>。消息格式、消费组和 PEL 说明请查阅对接文档。</span><n-button text type="primary" @click="openDocs('redis')">查看完整规范</n-button></div>
+            <div class="guide-note">
+              <HelpCircleOutline />
+              <span>request_id 是业务方生成的唯一提交 ID，建议在消息顶层和 data 中同时填写。平台通过 HTTP 回调发送 audit.accepted / deduplicated / completed / submit_failed，并原样带回 request_id；不会写业务 Redis 结果流。消息格式、消费组和 PEL 说明请查阅对接文档。</span>
+              <n-button text type="primary" @click="openDocs('redis')">request_id 与回调说明</n-button>
+            </div>
           </div>
 
           <div v-else-if="activeTab === 'websocket'" class="tab-pane">
@@ -703,12 +707,12 @@ watch(
             </div>
             <div class="field-label-row"><span>帧协议（data 支持多个 text / image）</span><copy-button :text="wsFrames" label="复制帧示例" size="tiny" /></div>
             <CodeBlock :code="wsFrames" title="Frames" />
-            <div class="guide-note"><HelpCircleOutline /><span>平台会先发送 ready 帧；心跳支持 ping/pong；结果帧在任务进入终态后主动推送。</span><n-button text type="primary" @click="openDocs('websocket')">查看完整协议</n-button></div>
+            <div class="guide-note"><HelpCircleOutline /><span>平台会先发送 ready 帧；心跳支持 ping/pong；ack/result 帧均带 request_id 和 task_no，结果帧在任务进入终态后主动推送。</span><n-button text type="primary" @click="openDocs('websocket')">查看完整协议</n-button></div>
           </div>
 
           <div v-else-if="activeTab === 'callback'" class="tab-pane">
             <div class="pane-title-row">
-              <div><h3>审核结果回调</h3><p>任务进入终态后 POST 到业务接口，支持 HMAC 签名与内容回传。</p></div>
+              <div><h3>审核结果回调</h3><p>任务受理、去重、完成或 Redis 提交失败时 POST 到业务接口，支持 HMAC 签名、request_id 关联与内容回传。</p></div>
               <n-switch v-model:value="callbackForm.enabled" :disabled="!canWrite" />
             </div>
             <div class="form-grid">

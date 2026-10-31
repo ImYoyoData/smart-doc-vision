@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
@@ -69,6 +71,18 @@ func (s *TaskService) Submit(ctx context.Context, in SubmitInput) (*SubmitOutcom
 		}
 		in.Input.Media[i].Name = textenc.Normalize(in.Input.Media[i].Name)
 	}
+	in.Input.RequestID = strings.TrimSpace(in.Input.RequestID)
+	in.Input.SourceRef = strings.TrimSpace(in.Input.SourceRef)
+	if in.Input.RequestID != "" {
+		if utf8.RuneCountInString(in.Input.RequestID) > 128 {
+			return nil, submitErr(http.StatusBadRequest, "INVALID_PARAM", "request_id 不能超过 128 个字符")
+		}
+		for _, r := range in.Input.RequestID {
+			if unicode.IsControl(r) {
+				return nil, submitErr(http.StatusBadRequest, "INVALID_PARAM", "request_id 不能包含控制字符")
+			}
+		}
+	}
 	if err := ai.ValidateInput(in.Input); err != nil {
 		return nil, submitErr(http.StatusBadRequest, "INVALID_PARAM", err.Error())
 	}
@@ -90,6 +104,21 @@ func (s *TaskService) Submit(ctx context.Context, in SubmitInput) (*SubmitOutcom
 	if project.Status != model.ProjectActive {
 		return nil, submitErr(http.StatusForbidden, "PROJECT_PAUSED", "项目当前不可提交任务")
 	}
+	requestHash := ""
+	if in.Input.RequestID != "" {
+		requestHash = requestFingerprint(in.AuditID, in.SourceType, in.SourceID, in.Input)
+		if existing := s.lookupByRequestID(in.ProjectID, in.Input.RequestID); existing != nil {
+			if existing.RequestHash != "" && existing.RequestHash != requestHash {
+				return nil, &SubmitError{
+					Status: http.StatusConflict, Code: "REQUEST_ID_CONFLICT",
+					Message: "request_id 已被其他提交使用，且审核内容不一致",
+					Data:    map[string]any{"request_id": in.Input.RequestID, "task_no": existing.TaskNo},
+				}
+			}
+			return &SubmitOutcome{Task: *existing, Duplicated: true}, nil
+		}
+	}
+
 	var audit model.Audit
 	if err := s.db.Where("id = ? AND project_id = ? AND deleted_at IS NULL", in.AuditID, in.ProjectID).First(&audit).Error; err != nil {
 		return nil, submitErr(http.StatusNotFound, "NOT_FOUND", "审核配置不存在或不属于该项目")
@@ -107,7 +136,7 @@ func (s *TaskService) Submit(ctx context.Context, in SubmitInput) (*SubmitOutcom
 
 	window := audit.DedupeWindowSec
 	hash, previousHash, lockHash := dedupeHash(in.ProjectID, in.AuditID, in.SourceType, in.SourceID, in.Input, window)
-	if window > 0 && hash != "" {
+	if in.Input.RequestID == "" && window > 0 && hash != "" {
 		if existing := s.lookupDedupePair(ctx, in.ProjectID, hash, previousHash, window); existing != nil {
 			return &SubmitOutcome{Task: *existing, Duplicated: true}, nil
 		}
@@ -167,24 +196,43 @@ func (s *TaskService) Submit(ctx context.Context, in SubmitInput) (*SubmitOutcom
 		}
 	}
 
+	var requestID *string
+	if in.Input.RequestID != "" {
+		value := in.Input.RequestID
+		requestID = &value
+	}
 	task := model.Task{
-		TaskNo:     NewTaskNo(),
-		ProjectID:  in.ProjectID,
-		AuditID:    in.AuditID,
-		SourceType: in.SourceType,
-		SourceID:   in.SourceID,
-		BizKey:     strings.TrimSpace(in.Input.BizKey),
-		DedupeHash: hash,
-		MediaType:  ai.MediaType(in.Input),
-		Status:     model.TaskQueued,
-		Result:     model.ResultUnknown,
-		InputJSON:  model.JSONBytes(in.Input),
-		ProviderID: provider.ID,
+		TaskNo:      NewTaskNo(),
+		ProjectID:   in.ProjectID,
+		AuditID:     in.AuditID,
+		SourceType:  in.SourceType,
+		SourceID:    in.SourceID,
+		BizKey:      strings.TrimSpace(in.Input.BizKey),
+		RequestID:   requestID,
+		RequestHash: requestHash,
+		DedupeHash:  hash,
+		MediaType:   ai.MediaType(in.Input),
+		Status:      model.TaskQueued,
+		Result:      model.ResultUnknown,
+		InputJSON:   model.JSONBytes(in.Input),
+		ProviderID:  provider.ID,
 	}
 	if err := s.db.Create(&task).Error; err != nil {
 		if len(storedKeys) > 0 && s.mediaLoader.Store() != nil {
 			for _, key := range storedKeys {
 				_ = s.mediaLoader.Store().Delete(context.Background(), key)
+			}
+		}
+		if in.Input.RequestID != "" {
+			if existing := s.lookupByRequestID(in.ProjectID, in.Input.RequestID); existing != nil {
+				if existing.RequestHash != "" && existing.RequestHash != requestHash {
+					return nil, &SubmitError{
+						Status: http.StatusConflict, Code: "REQUEST_ID_CONFLICT",
+						Message: "request_id 已被其他提交使用，且审核内容不一致",
+						Data:    map[string]any{"request_id": in.Input.RequestID, "task_no": existing.TaskNo},
+					}
+				}
+				return &SubmitOutcome{Task: *existing, Duplicated: true}, nil
 			}
 		}
 		if hash != "" {
@@ -208,6 +256,24 @@ func (s *TaskService) Submit(ctx context.Context, in SubmitInput) (*SubmitOutcom
 		return nil, submitErr(http.StatusServiceUnavailable, "QUEUE_FULL", "任务队列繁忙，请稍后重试")
 	}
 	return &SubmitOutcome{Task: task}, nil
+}
+
+func (s *TaskService) lookupByRequestID(projectID uint64, requestID string) *model.Task {
+	if requestID == "" {
+		return nil
+	}
+	var task model.Task
+	if err := s.db.Where("project_id = ? AND request_id = ?", projectID, requestID).First(&task).Error; err != nil {
+		return nil
+	}
+	return &task
+}
+
+func requestFingerprint(auditID uint64, sourceType string, sourceID uint64, input model.TaskInput) string {
+	return hashPayload(map[string]any{
+		"audit_id": auditID, "source_type": sourceType, "source_id": sourceID,
+		"biz_key": input.BizKey, "media": input.Media, "ext": input.Ext,
+	})
 }
 
 func (s *TaskService) lookupDedupedTask(ctx context.Context, projectID uint64, hash string, windowSec int) *model.Task {
@@ -267,6 +333,9 @@ func dedupeHash(projectID, auditID uint64, sourceType string, sourceID uint64, i
 		"project_id": projectID, "audit_id": auditID,
 		"source_type": sourceType, "source_id": sourceID,
 		"biz_key": input.BizKey, "media": input.Media,
+	}
+	if input.RequestID != "" {
+		payload["request_id"] = input.RequestID
 	}
 	if windowSec <= 0 {
 		// Dedupe is disabled, but dedupe_hash still participates in a unique

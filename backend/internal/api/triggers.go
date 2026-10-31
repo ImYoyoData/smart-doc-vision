@@ -244,7 +244,8 @@ func (s *Server) integrationGuide(c *gin.Context) {
 	baseURL := requestBaseURL(c)
 	submitPath := fmt.Sprintf("/open/v1/projects/%s/audits/%s/submit", project.Code, audit.Code)
 	body := map[string]any{
-		"biz_key": "archive:2026:0001",
+		"biz_key":    "archive:2026:0001",
+		"request_id": "audit-20261031-000001",
 		"media": []map[string]any{
 			{"type": "text", "name": "page-1.txt", "content": "第一页档案文本 / OCR 结果"},
 			{"type": "text", "name": "page-2.txt", "content": "第二页档案文本 / OCR 结果"},
@@ -293,25 +294,27 @@ func (s *Server) integrationGuide(c *gin.Context) {
 	redisTrigger := triggerMap[model.TriggerRedis]
 	redisConnection, _ := s.redisTriggerConnection(project.ID, redisTrigger.RedisConnectionID)
 	redisView := gin.H{
-		"enabled":        redisTrigger.Status == "ACTIVE",
-		"connection_id":  redisTrigger.RedisConnectionID,
-		"db":             redisTrigger.RedisDB,
-		"stream":         redisTrigger.Stream,
-		"group":          redisTrigger.ConsumerGroup,
-		"start_position": redisTrigger.StartPosition,
-		"batch_size":     redisTrigger.BatchSize,
-		"max_inflight":   redisTrigger.MaxInflight,
-		"message_field":  "data",
-		"example":        body,
-		"xadd_command":   "",
-		"note":           "请在触发源中配置当前项目已启用且测试成功的 Redis 连接；平台只从该连接/DB/Stream 消费。",
+		"enabled":         redisTrigger.Status == "ACTIVE",
+		"connection_id":   redisTrigger.RedisConnectionID,
+		"db":              redisTrigger.RedisDB,
+		"stream":          redisTrigger.Stream,
+		"group":           redisTrigger.ConsumerGroup,
+		"start_position":  redisTrigger.StartPosition,
+		"batch_size":      redisTrigger.BatchSize,
+		"max_inflight":    redisTrigger.MaxInflight,
+		"message_field":   "data",
+		"example":         body,
+		"xadd_command":    "",
+		"note":            "请在触发源中配置当前项目已启用且测试成功的 Redis 连接；平台只从该连接/DB/Stream 消费。business 端保持只读时，结果通过 HTTP 回调或按 request_id 查询获取，平台不会写业务结果流。",
+		"events":          []string{"audit.accepted", "audit.deduplicated", "audit.completed", "audit.submit_failed"},
+		"request_id_note": "强烈建议在消息顶层和 data 中同时填写 request_id；平台会把它写入任务并原样带回回调和查询接口。",
 	}
 	if redisConnection != nil {
 		redisView["connection_name"] = redisConnection.Name
 		redisView["connection_addr"] = redisConnection.Addr
 	}
 	if redisTrigger.Stream != "" {
-		redisView["xadd_command"] = fmt.Sprintf("XADD %s * data '<上面的 JSON 字符串>'", redisTrigger.Stream)
+		redisView["xadd_command"] = fmt.Sprintf("XADD %s * request_id '%s' callback_url '%s' data '%s'", redisTrigger.Stream, "audit-20261031-000001", "https://your-service.example.com/callback", string(bodyJSON))
 	}
 	var callbackResults []string
 	_ = model.DecodeJSON(audit.CallbackResults, &callbackResults)
@@ -353,19 +356,20 @@ func (s *Server) integrationGuide(c *gin.Context) {
 		},
 		"docs_path": "/help",
 		"openapi": gin.H{
-			"enabled":           triggerMap[model.TriggerOpenAPI].Status == "ACTIVE",
-			"base_url":          baseURL,
-			"path":              submitPath,
-			"method":            "POST",
-			"headers":           sampleHeaders,
-			"signing_available": selected != nil,
-			"canonical":         "HTTPMethod + \\n + Path + \\n + Timestamp + \\n + Nonce + \\n + SHA256HEX(body)",
-			"sample_body":       body,
-			"sample_body_raw":   string(bodyJSON),
-			"sample_curl":       sampleCurl,
-			"body_sha256":       security.BodySHA256(bodyJSON),
-			"signing_note":      "签名有效期 5 分钟，Nonce 10 分钟内不可重复；X-Signature 为 HMAC-SHA256(AppSecret, CanonicalString) 的小写十六进制。",
-			"query_task_path":   fmt.Sprintf("/open/v1/projects/%s/tasks/{task_no}", project.Code),
+			"enabled":            triggerMap[model.TriggerOpenAPI].Status == "ACTIVE",
+			"base_url":           baseURL,
+			"path":               submitPath,
+			"method":             "POST",
+			"headers":            sampleHeaders,
+			"signing_available":  selected != nil,
+			"canonical":          "HTTPMethod + \\n + Path + \\n + Timestamp + \\n + Nonce + \\n + SHA256HEX(body)",
+			"sample_body":        body,
+			"sample_body_raw":    string(bodyJSON),
+			"sample_curl":        sampleCurl,
+			"body_sha256":        security.BodySHA256(bodyJSON),
+			"signing_note":       "签名有效期 5 分钟，Nonce 10 分钟内不可重复；X-Signature 为 HMAC-SHA256(AppSecret, CanonicalString) 的小写十六进制。",
+			"query_task_path":    fmt.Sprintf("/open/v1/projects/%s/tasks/{task_no}", project.Code),
+			"query_request_path": fmt.Sprintf("/open/v1/projects/%s/task-by-request-id/{request_id}", project.Code),
 		},
 		"redis": redisView,
 		"websocket": gin.H{
@@ -379,7 +383,7 @@ func (s *Server) integrationGuide(c *gin.Context) {
 				"type": "submit",
 				"data": body,
 			},
-			"ack_frame": map[string]any{"type": "ack", "data": map[string]any{"task_id": 123, "task_no": "SDV...", "status": "QUEUED"}},
+			"ack_frame": map[string]any{"type": "ack", "data": map[string]any{"task_id": 123, "task_no": "SDV...", "request_id": "audit-20261031-000001", "status": "QUEUED", "deduplicated": false}},
 		},
 		"callback": gin.H{
 			"enabled":         audit.CallbackEnabled,
@@ -390,7 +394,8 @@ func (s *Server) integrationGuide(c *gin.Context) {
 			"headers":         callbackHeaders,
 			"signature":       "X-SmartDoc-Signature: sha256=HMAC-SHA256(CallbackSecret, raw_body)",
 			"sample_payload": map[string]any{
-				"event": "audit.completed", "task_no": "SDV...", "result": "REJECT",
+				"event": "audit.completed", "task_no": "SDV...", "request_id": "audit-20261031-000001",
+				"source_type": "REDIS", "source_ref": "1792578000000-0", "result": "REJECT",
 				"category": "contract", "category_name": "合同协议", "category_confidence": 0.92,
 				"summary": "命中文档完整性风险", "labels": []string{"内容安全"},
 				"reasons": []string{"关键页缺失"}, "score": 0.93,

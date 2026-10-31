@@ -125,6 +125,63 @@ func (m *Manager) reclaimPending(ctx context.Context, trigger model.TriggerSourc
 }
 
 func (m *Manager) consumeRedisMessage(ctx context.Context, trigger model.TriggerSource, client *redis.Client, msg redis.XMessage) {
+	input, err := parseRedisInput(msg)
+	input.SourceRef = msg.ID
+	if err != nil {
+		m.notifyRedisFailure(ctx, trigger, input, msg, "INVALID_MESSAGE", err)
+		m.deadLetter(ctx, client, trigger.Stream, msg, err)
+		_ = client.XAck(ctx, trigger.Stream, trigger.ConsumerGroup, msg.ID).Err()
+		m.markFailure(trigger.ID, fmt.Errorf("消息 %s 解析失败: %w", msg.ID, err))
+		return
+	}
+	if strings.TrimSpace(input.BizKey) == "" {
+		input.BizKey = "redis:" + msg.ID
+	}
+	outcome, submitErr := m.tasks.Submit(ctx, service.SubmitInput{
+		ProjectID: trigger.ProjectID, AuditID: trigger.AuditID,
+		SourceType: model.TriggerRedis, SourceID: trigger.ID, Input: input,
+	})
+	if submitErr != nil {
+		m.notifyRedisFailure(ctx, trigger, input, msg, triggerErrorCode(submitErr), submitErr)
+		m.deadLetter(ctx, client, trigger.Stream, msg, submitErr)
+	} else if outcome.Duplicated {
+		_ = m.sendEvent(ctx, trigger.ProjectID, trigger.AuditID, input, "audit.deduplicated", map[string]any{
+			"request_id": input.RequestID, "message_id": msg.ID, "source_ref": msg.ID,
+			"source_type": model.TriggerRedis, "source_id": trigger.ID,
+			"duplicate_of_task_no": outcome.Task.TaskNo, "task_no": outcome.Task.TaskNo,
+			"status": outcome.Task.Status, "result": outcome.Task.Result,
+			"biz_key": outcome.Task.BizKey, "duplicated": true,
+			"received_at": time.Now().UTC().Format(time.RFC3339),
+		})
+	} else {
+		_ = m.sendEvent(ctx, trigger.ProjectID, trigger.AuditID, input, "audit.accepted", map[string]any{
+			"request_id": input.RequestID, "message_id": msg.ID, "source_ref": msg.ID,
+			"source_type": model.TriggerRedis, "source_id": trigger.ID,
+			"task_id": outcome.Task.ID, "task_no": outcome.Task.TaskNo,
+			"status": outcome.Task.Status, "result": outcome.Task.Result,
+			"biz_key":     outcome.Task.BizKey,
+			"received_at": time.Now().UTC().Format(time.RFC3339),
+		})
+	}
+	_ = client.XAck(ctx, trigger.Stream, trigger.ConsumerGroup, msg.ID).Err()
+	if submitErr != nil {
+		m.markFailure(trigger.ID, submitErr)
+	} else {
+		m.touchRun(trigger.ID, "", true)
+	}
+}
+
+func parseRedisInput(msg redis.XMessage) (model.TaskInput, error) {
+	input := model.TaskInput{}
+	if value, ok := msg.Values["request_id"]; ok {
+		input.RequestID = strings.TrimSpace(fmt.Sprint(value))
+	}
+	if value, ok := msg.Values["callback_url"]; ok {
+		input.CallbackURL = strings.TrimSpace(fmt.Sprint(value))
+	}
+	if value, ok := msg.Values["biz_key"]; ok {
+		input.BizKey = strings.TrimSpace(fmt.Sprint(value))
+	}
 	var payload string
 	for _, key := range []string{"data", "payload"} {
 		if value, ok := msg.Values[key]; ok {
@@ -137,29 +194,45 @@ func (m *Manager) consumeRedisMessage(ctx context.Context, trigger model.Trigger
 			payload = fmt.Sprint(value)
 		}
 	}
-	var input model.TaskInput
-	if err := json.Unmarshal([]byte(payload), &input); err != nil {
-		m.deadLetter(ctx, client, trigger.Stream, msg, err)
-		_ = client.XAck(ctx, trigger.Stream, trigger.ConsumerGroup, msg.ID).Err()
-		m.markFailure(trigger.ID, fmt.Errorf("消息 %s 解析失败: %w", msg.ID, err))
-		return
+	if payload == "" {
+		if input.RequestID == "" && input.BizKey == "" && input.CallbackURL == "" {
+			return input, fmt.Errorf("消息缺少 data/payload")
+		}
+		return input, nil
 	}
-	if strings.TrimSpace(input.BizKey) == "" {
-		input.BizKey = "redis:" + msg.ID
+	var parsed model.TaskInput
+	if err := json.Unmarshal([]byte(payload), &parsed); err != nil {
+		return input, err
 	}
-	_, err := m.tasks.Submit(ctx, service.SubmitInput{
-		ProjectID: trigger.ProjectID, AuditID: trigger.AuditID,
-		SourceType: model.TriggerRedis, SourceID: trigger.ID, Input: input,
+	if input.RequestID == "" {
+		input.RequestID = parsed.RequestID
+	}
+	if input.CallbackURL == "" {
+		input.CallbackURL = parsed.CallbackURL
+	}
+	if input.BizKey == "" {
+		input.BizKey = parsed.BizKey
+	}
+	input.Media = parsed.Media
+	input.Ext = parsed.Ext
+	return input, nil
+}
+
+func triggerErrorCode(err error) string {
+	if submitErr, ok := err.(*service.SubmitError); ok && submitErr.Code != "" {
+		return submitErr.Code
+	}
+	return "SUBMIT_FAILED"
+}
+
+func (m *Manager) notifyRedisFailure(ctx context.Context, trigger model.TriggerSource, input model.TaskInput, msg redis.XMessage, code string, err error) {
+	_ = m.sendEvent(ctx, trigger.ProjectID, trigger.AuditID, input, "audit.submit_failed", map[string]any{
+		"request_id": input.RequestID, "message_id": msg.ID, "source_ref": msg.ID,
+		"source_type": model.TriggerRedis, "source_id": trigger.ID,
+		"stream": trigger.Stream, "biz_key": input.BizKey,
+		"error_code": code, "error_message": truncate(err.Error(), 500),
+		"failed_at": time.Now().UTC().Format(time.RFC3339),
 	})
-	if err != nil {
-		m.deadLetter(ctx, client, trigger.Stream, msg, err)
-	}
-	_ = client.XAck(ctx, trigger.Stream, trigger.ConsumerGroup, msg.ID).Err()
-	if err != nil {
-		m.markFailure(trigger.ID, err)
-	} else {
-		m.touchRun(trigger.ID, "", true)
-	}
 }
 
 func (m *Manager) connectionFailed(trigger model.TriggerSource, err error) {

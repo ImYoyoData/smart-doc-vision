@@ -277,6 +277,7 @@ watch(
 
           <div class="meta-grid">
             <div><span>业务键</span><strong class="mono">{{ task.biz_key || '—' }}</strong></div>
+            <div><span>request_id</span><strong class="mono">{{ task.request_id || '—' }}</strong></div>
             <div><span>项目 / 审核</span><strong>{{ task.project_name || '—' }} · {{ task.audit_name || '—' }}</strong></div>
             <div><span>来源</span><strong>{{ sourceLabel(task.source_type) }}</strong></div>
             <div><span>媒体类型</span><strong>{{ task.media_type }}</strong></div>

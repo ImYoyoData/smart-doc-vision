@@ -57,6 +57,7 @@ function buildGenericContext(): IntegrationPromptContext {
     openapiEnabled: true,
     sampleBody: `{
   "biz_key": "archive:2026:0001",
+  "request_id": "audit-20261031-000001",
   "media": [
     {"type": "text", "name": "page-1.txt", "content": "第一页档案文本"},
     {"type": "image", "name": "page-1.jpg", "url": "https://your-domain.example.com/page-1.jpg"}
@@ -156,6 +157,7 @@ const pythonSign = `import hashlib, hmac, json, time, uuid
 
 body = json.dumps({
     "biz_key": "archive:2026:0001",
+    "request_id": "audit-20261031-000001",
     "media": [
         {"type": "text", "content": "第一页档案文本"},
         {"type": "text", "content": "第二页档案文本"},
@@ -174,6 +176,7 @@ signature = hmac.new(APP_SECRET.encode(), canonical.encode(), hashlib.sha256).he
 
 const submitBody = `{
   "biz_key": "archive:2026:0001",
+  "request_id": "audit-20261031-000001",
   "media": [
     { "type": "text",  "name": "page-1.txt", "content": "第一页档案文本或 OCR 结果" },
     { "type": "text",  "name": "page-2.txt", "content": "第二页档案文本或 OCR 结果" },
@@ -192,6 +195,7 @@ const submitResponse = `{
   "data": {
     "task_id": 12,
     "task_no": "SDV20261021190000ABCDEF",
+    "request_id": "audit-20261031-000001",
     "status": "QUEUED",
     "result": "UNKNOWN",
     "deduplicated": false,
@@ -204,6 +208,7 @@ const submitResponse = `{
 const queryResponse = `{
   "task_id": 12,
   "task_no": "SDV20261021190000ABCDEF",
+  "request_id": "audit-20261031-000001",
   "status": "SUCCESS",
   "result": "REJECT",
   "result_detail": {
@@ -219,15 +224,17 @@ const queryResponse = `{
   },
   "input": {
     "biz_key": "archive:2026:0001",
+    "request_id": "audit-20261031-000001",
     "media": [{ "type": "text", "content": "档案正文或 OCR 文本" }]
   }
 }`
 
-const redisMessage = `redis-cli -h 127.0.0.1 -p 6379 -n <DB> XADD sdv:smartdoc-demo:audit:archive_review * data '{"biz_key":"archive:2026:0001","media":[{"type":"text","content":"待审核文本"}],"ext":{"scene":"archive_review"}}'
+const redisMessage = `redis-cli -h 127.0.0.1 -p 6379 -n <DB> XADD sdv:smartdoc-demo:audit:archive_review * request_id 'audit-20261031-000001' callback_url 'https://your-service.example.com/callback' data '{"request_id":"audit-20261031-000001","biz_key":"archive:2026:0001","media":[{"type":"text","content":"待审核文本"}],"ext":{"scene":"archive_review"}}'
 
 # DB 由审核触发源选择，必须与「数据连接」中的 Redis 连接指向同一实例
 # Stream 由平台消费，消费组默认为 sdv-cg-<audit_id>
-# 消息必须是单个 data 字段（也兼容 payload），值为 TaskInput JSON
+# request_id 建议在消息顶层和 data 中同时填写；平台通过 audit.accepted / deduplicated / completed / submit_failed HTTP 回调通知，不写业务 Redis 结果流
+# 消息必须是 data 字段（也兼容 payload），值为 TaskInput JSON
 # 处理失败的消息会写入 <stream>:dlq`
 
 const wsSign = `import hashlib, hmac, time, uuid
@@ -245,6 +252,7 @@ const wsFrames = `// 客户端 → 平台
   "type": "submit",
   "data": {
     "biz_key": "archive:2026:0001",
+    "request_id": "audit-20261031-000001",
     "media": [{"type": "text", "content": "待审核的档案文本"}]
   }
 }
@@ -255,6 +263,7 @@ const wsFrames = `// 客户端 → 平台
   "data": {
     "task_id": 12,
     "task_no": "SDV...",
+    "request_id": "audit-20261031-000001",
     "status": "QUEUED",
     "deduplicated": false
   }
@@ -270,6 +279,8 @@ const callbackPayload = `{
   "event": "audit.completed",
   "task_id": 12,
   "task_no": "SDV...",
+  "request_id": "audit-20261031-000001",
+  "source_ref": "1792578000000-0",
   "project_code": "smartdoc-demo",
   "audit_code": "archive_review",
   "biz_key": "archive:2026:0001",
@@ -400,7 +411,8 @@ if not hmac.compare_digest(expected, actual):
           <table class="doc-table">
             <thead><tr><th>参数</th><th>必填</th><th>说明</th></tr></thead>
             <tbody>
-              <tr><td><code>biz_key</code></td><td>建议</td><td>业务唯一键；相同业务键 + 相同媒体内容在去重窗口内只生成一个任务。</td></tr>
+              <tr><td><code>request_id</code></td><td>强烈建议</td><td>调用方生成的唯一提交 ID；平台按它幂等。相同 request_id + 相同内容返回原任务，内容不同返回 409 REQUEST_ID_CONFLICT。回调、结果帧和查询均返回该值。</td></tr>
+              <tr><td><code>biz_key</code></td><td>建议</td><td>业务分组键；未填写 request_id 时，相同业务键 + 相同媒体内容在去重窗口内只生成一个任务。</td></tr>
               <tr><td><code>media</code></td><td>是</td><td>媒体数组，至少一项。type 支持 text / image。text 使用 content，image 使用 url。</td></tr>
               <tr><td><code>ext</code></td><td>否</td><td>业务扩展对象，规则可通过 <code>ext.*</code> 访问，回调会原样带回。</td></tr>
               <tr><td><code>callback_url</code></td><td>否</td><td>任务级回调地址；优先于审核配置的回调地址。</td></tr>
@@ -417,6 +429,11 @@ if not hmac.compare_digest(expected, actual):
           <div class="endpoint">
             <span class="method get">GET</span>
             <code>/open/v1/projects/{project_code}/tasks/{task_no}</code>
+          </div>
+          <p>也可以按 request_id 查询：</p>
+          <div class="endpoint">
+            <span class="method get">GET</span>
+            <code>/open/v1/projects/{project_code}/task-by-request-id/{request_id}</code>
           </div>
           <code-block :code="queryResponse" title="Task Result" />
           <p class="doc-note">结果中包含 <code>result_detail.reasons</code>、<code>labels</code>、<code>score</code>、<code>rule</code>，并可选择包含原始媒体。不合格内容可通过这些字段回传业务方。</p>
@@ -492,7 +509,7 @@ if not hmac.compare_digest(expected, actual):
           <code-block :code="callbackPayload" title="Callback Payload" />
           <h3>验签</h3>
           <code-block :code="callbackVerify" title="Verify Signature" language="python" />
-          <p class="doc-note">回调失败会按 1s / 2s / 4s 重试 3 次，失败状态写入任务详情。回调 Header 会带幂等键，业务方应按 task_no 去重。</p>
+          <p class="doc-note">回调失败会按 1s / 2s / 4s 重试 3 次。事件包括 audit.accepted / deduplicated / completed / submit_failed；Header 会带 X-SmartDoc-Request-Id 和幂等键，业务方应按 request_id 优先、task_no 兜底去重。</p>
         </section>
 
         <section id="help-mysql" class="doc-section">

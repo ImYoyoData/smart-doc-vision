@@ -118,7 +118,8 @@ ${scopeLine(methods)}
 
 ~~~json
 {
-  "biz_key": "业务唯一键，建议可用于幂等",
+  "biz_key": "业务分组键，可选",
+  "request_id": "调用方生成的唯一提交 ID，强烈建议填写",
   "media": [
     {"type": "text", "name": "page-1.txt", "content": "第一页文本或 OCR 结果"},
     {"type": "text", "name": "page-2.txt", "content": "第二页文本或 OCR 结果"},
@@ -129,14 +130,14 @@ ${scopeLine(methods)}
 }
 ~~~
 
-要求：图片 URL 必须是平台可访问的 http/https 地址；文本和图片都可以多条；biz_key + media 在去重窗口内重复提交会返回 duplicated，请按幂等处理。
+要求：图片 URL 必须是平台可访问的 http/https 地址；文本和图片都可以多条。request_id 是调用方生成的唯一提交 ID：相同 request_id + 相同内容返回原任务并标记 duplicated，相同 request_id + 不同内容返回 REQUEST_ID_CONFLICT。填写 request_id 时平台按它做幂等；未填写时仍按 biz_key + media 的内容去重。
 ${classificationSection(ctx)}
 
 ## 结果回调
 
 ${callbackText}
 
-回调 Header 包含 X-SmartDoc-Signature: sha256=HMAC-SHA256(callback_secret, raw_body)、X-Idempotency-Key、X-SmartDoc-Result。业务方必须用原始请求体验签，并按 task_no 或 X-Idempotency-Key 幂等落库。失败会按 1s / 2s / 4s 重试 3 次。
+回调 Header 包含 X-SmartDoc-Signature、X-SmartDoc-Event、X-SmartDoc-Task、X-SmartDoc-Request-Id、X-SmartDoc-Result、X-Idempotency-Key。事件包括 audit.accepted（Redis 受理）、audit.deduplicated（重复提交）、audit.completed（最终结果）和 audit.submit_failed（Redis 提交失败）。业务方必须用原始请求体验签，并按 request_id（优先）或 task_no 幂等落库。失败会按 1s / 2s / 4s 重试 3 次。
 
 ## 安全与验收
 
@@ -151,6 +152,7 @@ function openapiSection(ctx: IntegrationPromptContext): string {
   const path = ctx.openapiPath || `/open/v1/projects/${ctx.projectCode}/audits/${ctx.auditCode}/submit`
   const body = ctx.sampleBody || `{
   "biz_key": "archive:2026:0001",
+  "request_id": "audit-20261031-000001",
   "media": [
     {"type": "text", "name": "page-1.txt", "content": "第一页档案文本"},
     {"type": "image", "name": "page-1.jpg", "url": "https://your-domain.example.com/page-1.jpg"}
@@ -170,8 +172,9 @@ function openapiSection(ctx: IntegrationPromptContext): string {
 ~~~json
 ${body}
 ~~~
-5. 支持异步提交；如平台返回 queued，使用 GET /open/v1/projects/${ctx.projectCode}/tasks/{task_no} 查询终态。若业务需要同步等待，实现超时和轮询退避，不要无限阻塞。
-6. 处理 duplicated 返回，复用已有 task_no，避免重复入库。
+5. 请求体必须包含业务方生成的 request_id；响应会原样返回 request_id 和 task_no。
+6. 支持异步提交；如平台返回 queued，使用 GET /open/v1/projects/${ctx.projectCode}/tasks/{task_no} 或 GET /open/v1/projects/${ctx.projectCode}/task-by-request-id/{request_id} 查询终态。若业务需要同步等待，实现超时和轮询退避，不要无限阻塞。
+7. 处理 duplicated 返回，复用已有 task_no；相同 request_id 但内容不同会返回 409 REQUEST_ID_CONFLICT，不要静默重试。
 7. 处理 400、401 INVALID_SIGNATURE、403 AUDIT_OUT_OF_SCOPE / CREDENTIAL_DISABLED、409 REPLAY_ATTACK、429、5xx；签名错误不要盲目重试，时间戳过期需重新签名。
 ${ctx.sampleCurl ? `\n8. 平台生成的 cURL 示例（签名会过期，仅用于对照格式）：\n~~~bash\n${ctx.sampleCurl}\n~~~` : ''}
 
@@ -187,14 +190,15 @@ function redisSection(ctx: IntegrationPromptContext): string {
 
 1. 目标 Stream：${stream}
 2. 平台消费组：${group}（平台负责创建和维护，业务方不要抢占消费组）
-3. 使用一条 XADD 写入，消息必须包含单个 data 字段（也兼容 payload），值为 TaskInput JSON 字符串：
+3. 使用一条 XADD 写入，消息必须包含 data 字段（也兼容 payload），值为 TaskInput JSON 字符串；强烈建议同时在消息顶层提供 request_id 和 callback_url，保证 data 解析失败时也能收到失败通知：
 ~~~bash
-XADD ${stream} * data '{"biz_key":"archive:2026:0001","media":[{"type":"text","name":"page-1.txt","content":"第一页档案文本"},{"type":"image","name":"page-1.jpg","url":"https://your-domain.example.com/page-1.jpg"}],"ext":{"scene":"archive_review"}}'
+XADD ${stream} * request_id 'audit-20261031-000001' callback_url 'https://your-service.example.com/callback' data '{"request_id":"audit-20261031-000001","biz_key":"archive:2026:0001","media":[{"type":"text","name":"page-1.txt","content":"第一页档案文本"},{"type":"image","name":"page-1.jpg","url":"https://your-domain.example.com/page-1.jpg"}],"ext":{"scene":"archive_review"}}'
 ~~~
-4. 消息体必须是 UTF-8 JSON，不支持的字段（video/audio）会导致平台拒收；非法消息会 ACK 后写入 ${stream}:dlq。
-5. Redis 不返回 task_no，业务方需要通过结果回调获知最终结果，或让平台侧用 biz_key 查询；请在实现中明确这一限制。
-6. 处理连接失败、超时、Redis 重连和重复写入；生产环境建议用连接池，并把消息体构造与 XADD 解耦，方便单测。
-7. 交付：配置读取、TaskInput 序列化、XADD 发送函数、失败重试/日志脱敏、一个真实消息格式测试。`
+4. 消息体必须是 UTF-8 JSON，不支持的字段（video/audio）会导致平台拒收；非法消息会 ACK 后写入 ${stream}:dlq，并在可解析 callback_url 时发送 audit.submit_failed。
+5. Redis 不返回 task_no。平台会在受理、去重、完成、失败时通过 HTTP 回调发送 audit.accepted / audit.deduplicated / audit.completed / audit.submit_failed，事件里同时包含 request_id、task_no、source_ref（Redis message_id）。业务方也可以 GET /open/v1/projects/${ctx.projectCode}/task-by-request-id/{request_id} 查询。平台不写业务 Redis 结果流。
+6. 相同 request_id + 相同内容会返回原任务并发送 deduplicated；相同 request_id + 不同内容会发送 submit_failed（REQUEST_ID_CONFLICT）。
+7. 处理连接失败、超时、Redis 重连和重复写入；生产环境建议用连接池，并把消息体构造与 XADD 解耦，方便单测。
+8. 交付：配置读取、TaskInput 序列化、XADD 发送函数、失败重试/日志脱敏、一个真实消息格式测试。`
 }
 
 function websocketSection(ctx: IntegrationPromptContext): string {
@@ -211,6 +215,7 @@ function websocketSection(ctx: IntegrationPromptContext): string {
   "type": "submit",
   "data": {
     "biz_key": "archive:2026:0001",
+    "request_id": "audit-20261031-000001",
     "media": [
       {"type": "text", "name": "page-1.txt", "content": "第一页档案文本"},
       {"type": "image", "name": "page-1.jpg", "url": "https://your-domain.example.com/page-1.jpg"}
@@ -218,7 +223,7 @@ function websocketSection(ctx: IntegrationPromptContext): string {
   }
 }
 ~~~
-5. 处理 ack 帧（task_no、status、duplicated）和 result 帧（终态 result、result_detail）。result 帧可能晚于 ack 到达，必须按 task_no 关联，不能只靠发送顺序。
+5. 处理 ack 帧（task_no、request_id、status、duplicated）和 result 帧（终态 request_id、result、result_detail）。result 帧可能晚于 ack 到达，必须按 request_id 优先、task_no 兜底关联，不能只靠发送顺序。
 6. 实现心跳 ping/pong、断线重连、重连后重新签名；重连恢复时使用 biz_key 幂等，避免重复审核。
 7. 交付：连接鉴权函数、帧编解码、ack/result 关联表、超时和重连测试。`
 }

@@ -3189,7 +3189,7 @@ onMounted(async () => {
           </div>
           <div class="field">
             <label>任务号 / 业务键关键字</label>
-            <n-input v-model:value="exportForm.keyword" clearable placeholder="可选，支持模糊匹配 task_no 或 biz_key" />
+            <n-input v-model:value="exportForm.keyword" clearable placeholder="可选，支持模糊匹配 task_no、biz_key 或 request_id" />
           </div>
           <div class="export-summary">
             <span>当前范围</span>

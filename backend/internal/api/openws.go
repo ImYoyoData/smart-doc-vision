@@ -134,14 +134,19 @@ func (s *Server) openWS(c *gin.Context) {
 				if se, okSE := err.(*service.SubmitError); okSE {
 					code, message = se.Code, se.Message
 				}
-				_ = sess.write(gin.H{"type": "error", "code": code, "message": message})
+				_ = sess.write(gin.H{"type": "error", "code": code, "message": message, "request_id": input.RequestID})
 				continue
+			}
+			requestID := input.RequestID
+			if outcome.Task.RequestID != nil {
+				requestID = *outcome.Task.RequestID
 			}
 			_ = sess.write(gin.H{
 				"type": "ack",
 				"data": gin.H{
 					"task_id": outcome.Task.ID, "task_no": outcome.Task.TaskNo,
-					"status": outcome.Task.Status, "deduplicated": outcome.Duplicated,
+					"request_id": requestID,
+					"status":     outcome.Task.Status, "deduplicated": outcome.Duplicated,
 				},
 			})
 			go s.pushWSResult(sess, outcome.Task.ID)

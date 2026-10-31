@@ -456,7 +456,7 @@ AI 对接助手按触发方式拆分：每个方式都有独立的专用提示�
 
 ### 结果回调
 
-审核配置可以独立配置回调 URL、签名 Secret、需要回调的结论（PASS / REJECT）以及是否回传原内容。回调地址支持 `http(s)://` Webhook 与 `ws(s)://` WebSocket：WebSocket 回调在握手请求头中携带同样的 `X-SmartDoc-*` 事件头与 HMAC 签名，连接建立后发送一条标准结果 JSON。自动审核进入待议时不会立即回调；人工复核完成后，以最终 PASS/REJECT 触发回调。回调失败按 1s / 2s / 4s 重试 3 次，并写入任务详情。
+审核配置可以独立配置回调 URL、签名 Secret、需要回调的结论（PASS / REJECT）以及是否回传原内容。提交时建议携带调用方生成的唯一 `request_id`：平台按它幂等，并在 `audit.accepted` / `audit.deduplicated` / `audit.completed` / `audit.submit_failed` 回调和 `GET /open/v1/projects/{project_code}/task-by-request-id/{request_id}` 查询中返回。Redis 业务侧可以只读，平台不写业务结果流。回调地址支持 `http(s)://` Webhook 与 `ws(s)://` WebSocket：WebSocket 回调在握手请求头中携带同样的 `X-SmartDoc-*` 事件头与 HMAC 签名，连接建立后发送一条标准结果 JSON。自动审核进入待议时不会立即回调；人工复核完成后，以最终 PASS/REJECT 触发回调。回调失败按 1s / 2s / 4s 重试 3 次，并写入任务详情。
 
 审核配置的「人工复核方式」支持两种模式：**平台内复核**（默认，REVIEW 任务进入本平台待议复核队列，复核完成后回调）与**外部系统复核**（REVIEW 任务直接完成、不进入本平台复核队列，按结果动作 / 回调把 REVIEW 结论通知业务系统，由业务系统在自己的平台完成人工复核；任务详情的原始数据中标记 `external_review: true`）。
 

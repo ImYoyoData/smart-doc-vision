@@ -115,8 +115,13 @@ const templateVarGroups = [
     vars: [
       { name: 'task_no', desc: '任务号，平台生成的任务唯一编号', form: '字符串，SDV + 14 位时间 + 6 位大写 hex，如 SDV20261023233001A1B2C3' },
       { name: 'task_id', desc: '任务内部自增 ID', form: '整数，如 1024' },
+      { name: 'request_id', desc: '业务方提交时携带的唯一请求 ID', form: '字符串，可能为空' },
       { name: 'biz_key', desc: '业务方提交时携带的业务主键', form: '字符串，可能为空' },
       { name: 'source_type', desc: '任务来源', form: '枚举：OPENAPI / ADMIN / REDIS / WEBSOCKET' },
+      { name: 'source_id', desc: '触发源 ID', form: '整数' },
+      { name: 'source_ref', desc: '来源引用，Redis 为消息 ID', form: '字符串，可能为空' },
+      { name: 'input_json', desc: '完整 TaskInput 对象', form: 'JSON 字符串' },
+      { name: 'ext_json', desc: '提交时的 ext 对象', form: 'JSON 字符串' },
       { name: 'project_code', desc: '项目编码', form: '字符串，如 arch-review' },
       { name: 'project_id', desc: '项目内部 ID', form: '整数' },
       { name: 'audit_code', desc: '审核配置编码', form: '字符串，如 doc-audit' },
@@ -319,7 +324,7 @@ function actionTitle(action: RouteAction, index: number): string {
   <div class="routes-editor">
     <div class="routes-toolbar">
       <span class="toolbar-note">
-        按最终结论执行回调动作，模板变量支持 <code>${task_no}</code>、<code>${result}</code>、<code>${score}</code>、<code>${category}</code> 等。
+        按最终结论执行回调动作，模板变量支持 <code>${task_no}</code>、<code>${request_id}</code>、<code>${result}</code>、<code>${score}</code>、<code>${input_json}</code> 等。
         <n-popover trigger="click" placement="bottom-start" :width="560" :show-arrow="false">
           <template #trigger>
             <button type="button" class="vars-trigger">

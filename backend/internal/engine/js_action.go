@@ -272,6 +272,7 @@ func (r *scriptRun) contextMap() map[string]any {
 	}
 	task := map[string]any{
 		"id": r.render.Task.ID, "task_no": r.render.Task.TaskNo,
+		"request_id": r.render.Input.RequestID, "source_ref": r.render.Input.SourceRef,
 		"biz_key": r.render.Task.BizKey, "source_type": r.render.Task.SourceType,
 		"source_id": r.render.Task.SourceID, "status": r.render.Task.Status,
 		"review_note": r.render.Task.ReviewNote, "created_at": r.render.Task.CreatedAt,
@@ -354,6 +355,8 @@ func (r *scriptRun) consoleMap() map[string]any {
 func (r *scriptRun) variables() map[string]any {
 	return map[string]any{
 		"task_no": r.render.Task.TaskNo, "task_id": r.render.Task.ID,
+		"request_id": r.render.Input.RequestID, "source_ref": r.render.Input.SourceRef,
+		"input_json": r.render.Input, "ext_json": r.render.Input.Ext,
 		"biz_key": r.render.Task.BizKey, "source_type": r.render.Task.SourceType,
 		"project_code": r.render.Project.Code, "project_id": r.render.Project.ID,
 		"audit_code": r.render.Audit.Code, "audit_id": r.render.Audit.ID,

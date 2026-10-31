@@ -5,11 +5,13 @@ import "time"
 type Task struct {
 	ID               uint64     `gorm:"primaryKey;autoIncrement" json:"id"`
 	TaskNo           string     `gorm:"size:40;not null;uniqueIndex" json:"task_no"`
-	ProjectID        uint64     `gorm:"not null;index;index:idx_task_project_created;uniqueIndex:idx_project_dedupe,priority:1" json:"project_id"`
+	ProjectID        uint64     `gorm:"not null;index;index:idx_task_project_created;uniqueIndex:idx_project_dedupe,priority:1;uniqueIndex:idx_project_request,priority:1" json:"project_id"`
 	AuditID          uint64     `gorm:"not null;index" json:"audit_id"`
 	SourceType       string     `gorm:"size:16;not null" json:"source_type"`
 	SourceID         uint64     `gorm:"not null;default:0" json:"source_id"`
 	BizKey           string     `gorm:"size:128;index" json:"biz_key"`
+	RequestID        *string    `gorm:"size:128;index;uniqueIndex:idx_project_request,priority:2" json:"request_id,omitempty"`
+	RequestHash      string     `gorm:"size:64" json:"-"`
 	DedupeHash       string     `gorm:"size:64;index;uniqueIndex:idx_project_dedupe,priority:2" json:"dedupe_hash,omitempty"`
 	MediaType        string     `gorm:"size:16;not null" json:"media_type"`
 	Status           string     `gorm:"size:24;not null;index" json:"status"`
@@ -76,6 +78,8 @@ type MediaItem struct {
 
 type TaskInput struct {
 	BizKey      string         `json:"biz_key"`
+	RequestID   string         `json:"request_id,omitempty"`
+	SourceRef   string         `json:"source_ref,omitempty"`
 	Media       []MediaItem    `json:"media"`
 	Ext         map[string]any `json:"ext"`
 	CallbackURL string         `json:"callback_url,omitempty"`

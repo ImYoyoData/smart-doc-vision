@@ -115,6 +115,7 @@ func (s *Server) Router() *gin.Engine {
 	{
 		open.POST("/projects/:projectCode/audits/:auditCode/submit", s.openSubmit)
 		open.GET("/projects/:projectCode/tasks/:taskNo", s.openTask)
+		open.GET("/projects/:projectCode/task-by-request-id/:requestID", s.openTaskByRequestID)
 		open.GET("/ws/projects/:projectCode/audits/:auditCode", s.openWS)
 	}
 

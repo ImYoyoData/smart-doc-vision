@@ -275,7 +275,7 @@ function formatTime(value?: string | null): string {
             <n-input-number v-model:value="form.maxInflight" size="small" :min="1" :max="32" style="width: 160px" />
           </div>
           <p class="hint">
-            一个 <code>(连接, DB, Stream)</code> 只能被一个审核消费。消息格式：<code>XADD stream * data '{"biz_key":"...","media":[{"type":"text","content":"..."}]}'</code>
+            一个 <code>(连接, DB, Stream)</code> 只能被一个审核消费。消息格式：<code>XADD stream * request_id "..." callback_url "https://..." data '{"request_id":"...","biz_key":"...","media":[{"type":"text","content":"..."}]}'</code>。request_id 用于关联提交与 HTTP 回调。
           </p>
         </template>
 

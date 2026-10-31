@@ -386,7 +386,7 @@ onBeforeUnmount(() => {
       <div class="task-toolbar">
         <n-input
           v-model:value="keyword"
-          placeholder="任务号 / 业务键"
+          placeholder="任务号 / 业务键 / request_id"
           clearable
           class="search-input"
           @input="onSearchInput"
@@ -497,7 +497,10 @@ onBeforeUnmount(() => {
             <tr v-for="task in tasks" :key="task.id" class="clickable" @click="openTask(task)">
               <td v-if="isColumnVisible('task')">
                 <div class="cell-title mono">{{ task.task_no }}</div>
-                <div class="cell-sub">{{ task.biz_key || '无业务键' }}</div>
+                <div class="cell-sub">
+                  {{ task.biz_key || '无业务键' }}
+                  <span v-if="task.request_id" class="mono"> · {{ task.request_id }}</span>
+                </div>
               </td>
               <td v-if="isColumnVisible('audit')">
                 <div class="cell-title">{{ task.audit_name || '—' }}</div>

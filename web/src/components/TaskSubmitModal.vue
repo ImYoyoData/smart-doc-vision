@@ -32,6 +32,7 @@ const errorText = ref('')
 const form = reactive({
   auditId: null as number | null,
   bizKey: '',
+  requestId: '',
   text: '',
   images: '',
   callbackUrl: '',
@@ -139,6 +140,7 @@ watch(
   (visible) => {
     if (visible) {
       form.bizKey = ''
+      form.requestId = ''
       form.text = ''
       form.images = ''
       form.callbackUrl = ''
@@ -215,6 +217,7 @@ async function submit() {
       project_id: props.projectId,
       audit_id: form.auditId,
       biz_key: form.bizKey.trim(),
+      request_id: form.requestId.trim() || undefined,
       media,
       ext,
       callback_url: form.callbackUrl.trim() || undefined,
@@ -271,8 +274,14 @@ async function submit() {
 
         <div class="field">
           <label>业务键</label>
-          <n-input v-model:value="form.bizKey" placeholder="例如 archive:2026:0001，用于幂等去重" />
-          <div class="form-hint">相同业务键 + 相同内容会在去重窗口内复用原任务。</div>
+          <n-input v-model:value="form.bizKey" placeholder="例如 archive:2026:0001，用于业务分组和内容去重" />
+          <div class="form-hint">相同业务键 + 相同内容且未填写 request_id 时，会在去重窗口内复用原任务。</div>
+        </div>
+
+        <div class="field">
+          <label>请求 ID（request_id）</label>
+          <n-input v-model:value="form.requestId" placeholder="例如 audit-20261031-000001，建议每次提交唯一" />
+          <div class="form-hint">可选。填写后以它作为幂等标识，结果回调和按 request_id 查询都使用它。</div>
         </div>
 
         <div class="field">

@@ -161,8 +161,11 @@ func (e *Engine) executeRouteAction(render routeRender, action routeAction, inde
 func routePayload(render routeRender) map[string]any {
 	return map[string]any{
 		"event": "audit.result_action", "task_no": render.Task.TaskNo,
+		"task_id": render.Task.ID, "request_id": render.Input.RequestID,
+		"source_type": render.Task.SourceType, "source_id": render.Task.SourceID,
+		"source_ref":   render.Input.SourceRef,
 		"project_code": render.Project.Code, "audit_code": render.Audit.Code,
-		"biz_key": render.Task.BizKey, "result": render.FinalResult,
+		"biz_key": render.Task.BizKey, "input": render.Input, "result": render.FinalResult,
 		"summary": render.Detail["summary"], "reasons": render.Detail["reasons"],
 		"labels": render.Detail["labels"], "risk_level": render.Detail["risk_level"],
 		"score": render.Detail["score"], "category": render.Detail["category"],
@@ -375,10 +378,22 @@ func detailText(detail map[string]any, key string) string {
 	return ""
 }
 
+func jsonString(value any) string {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return ""
+	}
+	return string(raw)
+}
+
 func renderString(input string, render routeRender) string {
 	replacer := strings.NewReplacer(
 		"${task_no}", render.Task.TaskNo,
 		"${task_id}", fmt.Sprint(render.Task.ID),
+		"${request_id}", render.Input.RequestID,
+		"${source_ref}", render.Input.SourceRef,
+		"${input_json}", jsonString(render.Input),
+		"${ext_json}", jsonString(render.Input.Ext),
 		"${biz_key}", render.Task.BizKey,
 		"${source_type}", render.Task.SourceType,
 		"${project_code}", render.Project.Code,

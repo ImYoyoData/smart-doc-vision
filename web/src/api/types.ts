@@ -505,6 +505,7 @@ export interface IntegrationGuide {
     supports_multi_image: boolean
     supports_video: boolean
     max_images: number
+    request_id_note?: string
     note: string
   }
   docs_path: string
@@ -522,6 +523,7 @@ export interface IntegrationGuide {
     body_sha256: string
     signing_note: string
     query_task_path: string
+    query_request_path: string
   }
   redis: {
     enabled: boolean
@@ -538,6 +540,8 @@ export interface IntegrationGuide {
     example: Record<string, any>
     xadd_command: string
     note: string
+    events?: string[]
+    request_id_note?: string
   }
   websocket: {
     enabled: boolean
@@ -572,6 +576,8 @@ export interface MediaItem {
 
 export interface TaskInput {
   biz_key?: string
+  request_id?: string
+  source_ref?: string
   media: MediaItem[]
   ext?: Record<string, unknown>
   callback_url?: string
@@ -659,6 +665,7 @@ export interface Task {
   audit_id: number
   source_type: string
   biz_key: string
+  request_id?: string | null
   dedupe_hash?: string
   media_type: string
   status: string

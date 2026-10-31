@@ -33,6 +33,7 @@ type openAuthContext struct {
 
 type openSubmitRequest struct {
 	BizKey      string            `json:"biz_key"`
+	RequestID   string            `json:"request_id"`
 	Media       []model.MediaItem `json:"media"`
 	Ext         map[string]any    `json:"ext"`
 	CallbackURL string            `json:"callback_url"`
@@ -94,6 +95,7 @@ func (s *Server) openSubmit(c *gin.Context) {
 	}
 	input := model.TaskInput{
 		BizKey:      strings.TrimSpace(req.BizKey),
+		RequestID:   strings.TrimSpace(req.RequestID),
 		Media:       req.Media,
 		Ext:         req.Ext,
 		CallbackURL: strings.TrimSpace(req.CallbackURL),
@@ -141,7 +143,8 @@ done:
 		map[string]any{"audit_id": audit.ID, "source_type": model.TriggerOpenAPI, "duplicated": outcome.Duplicated},
 		c.GetString("trace_id"))
 	ok(c, gin.H{
-		"task_id": task.ID, "task_no": task.TaskNo, "status": task.Status, "result": task.Result,
+		"task_id": task.ID, "task_no": task.TaskNo, "request_id": task.RequestID,
+		"status": task.Status, "result": task.Result,
 		"deduplicated": outcome.Duplicated, "sync": strings.EqualFold(req.Mode, "sync"),
 		"task": openTaskView(task, false),
 	})
@@ -173,11 +176,42 @@ func (s *Server) openTask(c *gin.Context) {
 	ok(c, openTaskView(task, true))
 }
 
+func (s *Server) openTaskByRequestID(c *gin.Context) {
+	body, _ := io.ReadAll(io.LimitReader(c.Request.Body, 1<<20))
+	auth, aerr := s.authenticateOpen(c, body)
+	if aerr != nil {
+		fail(c, aerr.Status, aerr.Code, aerr.Message, nil)
+		return
+	}
+	requestID := strings.TrimSpace(c.Param("requestID"))
+	if requestID == "" {
+		fail(c, http.StatusBadRequest, "INVALID_PARAM", "request_id 不能为空", nil)
+		return
+	}
+	var task model.Task
+	if err := s.db.Where("project_id = ? AND request_id = ?", auth.Project.ID, requestID).First(&task).Error; err != nil {
+		fail(c, http.StatusNotFound, "NOT_FOUND", "任务不存在", nil)
+		return
+	}
+	if !credentialAllowsAudit(auth.Credential, task.AuditID) {
+		fail(c, http.StatusNotFound, "NOT_FOUND", "任务不存在", nil)
+		return
+	}
+	var audit model.Audit
+	if err := s.db.Where("id = ? AND project_id = ? AND deleted_at IS NULL", task.AuditID, task.ProjectID).First(&audit).Error; err != nil {
+		fail(c, http.StatusNotFound, "NOT_FOUND", "任务不存在", nil)
+		return
+	}
+	s.decorateTaskMedia(&task)
+	ok(c, openTaskView(task, true))
+}
+
 func openTaskView(task model.Task, includeInput bool) gin.H {
 	view := gin.H{
 		"task_id": task.ID, "task_no": task.TaskNo, "project_id": task.ProjectID,
-		"audit_id": task.AuditID, "biz_key": task.BizKey, "source_type": task.SourceType,
-		"media_type": task.MediaType, "status": task.Status, "result": task.Result,
+		"audit_id": task.AuditID, "biz_key": task.BizKey, "request_id": task.RequestID,
+		"source_type": task.SourceType,
+		"media_type":  task.MediaType, "status": task.Status, "result": task.Result,
 		"result_detail": task.ResultJSON, "error_message": task.ErrorMessage,
 		"duration_ms": task.DurationMS, "retry_count": task.RetryCount,
 		"created_at": task.CreatedAt, "finished_at": task.FinishedAt,

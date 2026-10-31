@@ -342,7 +342,7 @@ const apiDocGroups: ApiDocGroup[] = [
   {
     title: '任务与审核',
     items: [
-      { name: 'ctx.task', detail: '当前任务', fields: 'task_no / biz_key / source_type / input / status' },
+      { name: 'ctx.task', detail: '当前任务', fields: 'task_no / request_id / biz_key / source_type / input / status' },
       { name: 'ctx.audit', detail: '当前审核配置', fields: 'code / name / categories / decision_mode' },
       { name: 'ctx.audit.category(code)', detail: '按分类 code 取分类对象，不存在返回 null' },
       { name: 'ctx.result', detail: '最终结论：PASS / REJECT / REVIEW' },
@@ -463,8 +463,9 @@ const aiReasoningOptions = [
 
 const ctxCompletions = [
   { label: 'ctx', type: 'variable', detail: '脚本上下文' },
-  { label: 'ctx.task', type: 'property', detail: '当前任务', info: 'task_no / biz_key / source_type / input' },
+  { label: 'ctx.task', type: 'property', detail: '当前任务', info: 'task_no / request_id / biz_key / source_type / input' },
   { label: 'ctx.task.task_no', type: 'property', detail: '任务号' },
+  { label: 'ctx.task.request_id', type: 'property', detail: '提交唯一 ID' },
   { label: 'ctx.task.biz_key', type: 'property', detail: '业务主键' },
   { label: 'ctx.task.input', type: 'property', detail: 'text/image 输入与 ext' },
   { label: 'ctx.project', type: 'property', detail: '当前项目', info: 'id / code / name' },

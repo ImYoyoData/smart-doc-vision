@@ -13,9 +13,11 @@ import (
 
 type scriptSimulationTask struct {
 	TaskNo     string `json:"task_no"`
+	RequestID  string `json:"request_id"`
 	BizKey     string `json:"biz_key"`
 	SourceType string `json:"source_type"`
 	SourceID   uint64 `json:"source_id"`
+	SourceRef  string `json:"source_ref"`
 	Status     string `json:"status"`
 	ReviewNote string `json:"review_note"`
 }
@@ -99,14 +101,19 @@ func (s *Server) simulateScript(c *gin.Context) {
 	if status == "" {
 		status = model.TaskSuccess
 	}
+	requestID := strings.TrimSpace(req.Task.RequestID)
+	var requestIDPtr *string
+	if requestID != "" {
+		requestIDPtr = &requestID
+	}
 	task := model.Task{
 		ID: 1, TaskNo: taskNo, ProjectID: req.ProjectID, AuditID: audit.ID,
-		SourceType: sourceType, SourceID: req.Task.SourceID, BizKey: bizKey,
+		SourceType: sourceType, SourceID: req.Task.SourceID, BizKey: bizKey, RequestID: requestIDPtr,
 		MediaType: "text", Status: status, Result: state,
 		ReviewNote: strings.TrimSpace(req.Task.ReviewNote),
 		CreatedAt:  time.Now(),
 	}
-	input := model.TaskInput{BizKey: bizKey, Ext: req.Input.Ext}
+	input := model.TaskInput{BizKey: bizKey, RequestID: requestID, SourceRef: strings.TrimSpace(req.Task.SourceRef), Ext: req.Input.Ext}
 	if input.Ext == nil {
 		input.Ext = map[string]any{"simulated": true}
 	}

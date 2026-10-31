@@ -42,6 +42,7 @@ const fieldOptions = [
   { label: '图片数量 · media.image_count', value: 'media.image_count' },
   { label: '媒体类型 · media.type', value: 'media.type' },
   { label: '来源类型 · task.source_type', value: 'task.source_type' },
+  { label: '请求 ID · task.request_id', value: 'task.request_id' },
   { label: '业务主键 · task.biz_key', value: 'task.biz_key' },
 ]
 
@@ -385,6 +386,7 @@ const fieldSummaryLabels: Record<string, string> = {
   'media.image_count': '图片数量',
   'media.type': '媒体类型',
   'task.source_type': '来源类型',
+  'task.request_id': '请求 ID',
   'task.biz_key': '业务主键',
 }
 

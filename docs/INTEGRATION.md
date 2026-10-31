@@ -70,6 +70,7 @@ DELETE /api/admin/v1/projects/{pid}/credentials/{cid}
 ```json
 {
   "biz_key": "archive:2026:0001",
+  "request_id": "audit-20261031-000001",
   "media": [
     { "type": "text",  "content": "档案正文或 OCR 文本", "name": "document.txt" },
     { "type": "image", "url": "https://your-domain.com/page-01.jpg" }
@@ -84,7 +85,8 @@ DELETE /api/admin/v1/projects/{pid}/credentials/{cid}
 
 | 字段 | 必填 | 说明 |
 |---|---|---|
-| biz_key | 建议 | 业务唯一键。相同业务键 + 相同媒体 + 相同来源在去重窗口内只创建一次任务。未填写时由平台自动生成。 |
+| request_id | 强烈建议 | 调用方生成的唯一提交 ID。填写后平台按它幂等：相同 request_id + 相同内容返回原任务；内容不同返回 409 REQUEST_ID_CONFLICT。回调和按 request_id 查询都会原样返回。 |
+| biz_key | 建议 | 业务分组键。未填写 request_id 时，相同业务键 + 相同媒体 + 相同来源在去重窗口内只创建一次任务。 |
 | media | 是 | 至少一段文本或一张图片。支持**多个 `text` 和多个 `image`**；不支持 video/audio。 |
 | media[].content | text 必填 | 文档文本 / OCR 结果。 |
 | media[].url | image 必填 | 图片地址，必须可被平台访问；JEV 会下载并做尺寸归一化。 |
@@ -205,6 +207,7 @@ POST /open/v1/projects/{project_code}/audits/{audit_code}/submit
   "data": {
     "task_id": 12,
     "task_no": "SDV20261021190000ABCDEF",
+    "request_id": "audit-20261031-000001",
     "status": "QUEUED",
     "result": "UNKNOWN",
     "deduplicated": false,
@@ -221,6 +224,7 @@ POST /open/v1/projects/{project_code}/audits/{audit_code}/submit
 
 ```http
 GET /open/v1/projects/{project_code}/tasks/{task_no}
+GET /open/v1/projects/{project_code}/task-by-request-id/{request_id}
 ```
 
 签名规则与提交相同：GET、Path、空 Body 的 SHA256。
@@ -231,6 +235,8 @@ GET /open/v1/projects/{project_code}/tasks/{task_no}
 {
   "task_id": 12,
   "task_no": "SDV...",
+  "request_id": "audit-20261031-000001",
+  "source_ref": "1792578000000-0",
   "status": "SUCCESS",
   "result": "REJECT",
   "result_detail": {
@@ -353,6 +359,7 @@ Path 不包含 query string。
   "type": "submit",
   "data": {
     "biz_key": "archive:2026:0001",
+    "request_id": "audit-20261031-000001",
     "media": [{ "type": "text", "content": "待审核文本" }],
     "ext": { "scene": "archive_review" }
   }
@@ -367,6 +374,7 @@ Path 不包含 query string。
   "data": {
     "task_id": 12,
     "task_no": "SDV...",
+    "request_id": "audit-20261031-000001",
     "status": "QUEUED",
     "deduplicated": false
   }
@@ -380,6 +388,7 @@ Path 不包含 query string。
   "type": "result",
   "data": {
     "task_no": "SDV...",
+    "request_id": "audit-20261031-000001",
     "status": "SUCCESS",
     "result": "REJECT",
     "result_detail": {},
@@ -459,6 +468,7 @@ Content-Type: application/json
 X-Idempotency-Key: SDV...
 X-SmartDoc-Event: audit.completed
 X-SmartDoc-Task: SDV...
+X-SmartDoc-Request-Id: audit-20261031-000001
 X-SmartDoc-Result: REJECT
 X-SmartDoc-Timestamp: 1792578000000
 X-SmartDoc-Signature: sha256=<HMAC-SHA256(callback_secret, raw_body)>
@@ -475,6 +485,7 @@ if not hmac.compare_digest(expected, request.headers["X-SmartDoc-Signature"]):
 - 业务方返回 2xx 视为成功。
 - 失败按 1s / 2s / 4s 重试 3 次。
 - 最终失败会写入任务详情的 `result_detail.callback`，并记录审计。
+- 事件包括 `audit.accepted`（Redis/异步受理）、`audit.deduplicated`（request_id 重复）、`audit.completed`（最终结果）、`audit.submit_failed`（Redis 解析/提交失败）；业务方按 `request_id` 优先、`task_no` 兜底关联。
 
 ### 7.4 WebSocket 回调
 
@@ -499,7 +510,7 @@ if not hmac.compare_digest(expected, request.headers["X-SmartDoc-Signature"]):
 
 加解密与密钥：`ctx.crypto` 提供 MD5 / SHA-1 / SHA-256、HMAC-MD5 / HMAC-SHA1 / HMAC-SHA256、Base64 / Hex、AES / DES（CBC / ECB，PKCS7 或 NONE，base64 或 hex），可用于第三方接口的签名拼装与报文加解密；`keyEncoding` / `ivEncoding` 支持 hex 或 base64 密钥。凭据统一通过 `ctx.secret('NAME')` 读取，在后台「项目空间 → 项目密钥」按项目维护；脚本编辑器的「API 文档」提供图文流程和「去配置项目密钥」跳转按钮。
 
-每个结论可配置 `on_error`：`continue` 继续执行、`stop` 停止后续动作、`to_review` 转人工复核。模板变量：`${task_no}`、`${task_id}`、`${biz_key}`、`${source_type}`、`${project_code}`、`${project_id}`、`${audit_code}`、`${audit_id}`、`${result}`、`${summary}`、`${reasons}`、`${labels}`、`${risk_level}`、`${score}`、`${category}`、`${category_name}`、`${category_confidence}`、`${review_note}`。
+每个结论可配置 `on_error`：`continue` 继续执行、`stop` 停止后续动作、`to_review` 转人工复核。模板变量：`${task_no}`、`${task_id}`、`${request_id}`、`${biz_key}`、`${source_type}`、`${source_ref}`、`${input_json}`、`${ext_json}`、`${project_code}`、`${project_id}`、`${audit_code}`、`${audit_id}`、`${result}`、`${summary}`、`${reasons}`、`${labels}`、`${risk_level}`、`${score}`、`${category}`、`${category_name}`、`${category_confidence}`、`${review_note}`。
 
 取值须知：
 

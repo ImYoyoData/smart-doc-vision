@@ -592,6 +592,9 @@ func (e *Engine) runCallback(taskID uint64) {
 		"audit_code":          audit.Code,
 		"audit_name":          audit.Name,
 		"source_type":         task.SourceType,
+		"source_id":           task.SourceID,
+		"source_ref":          input.SourceRef,
+		"request_id":          input.RequestID,
 		"biz_key":             task.BizKey,
 		"status":              task.Status,
 		"result":              task.Result,
@@ -630,6 +633,9 @@ func (e *Engine) runCallback(taskID uint64) {
 			"X-SmartDoc-Task":      task.TaskNo,
 			"X-SmartDoc-Result":    task.Result,
 			"X-SmartDoc-Timestamp": strconv.FormatInt(time.Now().UnixMilli(), 10),
+		}
+		if input.RequestID != "" {
+			headers["X-SmartDoc-Request-Id"] = input.RequestID
 		}
 		if secret != "" {
 			mac := hmac.New(sha256.New, []byte(secret))
@@ -690,6 +696,9 @@ func (e *Engine) runCallback(taskID uint64) {
 		req.Header.Set("X-SmartDoc-Event", "audit.completed")
 		req.Header.Set("X-SmartDoc-Task", task.TaskNo)
 		req.Header.Set("X-SmartDoc-Result", task.Result)
+		if input.RequestID != "" {
+			req.Header.Set("X-SmartDoc-Request-Id", input.RequestID)
+		}
 		req.Header.Set("X-SmartDoc-Timestamp", strconv.FormatInt(time.Now().UnixMilli(), 10))
 		if secret != "" {
 			mac := hmac.New(sha256.New, []byte(secret))

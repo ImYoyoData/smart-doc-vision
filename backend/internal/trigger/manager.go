@@ -16,15 +16,16 @@ import (
 )
 
 type Manager struct {
-	db      *gorm.DB
-	cipher  *security.Cipher
-	tasks   *service.TaskService
-	ctx     context.Context
-	cancel  context.CancelFunc
-	mu      sync.Mutex
-	active  map[uint64]*workerHandle
-	clients map[string]*clientHandle
-	wg      sync.WaitGroup
+	db           *gorm.DB
+	cipher       *security.Cipher
+	tasks        *service.TaskService
+	allowPrivate bool
+	ctx          context.Context
+	cancel       context.CancelFunc
+	mu           sync.Mutex
+	active       map[uint64]*workerHandle
+	clients      map[string]*clientHandle
+	wg           sync.WaitGroup
 }
 
 type workerHandle struct {
@@ -37,10 +38,10 @@ type clientHandle struct {
 	fingerprint string
 }
 
-func NewManager(db *gorm.DB, cipher *security.Cipher, tasks *service.TaskService) *Manager {
+func NewManager(db *gorm.DB, cipher *security.Cipher, tasks *service.TaskService, allowPrivate bool) *Manager {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Manager{
-		db: db, cipher: cipher, tasks: tasks,
+		db: db, cipher: cipher, tasks: tasks, allowPrivate: allowPrivate,
 		ctx: ctx, cancel: cancel,
 		active:  map[uint64]*workerHandle{},
 		clients: map[string]*clientHandle{},

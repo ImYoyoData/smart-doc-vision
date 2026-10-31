@@ -324,7 +324,7 @@ func buildApp(cfg config.Config, db *gorm.DB, cache *redis.Client, cipher *secur
 	eng.Start()
 
 	tasks := service.NewTaskService(db, cache, eng, cfg.AllowPrivate, loader)
-	triggerManager := trigger.NewManager(db, cipher, tasks)
+	triggerManager := trigger.NewManager(db, cipher, tasks, cfg.AllowPrivate)
 	triggerManager.Start()
 
 	retentionCtx, retentionCancel := context.WithCancel(context.Background())

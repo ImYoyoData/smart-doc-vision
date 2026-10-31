@@ -49,7 +49,7 @@ func (s *Server) exportAuditTasks(c *gin.Context) {
 	}
 	if v := strings.TrimSpace(c.Query("keyword")); v != "" {
 		like := "%" + v + "%"
-		q = q.Where("(task_no LIKE ? OR biz_key LIKE ?)", like, like)
+		q = q.Where("(task_no LIKE ? OR biz_key LIKE ? OR request_id LIKE ?)", like, like, like)
 	}
 	if v := strings.TrimSpace(c.Query("biz_key")); v != "" {
 		q = q.Where("biz_key = ?", v)

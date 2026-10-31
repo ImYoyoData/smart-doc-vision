@@ -323,7 +323,7 @@ var assistantRuleFields = map[string]bool{
 	"model.category": true, "model.category_name": true, "model.category_confidence": true,
 	"media.text": true, "media.text_len": true, "media.count": true,
 	"media.image_count": true, "media.type": true,
-	"task.source_type": true, "task.biz_key": true,
+	"task.source_type": true, "task.request_id": true, "task.biz_key": true, "task.source_ref": true,
 }
 
 var assistantRuleOperators = map[string]bool{
@@ -364,7 +364,7 @@ const rulesFieldAssistantSystemPrompt = `你是「智审图档 SmartDoc Vision�
 model.result, model.score, model.risk_level, model.label, model.labels, model.summary,
 model.category, model.category_name, model.category_confidence,
 media.text, media.text_len, media.count, media.image_count, media.type,
-task.source_type, task.biz_key, ext.*, input.*
+task.source_type, task.request_id, task.biz_key, task.source_ref, ext.*, input.*
 
 【可用运算符】
 eq, ne, gt, gte, lt, lte, between, in, not_in,

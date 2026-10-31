@@ -18,6 +18,7 @@ type submitTaskRequest struct {
 	ProjectID   uint64            `json:"project_id"`
 	AuditID     uint64            `json:"audit_id"`
 	BizKey      string            `json:"biz_key"`
+	RequestID   string            `json:"request_id"`
 	Media       []model.MediaItem `json:"media"`
 	Text        string            `json:"text"`
 	Images      []string          `json:"images"`
@@ -69,10 +70,13 @@ func (s *Server) listTasks(c *gin.Context) {
 	}
 	if v := strings.TrimSpace(c.Query("keyword")); v != "" {
 		like := "%" + v + "%"
-		q = q.Where("(task_no LIKE ? OR biz_key LIKE ?)", like, like)
+		q = q.Where("(task_no LIKE ? OR biz_key LIKE ? OR request_id LIKE ?)", like, like, like)
 	}
 	if v := strings.TrimSpace(c.Query("biz_key")); v != "" {
 		q = q.Where("biz_key = ?", v)
+	}
+	if v := strings.TrimSpace(c.Query("request_id")); v != "" {
+		q = q.Where("request_id = ?", v)
 	}
 	if v := c.Query("start"); v != "" {
 		if t, err := time.ParseInLocation("2006-01-02", v, time.Local); err == nil {
@@ -90,7 +94,7 @@ func (s *Server) listTasks(c *gin.Context) {
 		return
 	}
 	var items []model.Task
-	if err := q.Select("id, task_no, project_id, audit_id, source_type, source_id, biz_key, dedupe_hash, media_type, status, result, provider_id, error_message, retry_count, duration_ms, reviewer_id, reviewed_at, started_at, finished_at, created_at, updated_at").
+	if err := q.Select("id, task_no, project_id, audit_id, source_type, source_id, biz_key, request_id, dedupe_hash, media_type, status, result, provider_id, error_message, retry_count, duration_ms, reviewer_id, reviewed_at, started_at, finished_at, created_at, updated_at").
 		Order(taskOrder(c.Query("sort"))).Offset((page - 1) * pageSize).Limit(pageSize).Find(&items).Error; err != nil {
 		serverError(c, err)
 		return
@@ -159,6 +163,7 @@ func (s *Server) submitTask(c *gin.Context) {
 	}
 	input := model.TaskInput{
 		BizKey:      strings.TrimSpace(req.BizKey),
+		RequestID:   strings.TrimSpace(req.RequestID),
 		Media:       normalizeMedia(req),
 		Ext:         req.Ext,
 		CallbackURL: strings.TrimSpace(req.CallbackURL),
