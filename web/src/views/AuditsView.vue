@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { computed, h, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { onBeforeRouteLeave, useRouter } from 'vue-router'
 import dayjs from 'dayjs'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import {
   NButton,
+  NDataTable,
   NDatePicker,
   NDrawer,
   NDrawerContent,
@@ -19,8 +20,10 @@ import {
   NProgress,
   NSelect,
   NSwitch,
+  NTag,
   useDialog,
   useMessage,
+  type DataTableColumns,
   type InputInst,
 } from 'naive-ui'
 import {
@@ -713,6 +716,127 @@ function treatyDurationLabel(ms?: number) {
   const seconds = Math.round((ms % 60000) / 1000)
   return `${minutes}分${seconds}秒`
 }
+
+const treatyColumns = computed<DataTableColumns<AuditTreaty>>(() => [
+  {
+    title: '条约名称',
+    key: 'name',
+    minWidth: 240,
+    align: 'center',
+    render: (row) => h('div', { class: 'treaty-name' }, [
+      h('strong', row.name),
+      row.file_name ? h('small', row.file_name) : null,
+      row.error ? h('small', { class: 'error' }, row.error) : null,
+      h('small', { class: 'treaty-sub' }, treatySourceLabel(row.source_type)),
+    ]),
+  },
+  {
+    title: '简介',
+    key: 'summary',
+    minWidth: 180,
+    align: 'center',
+    render: (row) => h('span', {
+      class: 'treaty-summary',
+      title: row.summary || '',
+    }, row.summary || '—'),
+  },
+  {
+    title: '状态',
+    key: 'status',
+    width: 130,
+    align: 'center',
+    render: (row) => row.status === 'UPLOADING'
+      ? h('div', { class: 'treaty-upload-progress' }, [
+          h(NProgress, {
+            type: 'line',
+            percentage: row.upload_progress || 0,
+            showIndicator: false,
+            height: 4,
+          }),
+          h('small', `${row.upload_progress || 0}% 上传中`),
+        ])
+      : h(NTag, {
+          size: 'small',
+          bordered: false,
+          type: treatyStatusType(row.status),
+        }, { default: () => treatyStatusLabel(row.status) }),
+  },
+  {
+    title: '原文',
+    key: 'original_chars',
+    width: 90,
+    align: 'center',
+    render: (row) => h('span', { class: 'num-cell' },
+      row.original_chars ? `${row.original_chars} 字` : '—'),
+  },
+  {
+    title: '整理后',
+    key: 'content_chars',
+    width: 90,
+    align: 'center',
+    render: (row) => h('span', { class: 'num-cell' },
+      row.status === 'READY' ? `${row.content_chars} 字` : '—'),
+  },
+  {
+    title: '上传时间',
+    key: 'created_at',
+    width: 135,
+    align: 'center',
+    render: (row) => treatyTimeLabel(row.created_at),
+  },
+  {
+    title: '解析耗时',
+    key: 'parse_ms',
+    width: 100,
+    align: 'center',
+    render: (row) => row.status === 'PARSING'
+      ? '解析中'
+      : row.parse_ms ? treatyDurationLabel(row.parse_ms) : '—',
+  },
+  {
+    title: '操作',
+    key: 'actions',
+    width: 150,
+    align: 'center',
+    fixed: 'right',
+    render: (row) => h('div', { class: 'treaty-row-actions' }, [
+      row.status === 'UPLOADING'
+        ? h(NButton, {
+            quaternary: true, circle: true, size: 'tiny', type: 'warning',
+            title: '取消上传', 'aria-label': '取消上传',
+            onClick: () => cancelTreatyUpload(row),
+          }, { icon: () => h(CloseOutline) })
+        : null,
+      row.status === 'READY'
+        ? h(NButton, {
+            quaternary: true, circle: true, size: 'tiny', type: 'primary',
+            title: '查看条约内容', 'aria-label': '查看条约内容',
+            onClick: () => openTreatyPreview(row),
+          }, { icon: () => h(EyeOutline) })
+        : null,
+      row.status === 'FAILED' && row.retryable
+        ? h(NButton, {
+            quaternary: true, circle: true, size: 'tiny', type: 'warning',
+            title: '重新解析', 'aria-label': '重新解析',
+            onClick: () => reparseTreaty(row),
+          }, { icon: () => h(RefreshOutline) })
+        : null,
+      row.status !== 'UPLOADING'
+        ? h(NButton, {
+            quaternary: true, circle: true, size: 'tiny', type: 'error',
+            title: '删除条约', 'aria-label': '删除条约',
+            onClick: () => confirmRemoveTreaty(row),
+          }, { icon: () => h(TrashOutline) })
+        : null,
+    ]),
+  },
+])
+
+function treatyRowClassName(row: AuditTreaty) {
+  return row.status === 'FAILED' ? 'failed-row' : ''
+}
+
+const treatyRowKey = (row: AuditTreaty) => row.id
 
 function treatyNameFromFile(fileName: string) {
   const name = fileName.replace(/\.[^.]+$/, '').trim()
@@ -2545,109 +2669,16 @@ onMounted(async () => {
           </div>
 
           <div v-else class="treaty-table-wrap">
-            <table class="treaty-table">
-              <thead>
-                <tr>
-                  <th>条约名称</th>
-                  <th>简介</th>
-                  <th>状态</th>
-                  <th class="num">原文</th>
-                  <th class="num">整理后</th>
-                  <th>上传时间</th>
-                  <th>解析耗时</th>
-                  <th class="actions">操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr
-                  v-for="treaty in treatyDocs"
-                  :key="treaty.id"
-                  :class="{ failed: treaty.status === 'FAILED' }"
-                >
-                  <td>
-                    <div class="treaty-name">
-                      <strong>{{ treaty.name }}</strong>
-                      <small v-if="treaty.file_name">{{ treaty.file_name }}</small>
-                      <small v-if="treaty.error" class="error">{{ treaty.error }}</small>
-                      <small class="treaty-sub">{{ treatySourceLabel(treaty.source_type) }}</small>
-                    </div>
-                  </td>
-                  <td>
-                    <span class="treaty-summary" :title="treaty.summary || ''">{{ treaty.summary || '—' }}</span>
-                  </td>
-                  <td>
-                    <div v-if="treaty.status === 'UPLOADING'" class="treaty-upload-progress">
-                      <n-progress
-                        type="line"
-                        :percentage="treaty.upload_progress || 0"
-                        :show-indicator="false"
-                        :height="4"
-                      />
-                      <small>{{ treaty.upload_progress || 0 }}% 上传中</small>
-                    </div>
-                    <n-tag v-else size="small" :bordered="false" :type="treatyStatusType(treaty.status)">
-                      {{ treatyStatusLabel(treaty.status) }}
-                    </n-tag>
-                  </td>
-                  <td class="num">{{ treaty.original_chars ? `${treaty.original_chars} 字` : '—' }}</td>
-                  <td class="num">{{ treaty.status === 'READY' ? `${treaty.content_chars} 字` : '—' }}</td>
-                  <td>{{ treatyTimeLabel(treaty.created_at) }}</td>
-                  <td>{{ treaty.status === 'PARSING' ? '解析中' : treaty.parse_ms ? treatyDurationLabel(treaty.parse_ms) : '—' }}</td>
-                  <td class="actions">
-                    <div class="treaty-row-actions">
-                      <n-button
-                        v-if="treaty.status === 'UPLOADING'"
-                        quaternary
-                        circle
-                        size="tiny"
-                        type="warning"
-                        title="取消上传"
-                        aria-label="取消上传"
-                        @click="cancelTreatyUpload(treaty)"
-                      >
-                        <template #icon><CloseOutline /></template>
-                      </n-button>
-                      <n-button
-                        v-else-if="treaty.status === 'READY'"
-                        quaternary
-                        circle
-                        size="tiny"
-                        type="primary"
-                        title="查看条约内容"
-                        aria-label="查看条约内容"
-                        @click="openTreatyPreview(treaty)"
-                      >
-                        <template #icon><EyeOutline /></template>
-                      </n-button>
-                      <n-button
-                        v-if="treaty.status === 'FAILED' && treaty.retryable"
-                        quaternary
-                        circle
-                        size="tiny"
-                        type="warning"
-                        title="重新解析"
-                        aria-label="重新解析"
-                        @click="reparseTreaty(treaty)"
-                      >
-                        <template #icon><RefreshOutline /></template>
-                      </n-button>
-                      <n-button
-                        v-if="treaty.status !== 'UPLOADING'"
-                        quaternary
-                        circle
-                        size="tiny"
-                        type="error"
-                        title="删除条约"
-                        aria-label="删除条约"
-                        @click="confirmRemoveTreaty(treaty)"
-                      >
-                        <template #icon><TrashOutline /></template>
-                      </n-button>
-                    </div>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
+            <n-data-table
+              :columns="treatyColumns"
+              :data="treatyDocs"
+              :row-key="treatyRowKey"
+              :row-class-name="treatyRowClassName"
+              :scroll-x="1040"
+              size="small"
+              :bordered="false"
+              class="sdv-data-table"
+            />
           </div>
 
         </div>
@@ -3821,7 +3852,7 @@ onMounted(async () => {
 }
 
 .treaty-table-wrap {
-  overflow-x: auto;
+  overflow: hidden;
   margin-top: 12px;
   border: 1px solid var(--border);
   border-radius: 10px;

@@ -1,13 +1,15 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, h, nextTick, onMounted, ref, watch } from 'vue'
 import {
   NButton,
+  NDataTable,
   NDatePicker,
   NInput,
   NModal,
   NPagination,
   NSelect,
   useMessage,
+  type DataTableColumns,
 } from 'naive-ui'
 import dayjs from 'dayjs'
 import {
@@ -154,6 +156,73 @@ function actionLabel(value: string) {
   return actionLabels[value] || value
 }
 
+const logRowKey = (row: AuditLog) => row.id
+
+const logColumns = computed<DataTableColumns<AuditLog>>(() => [
+  {
+    title: '时间',
+    key: 'created_at',
+    width: 155,
+    render: (row) => h('span', { class: 'log-time mono' },
+      row.created_at?.replace('T', ' ').slice(0, 19) || '—'),
+  },
+  {
+    title: '操作人',
+    key: 'operator',
+    minWidth: 170,
+    render: (row) => h('div', { class: 'operator-cell' }, [
+      h('span', { class: 'mini-avatar' }, row.operator?.slice(0, 1).toUpperCase() || '?'),
+      h('div', [
+        h('span', { class: 'cell-title' }, row.operator || '—'),
+        h('span', { class: 'cell-sub mono' }, row.operator_ip || '—'),
+      ]),
+    ]),
+  },
+  {
+    title: '操作',
+    key: 'action',
+    minWidth: 190,
+    render: (row) => h('div', [
+      h('div', { class: 'cell-title' }, actionLabel(row.action)),
+      h('div', { class: 'cell-sub mono' }, row.action),
+    ]),
+  },
+  {
+    title: '对象',
+    key: 'object',
+    minWidth: 170,
+    render: (row) => h('div', [
+      h('div', { class: 'cell-title' }, row.object_type || '—'),
+      h('div', { class: 'cell-sub mono' }, row.object_id || '—'),
+    ]),
+  },
+  {
+    title: '结果',
+    key: 'result',
+    width: 100,
+    render: (row) => h(StatusTag, { status: row.result, type: 'log' }),
+  },
+  {
+    title: 'Trace ID',
+    key: 'trace_id',
+    width: 135,
+    render: (row) => h('span', { class: 'trace mono' },
+      row.trace_id ? row.trace_id.slice(0, 12) : '—'),
+  },
+  {
+    title: '详情',
+    key: 'detail',
+    width: 80,
+    align: 'right',
+    fixed: 'right',
+    render: (row) => h(NButton, {
+      size: 'tiny',
+      quaternary: true,
+      onClick: () => openDetail(row),
+    }, { icon: () => h(EyeOutline) }),
+  },
+])
+
 const assistantFilters = computed<LogsAssistantFilter>(() => ({
   operator: operator.value.trim() || undefined,
   actions: action.value.length ? [...action.value] : undefined,
@@ -284,48 +353,15 @@ onMounted(load)
       </div>
 
       <div v-if="logs.length" class="data-table-wrap">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>时间</th>
-              <th>操作人</th>
-              <th>操作</th>
-              <th>对象</th>
-              <th>结果</th>
-              <th>Trace ID</th>
-              <th class="action-col" style="text-align: right">详情</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="log in logs" :key="log.id">
-              <td><span class="log-time mono">{{ log.created_at?.replace('T', ' ').slice(0, 19) }}</span></td>
-              <td>
-                <div class="operator-cell">
-                  <span class="mini-avatar">{{ log.operator?.slice(0, 1).toUpperCase() }}</span>
-                  <div>
-                    <span class="cell-title">{{ log.operator }}</span>
-                    <span class="cell-sub mono">{{ log.operator_ip || '—' }}</span>
-                  </div>
-                </div>
-              </td>
-              <td>
-                <div class="cell-title">{{ actionLabel(log.action) }}</div>
-                <div class="cell-sub mono">{{ log.action }}</div>
-              </td>
-              <td>
-                <div class="cell-title">{{ log.object_type || '—' }}</div>
-                <div class="cell-sub mono">{{ log.object_id || '—' }}</div>
-              </td>
-              <td><StatusTag :status="log.result" type="log" /></td>
-              <td><span class="trace mono">{{ log.trace_id ? log.trace_id.slice(0, 12) : '—' }}</span></td>
-              <td class="action-col" style="text-align: right">
-                <n-button size="tiny" quaternary @click="openDetail(log)">
-                  <template #icon><EyeOutline /></template>
-                </n-button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+        <n-data-table
+          :columns="logColumns"
+          :data="logs"
+          :row-key="logRowKey"
+          :scroll-x="1080"
+          size="small"
+          :bordered="false"
+          class="sdv-data-table"
+        />
       </div>
 
       <EmptyState v-else-if="!loading" compact title="没有匹配的审计记录" description="调整筛选条件后再试。">

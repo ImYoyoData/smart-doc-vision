@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, h, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   NButton,
   NCheckbox,
   NCheckboxGroup,
+  NDataTable,
   NDatePicker,
   NInput,
   NPagination,
@@ -12,6 +13,7 @@ import {
   NSelect,
   useDialog,
   useMessage,
+  type DataTableColumns,
 } from 'naive-ui'
 import dayjs from 'dayjs'
 import {
@@ -208,6 +210,131 @@ function sourceLabel(source?: string) {
   }
   return map[source || ''] || source || '—'
 }
+
+const taskColumns = computed<DataTableColumns<Task>>(() => {
+  const columns: DataTableColumns<Task> = []
+  if (isColumnVisible('task')) {
+    columns.push({
+      title: '任务',
+      key: 'task',
+      minWidth: 210,
+      render: (row) => h('div', [
+        h('div', { class: 'cell-title mono' }, row.task_no),
+        h('div', { class: 'cell-sub' }, [
+          row.biz_key || '无业务键',
+          row.request_id ? h('span', { class: 'mono' }, ` · ${row.request_id}`) : null,
+        ]),
+      ]),
+    })
+  }
+  if (isColumnVisible('audit')) {
+    columns.push({
+      title: '审核配置',
+      key: 'audit',
+      minWidth: 160,
+      render: (row) => h('div', [
+        h('div', { class: 'cell-title' }, row.audit_name || '—'),
+        h('div', { class: 'cell-sub' }, sourceLabel(row.source_type)),
+      ]),
+    })
+  }
+  if (isColumnVisible('media')) {
+    columns.push({
+      title: '媒体',
+      key: 'media',
+      width: 110,
+      render: (row) => {
+        const icon = row.media_type === 'text'
+          ? DocumentTextOutline
+          : row.media_type === 'image'
+            ? ImagesOutline
+            : FlashOutline
+        return h('span', { class: 'media-chip' }, [h(icon), row.media_type])
+      },
+    })
+  }
+  if (isColumnVisible('status')) {
+    columns.push({
+      title: '状态',
+      key: 'status',
+      width: 105,
+      render: (row) => h(StatusTag, { status: row.status, type: 'task' }),
+    })
+  }
+  if (isColumnVisible('result')) {
+    columns.push({
+      title: '结论',
+      key: 'result',
+      width: 105,
+      render: (row) => h(StatusTag, { status: row.result, type: 'result' }),
+    })
+  }
+  if (isColumnVisible('model')) {
+    columns.push({
+      title: '模型',
+      key: 'model',
+      minWidth: 150,
+      render: (row) => h('div', { class: 'cell-title model-cell' }, row.provider_name || '—'),
+    })
+  }
+  if (isColumnVisible('duration')) {
+    columns.push({
+      title: '耗时',
+      key: 'duration',
+      width: 90,
+      render: (row) => h('span', { class: 'duration mono' },
+        row.duration_ms ? `${(row.duration_ms / 1000).toFixed(2)}s` : '—'),
+    })
+  }
+  if (isColumnVisible('created')) {
+    columns.push({
+      title: '创建时间',
+      key: 'created',
+      width: 165,
+      render: (row) => h('span', { class: 'task-time' },
+        row.created_at?.replace('T', ' ').slice(0, 19) || '—'),
+    })
+  }
+  columns.push({
+    title: '操作',
+    key: 'actions',
+    width: 130,
+    align: 'right',
+    fixed: 'right',
+    render: (row) => h('div', { class: 'row-actions' }, [
+      h(NButton, {
+        size: 'tiny',
+        quaternary: true,
+        onClick: (event: MouseEvent) => {
+          event.stopPropagation()
+          openTask(row)
+        },
+      }, { default: () => '查看' }),
+      row.status === 'FAILED' && auth.can('task:retry')
+        ? h(NButton, {
+            size: 'tiny',
+            quaternary: true,
+            type: 'warning',
+            loading: retryingId.value === row.id,
+            onClick: (event: MouseEvent) => {
+              event.stopPropagation()
+              retry(row)
+            },
+          }, { default: () => '重试' })
+        : null,
+    ]),
+  })
+  return columns
+})
+
+function taskRowProps(row: Task) {
+  return {
+    class: 'clickable-row',
+    onClick: () => openTask(row),
+  }
+}
+
+const taskRowKey = (row: Task) => row.id
 
 async function loadAudits() {
   if (!workspace.currentProjectId) {
@@ -479,64 +606,16 @@ onBeforeUnmount(() => {
       </div>
 
       <div v-if="tasks.length" class="data-table-wrap">
-        <table class="data-table task-table">
-          <thead>
-            <tr>
-              <th v-if="isColumnVisible('task')">任务</th>
-              <th v-if="isColumnVisible('audit')">审核配置</th>
-              <th v-if="isColumnVisible('media')">媒体</th>
-              <th v-if="isColumnVisible('status')">状态</th>
-              <th v-if="isColumnVisible('result')">结论</th>
-              <th v-if="isColumnVisible('model')">模型</th>
-              <th v-if="isColumnVisible('duration')">耗时</th>
-              <th v-if="isColumnVisible('created')">创建时间</th>
-              <th class="action-col" style="text-align: right">操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="task in tasks" :key="task.id" class="clickable" @click="openTask(task)">
-              <td v-if="isColumnVisible('task')">
-                <div class="cell-title mono">{{ task.task_no }}</div>
-                <div class="cell-sub">
-                  {{ task.biz_key || '无业务键' }}
-                  <span v-if="task.request_id" class="mono"> · {{ task.request_id }}</span>
-                </div>
-              </td>
-              <td v-if="isColumnVisible('audit')">
-                <div class="cell-title">{{ task.audit_name || '—' }}</div>
-                <div class="cell-sub">{{ sourceLabel(task.source_type) }}</div>
-              </td>
-              <td v-if="isColumnVisible('media')">
-                <span class="media-chip">
-                  <DocumentTextOutline v-if="task.media_type === 'text'" />
-                  <ImagesOutline v-else-if="task.media_type === 'image'" />
-                  <FlashOutline v-else />
-                  {{ task.media_type }}
-                </span>
-              </td>
-              <td v-if="isColumnVisible('status')"><StatusTag :status="task.status" type="task" /></td>
-              <td v-if="isColumnVisible('result')"><StatusTag :status="task.result" type="result" /></td>
-              <td v-if="isColumnVisible('model')">
-                <div class="cell-title model-cell">{{ task.provider_name || '—' }}</div>
-              </td>
-              <td v-if="isColumnVisible('duration')"><span class="duration mono">{{ task.duration_ms ? `${(task.duration_ms / 1000).toFixed(2)}s` : '—' }}</span></td>
-              <td v-if="isColumnVisible('created')"><span class="task-time">{{ task.created_at?.replace('T', ' ').slice(0, 19) }}</span></td>
-              <td class="action-col" style="text-align: right" @click.stop>
-                <n-button size="tiny" quaternary @click="openTask(task)">查看</n-button>
-                <n-button
-                  v-if="task.status === 'FAILED' && auth.can('task:retry')"
-                  size="tiny"
-                  quaternary
-                  type="warning"
-                  :loading="retryingId === task.id"
-                  @click="retry(task)"
-                >
-                  重试
-                </n-button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+        <n-data-table
+          :columns="taskColumns"
+          :data="tasks"
+          :row-key="taskRowKey"
+          :row-props="taskRowProps"
+          :scroll-x="1180"
+          size="small"
+          :bordered="false"
+          class="sdv-data-table"
+        />
       </div>
 
       <EmptyState

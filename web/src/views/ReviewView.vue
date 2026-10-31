@@ -814,9 +814,9 @@ onMounted(async () => {
 
 .review-images .review-image-card {
   overflow: hidden;
-  border: 1px solid #edf1f7;
+  border: 1px solid var(--border);
   border-radius: 10px;
-  background: #f8fafc;
+  background: var(--surface-soft);
 }
 
 .review-images :deep(.n-image) {

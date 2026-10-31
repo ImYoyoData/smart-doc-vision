@@ -29,7 +29,7 @@ html[data-theme='dark'] :is(
   .health-key code, .jev-note, .endpoint-box, .guide-note, .input-contract, .method-ai-row,
   .identity-copy code, .code-shell, .code-head, .code-block, .data-table th,
   .data-table th.action-col, .meta-grid, .route-results, .text-doc-head, .image-card,
-  .rule-match, .queue-meta span, .review-text-head, .review-images a, .media-chip,
+  .rule-match, .queue-meta span, .review-text-head, .review-images .review-image-card, .media-chip,
   .project-scope span, .trace, .doc-inline-action, .doc-note, .trigger-card,
   .endpoint, .prompt-hint, .doc-section code, .field-ai-empty, .field-ai-examples button,
   .field-ai-result, .provider-tip, .shortcut-row button, .credential-add > span,

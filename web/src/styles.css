@@ -436,6 +436,203 @@ textarea {
   font-size: 11.5px;
 }
 
+/* Naive UI data tables used by 审核任务 / 审计日志 / 审核条约 */
+.sdv-data-table .n-data-table-th {
+  padding: 10px 9px;
+  color: var(--muted-light);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  background: var(--surface-soft);
+  border-bottom: 1px solid var(--border);
+}
+
+.sdv-data-table .n-data-table-td {
+  padding: 10px 9px;
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  line-height: 1.45;
+  vertical-align: middle;
+}
+
+.sdv-data-table .n-data-table-tr:hover .n-data-table-td {
+  background: var(--surface-hover);
+}
+
+.sdv-data-table .n-data-table-tr.clickable-row {
+  cursor: pointer;
+}
+
+.sdv-data-table .n-data-table-tr.failed-row .n-data-table-td {
+  background: var(--red-soft-2);
+}
+
+.sdv-data-table .cell-title {
+  color: var(--ink);
+  font-weight: 550;
+  font-size: 10.5px;
+}
+
+.sdv-data-table .cell-sub {
+  margin-top: 2px;
+  color: var(--muted-light);
+  font-size: 9px;
+}
+
+.sdv-data-table .model-cell {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sdv-data-table .media-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 5px;
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.sdv-data-table .media-chip svg {
+  width: 11px;
+  height: 11px;
+}
+
+.sdv-data-table .duration {
+  color: var(--muted);
+  font-size: 10.5px;
+}
+
+.sdv-data-table .task-time,
+.sdv-data-table .num-cell {
+  color: var(--muted-light);
+  font-family: var(--mono);
+  font-size: 9.5px;
+}
+
+.sdv-data-table .log-time {
+  color: var(--muted);
+  font-size: 9.5px;
+}
+
+.sdv-data-table .operator-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sdv-data-table .mini-avatar {
+  display: flex;
+  width: 27px;
+  height: 27px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: var(--brand-soft);
+  color: var(--brand-strong);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.sdv-data-table .operator-cell .cell-title {
+  display: block;
+  font-size: 11.5px;
+}
+
+.sdv-data-table .operator-cell .cell-sub {
+  display: block;
+  font-size: 9px;
+}
+
+.sdv-data-table .trace {
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: var(--surface-soft);
+  color: var(--muted-light);
+  font-size: 9px;
+}
+
+.sdv-data-table .row-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.sdv-data-table .treaty-name {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  text-align: center;
+}
+
+.sdv-data-table .treaty-name strong,
+.sdv-data-table .treaty-name small {
+  overflow: hidden;
+  max-width: 320px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sdv-data-table .treaty-name strong {
+  color: var(--text);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.sdv-data-table .treaty-name small {
+  color: var(--muted-light);
+  font-size: 8.5px;
+}
+
+.sdv-data-table .treaty-name small.error {
+  max-width: 360px;
+  color: var(--red);
+  white-space: normal;
+}
+
+.sdv-data-table .treaty-sub {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted-light);
+  font-size: 8px;
+  font-weight: 400;
+}
+
+.sdv-data-table .treaty-summary {
+  display: block;
+  overflow: hidden;
+  max-width: 210px;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sdv-data-table .treaty-upload-progress {
+  width: 120px;
+  margin: 0 auto;
+  color: var(--muted);
+  font-size: 8.5px;
+}
+
+.sdv-data-table .treaty-upload-progress .n-progress {
+  margin-bottom: 3px;
+}
+
+.sdv-data-table .treaty-row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
 .table-empty {
   padding: 52px 20px;
   text-align: center;
