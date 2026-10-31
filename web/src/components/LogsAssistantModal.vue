@@ -8,11 +8,20 @@ import {
 } from '@vicons/ionicons5'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
+import AiContextUsage from '@/components/AiContextUsage.vue'
 import VoiceInputButton from '@/components/VoiceInputButton.vue'
 import { logApi, providerApi } from '@/api'
-import type { LogsAssistantFilter, Provider } from '@/api/types'
+import type { AssistantUsage, LogsAssistantFilter, Provider } from '@/api/types'
 
 type ChatRole = 'user' | 'assistant'
+
+interface ChatStep {
+  id: string
+  label: string
+  detail?: string
+  status: 'running' | 'done' | 'error'
+  at?: number
+}
 
 interface ChatMessage {
   role: ChatRole
@@ -20,6 +29,8 @@ interface ChatMessage {
   filter?: LogsAssistantFilter
   total?: number
   tools?: string[]
+  steps?: ChatStep[]
+  pending?: boolean
 }
 
 const props = defineProps<{
@@ -50,6 +61,24 @@ const reasoning = ref('')
 const contextTokens = ref(0)
 const contextWindow = ref(128000)
 const compressed = ref(false)
+const lastUsage = ref<{
+  requests: number
+  input_tokens: number
+  output_tokens: number
+  total_tokens: number
+  model: string
+} | null>(null)
+
+const usageForDisplay = computed<AssistantUsage>(() => ({
+  model: lastUsage.value?.model,
+  requests: lastUsage.value?.requests,
+  input_tokens: lastUsage.value?.input_tokens,
+  output_tokens: lastUsage.value?.output_tokens,
+  total_tokens: lastUsage.value?.total_tokens,
+  context_tokens: contextTokens.value,
+  context_window: contextWindow.value,
+  compressed: compressed.value,
+}))
 
 const providerOptions = computed(() => [
   { label: '自动选择（按模型优先级）', value: 0 },
@@ -65,22 +94,6 @@ const reasoningOptions = [
   { label: '中', value: 'medium' },
   { label: '高', value: 'high' },
 ]
-
-const contextPercent = computed(() => {
-  if (!contextWindow.value) return 0
-  return Math.min(100, Math.round((contextTokens.value / contextWindow.value) * 1000) / 10)
-})
-
-const contextTone = computed(() => {
-  if (contextPercent.value >= 85) return 'danger'
-  if (contextPercent.value >= 60) return 'warn'
-  return 'ok'
-})
-
-const contextRingOffset = computed(() => {
-  const circumference = 2 * Math.PI * 15
-  return circumference * (1 - Math.min(1, contextTokens.value / contextWindow.value))
-})
 
 function formatTokens(value?: number) {
   if (!value || value <= 0) return '0'
@@ -145,6 +158,7 @@ function clearChat() {
   contextTokens.value = 0
   contextWindow.value = 128000
   compressed.value = false
+  lastUsage.value = null
 }
 
 function appendInput(text: string) {
@@ -179,6 +193,14 @@ function applyFilter(filter?: LogsAssistantFilter) {
   visible.value = false
 }
 
+function upsertStep(message: ChatMessage, step: ChatStep) {
+  const steps = message.steps || []
+  const index = steps.findIndex((item) => item.id === step.id)
+  if (index >= 0) steps[index] = { ...steps[index], ...step }
+  else steps.push(step)
+  message.steps = steps
+}
+
 async function send(forced?: string) {
   if (loading.value) return
   const prompt = (forced ?? input.value).trim()
@@ -189,28 +211,60 @@ async function send(forced?: string) {
   errorText.value = ''
   const history = messages.value.map((item) => ({ role: item.role, content: item.content }))
   messages.value.push({ role: 'user', content: prompt })
+  messages.value.push({ role: 'assistant', content: '', steps: [], pending: true })
+  const assistantMessage = messages.value[messages.value.length - 1]
   input.value = ''
   loading.value = true
   scrollToBottom()
+  let final: import('@/api/types').LogsAssistantResult | null = null
   try {
-    const data = await logApi.assistant({
+    await logApi.assistantStream({
       project_id: props.projectId || 0,
       provider_id: providerId.value || 0,
       reasoning: reasoning.value,
       messages: [...history, { role: 'user', content: prompt }],
       filters: props.filters,
+    }, {
+      onEvent: (event, data) => {
+        const payload = data as Record<string, any>
+        if (event === 'step') {
+          upsertStep(assistantMessage, {
+            id: String(payload.id || ''),
+            label: String(payload.label || ''),
+            detail: payload.detail ? String(payload.detail) : undefined,
+            status: (payload.status || 'done') as ChatStep['status'],
+            at: Number(payload.at || Date.now()),
+          })
+          scrollToBottom()
+        } else if (event === 'reply') {
+          final = payload as unknown as import('@/api/types').LogsAssistantResult
+        } else if (event === 'error') {
+          throw new Error(String(payload.message || '日志查询助手请求失败'))
+        }
+      },
     })
+    if (!final) throw new Error('模型没有返回结果')
+    const data = final as import('@/api/types').LogsAssistantResult
+    assistantMessage.content = data.reply
+    assistantMessage.filter = data.filter
+    assistantMessage.total = data.total
+    assistantMessage.tools = data.tools
+    assistantMessage.pending = false
     contextTokens.value = data.context_tokens || 0
     contextWindow.value = data.context_window || 128000
     compressed.value = data.compressed
-    messages.value.push({
-      role: 'assistant',
-      content: data.reply,
-      filter: data.filter,
-      total: data.total,
-      tools: data.tools,
-    })
+    lastUsage.value = {
+      requests: data.usage.requests,
+      input_tokens: data.usage.input_tokens,
+      output_tokens: data.usage.output_tokens,
+      total_tokens: data.usage.total_tokens,
+      model: data.model,
+    }
   } catch (error) {
+    assistantMessage.pending = false
+    if (!assistantMessage.content && !assistantMessage.steps?.length) {
+      messages.value = messages.value.filter((item) => item !== assistantMessage)
+    }
     errorText.value = error instanceof Error ? error.message : '日志查询助手暂时不可用'
   } finally {
     loading.value = false
@@ -249,8 +303,19 @@ async function send(forced?: string) {
         <div v-for="(item, index) in messages" :key="index" class="logs-ai-msg" :class="item.role">
           <span v-if="item.role === 'assistant'" class="logs-ai-avatar"><SparklesOutline /></span>
           <div class="logs-ai-bubble">
-            <div v-if="item.role === 'assistant'" class="logs-ai-markdown" v-html="renderMarkdown(item.content)"></div>
-            <p v-else class="logs-ai-text">{{ item.content }}</p>
+            <div v-if="item.role === 'assistant' && item.steps?.length" class="logs-ai-steps">
+              <div v-for="step in item.steps" :key="step.id" class="logs-ai-step" :class="step.status">
+                <span class="logs-ai-step-dot"></span>
+                <span class="logs-ai-step-label">{{ step.label }}</span>
+                <span v-if="step.detail" class="logs-ai-step-detail">{{ step.detail }}</span>
+              </div>
+            </div>
+            <div v-if="item.role === 'assistant' && item.pending && !item.steps?.length" class="logs-ai-loading">
+              <n-spin size="small" />
+              <span>AI 正在准备…</span>
+            </div>
+            <div v-if="item.role === 'assistant' && item.content" class="logs-ai-markdown" v-html="renderMarkdown(item.content)"></div>
+            <p v-else-if="item.role === 'user'" class="logs-ai-text">{{ item.content }}</p>
             <div v-if="item.role === 'assistant' && (item.tools?.length || item.total !== undefined)" class="logs-ai-meta">
               <n-tag v-if="item.total !== undefined" size="small" :bordered="false">匹配 {{ item.total }} 条</n-tag>
               <n-tag v-for="tool in item.tools || []" :key="tool" size="small" :bordered="false">
@@ -263,14 +328,6 @@ async function send(forced?: string) {
               </n-button>
               <span>应用后关闭助手并刷新列表</span>
             </div>
-          </div>
-        </div>
-
-        <div v-if="loading" class="logs-ai-msg assistant">
-          <span class="logs-ai-avatar"><SparklesOutline /></span>
-          <div class="logs-ai-bubble logs-ai-loading">
-            <n-spin size="small" />
-            <span>正在查询日志并分析…</span>
           </div>
         </div>
 
@@ -312,26 +369,7 @@ async function send(forced?: string) {
               <VoiceInputButton :disabled="loading" @transcript="appendInput" />
             </div>
             <div class="logs-ai-actions">
-              <button
-                type="button"
-                class="logs-ai-context"
-                :class="contextTone"
-                :title="`上下文 ${formatTokens(contextTokens)} / ${formatTokens(contextWindow)} tokens；接近上限时自动压缩`"
-                aria-label="查看上下文用量"
-              >
-                <svg viewBox="0 0 36 36" class="logs-ai-context-ring" aria-hidden="true">
-                  <circle class="ring-track" cx="18" cy="18" r="15" />
-                  <circle
-                    class="ring-fill"
-                    cx="18"
-                    cy="18"
-                    r="15"
-                    stroke-dasharray="94.25"
-                    :stroke-dashoffset="contextRingOffset"
-                  />
-                </svg>
-                <span>{{ contextPercent }}%</span>
-              </button>
+              <AiContextUsage :usage="usageForDisplay" />
               <span v-if="compressed" class="logs-ai-compressed">已自动压缩</span>
               <button v-if="messages.length" type="button" class="logs-ai-clear" :disabled="loading" @click="clearChat">
                 清空
@@ -561,6 +599,59 @@ async function send(forced?: string) {
   word-break: break-word;
 }
 
+.logs-ai-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px dashed var(--border);
+}
+
+.logs-ai-step {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 9.5px;
+  line-height: 1.45;
+}
+
+.logs-ai-step-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--muted-light);
+  flex: none;
+}
+
+.logs-ai-step.running .logs-ai-step-dot {
+  background: var(--brand);
+  box-shadow: 0 0 0 3px var(--brand-soft);
+}
+
+.logs-ai-step.done .logs-ai-step-dot {
+  background: var(--green);
+}
+
+.logs-ai-step.error .logs-ai-step-dot {
+  background: var(--red);
+}
+
+.logs-ai-step-label {
+  color: var(--text);
+  font-weight: 550;
+  white-space: nowrap;
+}
+
+.logs-ai-step-detail {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted-light);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .logs-ai-markdown {
   color: var(--text);
   font-size: 12px;
@@ -738,6 +829,92 @@ async function send(forced?: string) {
   align-items: center;
   gap: 7px;
   flex: none;
+}
+
+.logs-ai-context-pop {
+  width: 276px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+  box-shadow: var(--shadow-md);
+  color: var(--text);
+}
+
+.context-pop-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.context-pop-head span {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.context-pop-head strong {
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.context-pop-bar {
+  height: 5px;
+  margin: 9px 0 10px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: var(--surface-strong);
+}
+
+.context-pop-bar span {
+  display: block;
+  height: 100%;
+  border-radius: 99px;
+  background: var(--brand);
+}
+
+.context-pop-bar span.warn {
+  background: var(--amber);
+}
+
+.context-pop-bar span.danger {
+  background: var(--red);
+}
+
+.context-pop-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px 12px;
+}
+
+.context-pop-grid div {
+  min-width: 0;
+}
+
+.context-pop-grid span {
+  display: block;
+  color: var(--muted-light);
+  font-size: 9px;
+}
+
+.context-pop-grid strong {
+  display: block;
+  overflow: hidden;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.context-pop-note {
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid var(--border);
+  color: var(--muted-light);
+  font-size: 9px;
+  line-height: 1.55;
 }
 
 .logs-ai-context {

@@ -292,6 +292,7 @@ func (s *Server) handleAuditAssistant(c *gin.Context, stream bool) {
 		"mode":   map[bool]string{true: "edit", false: "create"}[currentAudit != nil],
 		"steps":  steps,
 		"images": totalImages,
+		"usage":  assistantUsageView(provider, result),
 	}
 	if currentAudit != nil {
 		response["target"] = gin.H{"id": currentAudit.ID, "name": currentAudit.Name, "code": currentAudit.Code}

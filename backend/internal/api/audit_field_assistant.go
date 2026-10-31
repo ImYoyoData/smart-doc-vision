@@ -138,6 +138,7 @@ func (s *Server) auditFieldAssistant(c *gin.Context) {
 	ok(c, gin.H{
 		"field": field, "text": text, "explanation": explanation,
 		"provider_id": provider.ID, "provider_name": provider.Name, "model": result.Model,
+		"usage": assistantUsageView(provider, result),
 	})
 }
 

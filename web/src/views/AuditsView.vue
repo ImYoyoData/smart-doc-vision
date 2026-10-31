@@ -45,6 +45,7 @@ import {
   TrashOutline,
   WarningOutline,
 } from '@vicons/ionicons5'
+import AiContextUsage from '@/components/AiContextUsage.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -59,7 +60,7 @@ import ScriptLogsModal from '@/components/ScriptLogsModal.vue'
 import VoiceInputButton from '@/components/VoiceInputButton.vue'
 import { analyticsApi, auditApi, metaApi, providerApi } from '@/api'
 import { copyText } from '@/utils/clipboard'
-import type { Audit, AuditAssistantConfig, AuditAssistantMessage, AuditAssistantResult, AuditAssistantStep, AuditCategory, AuditTreaty, Provider, RuleTemplate, TriggerSource } from '@/api/types'
+import type { AssistantUsage, Audit, AuditAssistantConfig, AuditAssistantMessage, AuditAssistantResult, AuditAssistantStep, AuditCategory, AuditTreaty, Provider, RuleTemplate, TriggerSource } from '@/api/types'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { useAuthStore } from '@/stores/auth'
 
@@ -131,6 +132,7 @@ const assistantInput = ref('')
 const assistantBusy = ref(false)
 const assistantError = ref('')
 const assistantProviderId = ref<number | null>(null)
+const assistantUsage = ref<AssistantUsage | null>(null)
 const assistantReadyConfig = ref<AuditAssistantConfig | null>(null)
 const assistantChanges = ref<string[]>([])
 const assistantSaved = ref(false)
@@ -1853,6 +1855,7 @@ async function sendAssistant() {
   assistantInput.value = ''
   assistantImages.value = []
   assistantError.value = ''
+  assistantUsage.value = null
   assistantBusy.value = true
   assistantMessages.value.push({ role: 'user', content: text, images })
   const assistantMessage: AuditAssistantMessage = {
@@ -1895,6 +1898,7 @@ async function sendAssistant() {
     }
     assistantMessage.content = finalResult.reply
     assistantMessage.pending = false
+    assistantUsage.value = finalResult.usage || null
     await scrollAssistantToBottom()
     if (finalResult.ready && finalResult.config) {
       await applyAssistantConfig(finalResult.config)
@@ -1920,6 +1924,7 @@ function closeAssistant() {
   assistantShow.value = false
   assistantMessages.value = []
   assistantImages.value = []
+  assistantUsage.value = null
   assistantReadyConfig.value = null
   assistantChanges.value = []
   assistantSaved.value = false
@@ -3102,6 +3107,7 @@ onMounted(async () => {
               <VoiceInputButton :disabled="assistantBusy || saving" @transcript="applyVoiceInput" />
             </div>
             <div class="assistant-actions">
+              <AiContextUsage v-if="assistantUsage" :usage="assistantUsage" />
               <span class="assistant-note">
                 {{ assistantImages.length ? `已附加 ${assistantImages.length} 张图片（最多 4 张）` : assistantSaved && assistantMode === 'edit' ? '修改已保存；可以继续描述调整，或关闭窗口' : hasGeneralProvider ? '使用项目内启用的通用大模型，不会调用 JEV' : '需要先配置通用大模型' }}
               </span>

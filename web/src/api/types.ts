@@ -858,6 +858,18 @@ export interface AuditAssistantConfig {
   }
 }
 
+export interface AssistantUsage {
+  model?: string
+  requests?: number
+  input_tokens?: number
+  cached_tokens?: number
+  output_tokens?: number
+  total_tokens?: number
+  context_tokens?: number
+  context_window?: number
+  compressed?: boolean
+}
+
 export interface AuditAssistantResult {
   reply: string
   ready: boolean
@@ -867,6 +879,7 @@ export interface AuditAssistantResult {
   config?: AuditAssistantConfig
   steps?: AuditAssistantStep[]
   images?: number
+  usage?: AssistantUsage
 }
 
 export interface TreatyParseResult {
@@ -883,6 +896,7 @@ export interface AuditFieldAssistantResult {
   provider_id: number
   provider_name: string
   model?: string
+  usage?: AssistantUsage
 }
 
 export interface RuleTemplate {

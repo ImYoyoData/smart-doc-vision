@@ -749,7 +749,7 @@ onMounted(() => {
   font-size: 13px;
 }
 
-.branding-preview span {
+.branding-preview > div > span {
   display: block;
   margin-top: 2px;
   color: var(--muted-light);

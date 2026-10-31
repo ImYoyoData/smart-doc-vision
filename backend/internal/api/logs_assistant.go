@@ -212,6 +212,14 @@ func logsAssistantTools() []ai.ToolSpec {
 }
 
 func (s *Server) logsAssistant(c *gin.Context) {
+	s.handleLogsAssistant(c, false)
+}
+
+func (s *Server) logsAssistantStream(c *gin.Context) {
+	s.handleLogsAssistant(c, true)
+}
+
+func (s *Server) handleLogsAssistant(c *gin.Context, stream bool) {
 	user := currentUser(c)
 	if !s.hasPermission(user.Role, "log:read") {
 		forbidden(c, "当前角色无权查询审计日志")
@@ -279,6 +287,16 @@ func (s *Server) logsAssistant(c *gin.Context) {
 	if contextWindow <= 0 {
 		contextWindow = 128000
 	}
+	if stream {
+		prepareAssistantSSE(c)
+	}
+	emitStep := func(id, label, status, detail string) {
+		if stream {
+			writeAssistantSSE(c, "step", assistantStep{ID: id, Label: label, Status: status, Detail: detail, At: time.Now().UnixMilli()})
+		}
+	}
+	emitStep("context", "准备查询上下文", "done", fmt.Sprintf("%d 条对话消息", len(messages)))
+	emitStep("provider", "选择模型", "done", provider.Name+" · "+provider.Model)
 
 	state := &logsToolState{user: user}
 	tools := logsAssistantTools()
@@ -302,7 +320,11 @@ func (s *Server) logsAssistant(c *gin.Context) {
 			compressed = true
 		}
 	}
+	if compressed {
+		emitStep("compress", "自动压缩上下文", "done", "保留最近对话并生成摘要")
+	}
 	for turn := 0; turn < 6; turn++ {
+		emitStep("thinking", "AI 正在思考", "running", "")
 		started := time.Now()
 		result, chatErr := ai.Chat(ctx, ai.ChatRequest{
 			Provider: *provider, APIKey: key, System: system,
@@ -322,15 +344,25 @@ func (s *Server) logsAssistant(c *gin.Context) {
 					continue
 				}
 			}
+			emitStep("thinking", "AI 正在思考", "error", chatErr.Error())
 			if isToolUnsupportedError(chatErr) {
-				fail(c, http.StatusUnprocessableEntity, "ASSISTANT_TOOLS_UNSUPPORTED",
-					"当前模型不支持工具调用，请到「模型接入」启用支持 function calling 的通用大模型", nil)
+				if stream {
+					writeAssistantSSE(c, "error", gin.H{"code": "ASSISTANT_TOOLS_UNSUPPORTED", "message": "当前模型不支持工具调用，请到「模型接入」启用支持 function calling 的通用大模型"})
+				} else {
+					fail(c, http.StatusUnprocessableEntity, "ASSISTANT_TOOLS_UNSUPPORTED",
+						"当前模型不支持工具调用，请到「模型接入」启用支持 function calling 的通用大模型", nil)
+				}
 				return
 			}
-			serverError(c, chatErr)
+			if stream {
+				writeAssistantSSE(c, "error", gin.H{"code": "ASSISTANT_FAILED", "message": chatErr.Error()})
+			} else {
+				serverError(c, chatErr)
+			}
 			return
 		}
 		modelName = result.Model
+		emitStep("thinking", "AI 正在思考", "done", fmt.Sprintf("%s · 第 %d 轮", modelName, turn+1))
 		contextTokens = result.Usage.InputTokens + result.Usage.OutputTokens
 		s.recordProviderUsage(*provider, model.UsageSourceLogsAssistant, 0, result, time.Since(started), nil)
 		usage.Requests++
@@ -348,7 +380,14 @@ func (s *Server) logsAssistant(c *gin.Context) {
 			if id == "" {
 				id = fmt.Sprintf("log-tool-%d-%d", turn, index)
 			}
+			label := logsToolLabel(call.Name)
+			emitStep("tool-"+id, "调用工具 · "+label, "running", truncateText(call.Arguments, 160))
 			output := s.executeLogsTool(ctx, state, call)
+			status := "done"
+			if strings.HasPrefix(output, "工具错误") {
+				status = "error"
+			}
+			emitStep("tool-"+id, "调用工具 · "+label, status, truncateText(output, 220))
 			messages = append(messages, ai.ChatMessage{Role: "tool", ToolCallID: id, Content: output})
 		}
 	}
@@ -371,11 +410,32 @@ func (s *Server) logsAssistant(c *gin.Context) {
 	if contextTokens == 0 {
 		contextTokens = estimateMessagesTokens(messages)
 	}
-	ok(c, logsAssistantResult{
+	result := logsAssistantResult{
 		Reply: reply, Filter: filter, Total: state.lastTotal,
 		Tools: state.toolLogs, Model: modelName, Usage: usage,
 		ContextTokens: contextTokens, ContextWindow: contextWindow, Compressed: compressed,
-	})
+	}
+	if stream {
+		writeAssistantSSE(c, "reply", result)
+		writeAssistantSSE(c, "done", gin.H{})
+		return
+	}
+	ok(c, result)
+}
+
+func logsToolLabel(name string) string {
+	switch name {
+	case "search_audit_logs":
+		return "明细查询"
+	case "aggregate_audit_logs":
+		return "统计分析"
+	case "get_audit_log_detail":
+		return "查看详情"
+	case "apply_log_filters":
+		return "准备筛选条件"
+	default:
+		return name
+	}
 }
 
 func estimateMessagesTokens(messages []ai.ChatMessage) int {

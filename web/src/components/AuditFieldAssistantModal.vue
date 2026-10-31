@@ -2,9 +2,10 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { NButton, NIcon, NInput, NModal, NSelect, NSpin, type InputInst } from 'naive-ui'
 import { CloseOutline, SparklesOutline } from '@vicons/ionicons5'
+import AiContextUsage from '@/components/AiContextUsage.vue'
 import VoiceInputButton from '@/components/VoiceInputButton.vue'
 import { auditApi } from '@/api'
-import type { AuditFieldAssistantResult } from '@/api/types'
+import type { AssistantUsage, AuditFieldAssistantResult } from '@/api/types'
 
 const props = defineProps<{
   show: boolean
@@ -27,6 +28,7 @@ const providerId = ref<number | null>(null)
 const busy = ref(false)
 const error = ref('')
 const result = ref<AuditFieldAssistantResult | null>(null)
+const usage = ref<AssistantUsage | null>(null)
 let requestSeq = 0
 
 const isRules = computed(() => props.field === 'rules')
@@ -71,6 +73,7 @@ watch(
     instruction.value = ''
     error.value = ''
     result.value = null
+    usage.value = null
     providerId.value = pickProvider(props.initialProviderId)
     nextTick(() => instructionRef.value?.focus())
   },
@@ -142,6 +145,7 @@ async function generate() {
     })
     if (seq !== requestSeq) return
     result.value = data
+    usage.value = data.usage || null
   } catch (requestError) {
     if (seq !== requestSeq) return
     error.value = requestError instanceof Error ? requestError.message : 'AI 生成失败，请重试'
@@ -236,6 +240,7 @@ function apply() {
       <div class="field-ai-foot">
         <span>应用后仍需保存审核配置才会生效。</span>
         <div class="field-ai-actions">
+          <AiContextUsage v-if="usage" :usage="usage" />
           <n-button @click="close">取消</n-button>
           <n-button v-if="result" secondary :disabled="busy" @click="generate">重新生成</n-button>
           <n-button v-if="result" type="primary" :disabled="busy" @click="apply">{{ applyLabel }}</n-button>

@@ -254,6 +254,8 @@ export const dashboardApi = {
 export const logApi = {
   list: (params?: Record<string, unknown>) => get<Paged<AuditLog>>('/audit-logs', params),
   assistant: (payload: Record<string, unknown>) => post<LogsAssistantResult>('/audit-logs/assistant', payload),
+  assistantStream: (payload: Record<string, unknown>, handlers: SSEHandlers) =>
+    postSSE('/audit-logs/assistant/stream', payload, handlers),
 }
 
 export const monitorApi = {
