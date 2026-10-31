@@ -36,6 +36,7 @@ import {
   CopyOutline,
   CreateOutline,
   DownloadOutline,
+  EllipsisHorizontalOutline,
   EyeOutline,
   FlashOutline,
   LinkOutline,
@@ -1416,6 +1417,22 @@ function validateCategoryForm(): string {
   return ''
 }
 
+function auditMoreOptions() {
+  const options: Array<Record<string, unknown>> = []
+  if (auth.can('audit:write')) options.push({ label: '复制配置', key: 'clone' })
+  options.push({ label: '导出记录', key: 'export' })
+  if (auth.can('audit:write')) {
+    options.push({ type: 'divider', key: 'more-divider' }, { label: '移入回收站', key: 'delete' })
+  }
+  return options
+}
+
+function handleAuditMore(key: string, audit: Audit) {
+  if (key === 'clone') openClone(audit)
+  else if (key === 'export') openExport(audit)
+  else if (key === 'delete') remove(audit)
+}
+
 function openAnalytics(audit: Audit) {
   router.push({ name: 'analytics', query: { project_id: String(audit.project_id), audit_id: String(audit.id) } })
 }
@@ -2383,15 +2400,11 @@ onMounted(async () => {
             <n-button v-if="auth.can('audit:write')" size="tiny" quaternary circle title="脚本日志" aria-label="脚本日志" @click="openScriptLogs(audit)">
               <template #icon><TextOutline /></template>
             </n-button>
-            <n-button v-if="auth.can('audit:write')" size="tiny" quaternary circle title="复制配置" aria-label="复制配置" @click="openClone(audit)">
-              <template #icon><CopyOutline /></template>
-            </n-button>
-            <n-button size="tiny" quaternary circle title="导出记录" aria-label="导出记录" @click="openExport(audit)">
-              <template #icon><DownloadOutline /></template>
-            </n-button>
-            <n-button v-if="auth.can('audit:write')" size="tiny" quaternary circle class="delete-btn" title="移入回收站" aria-label="移入回收站" @click="remove(audit)">
-              <template #icon><TrashOutline /></template>
-            </n-button>
+            <n-dropdown trigger="click" :options="auditMoreOptions()" @select="(key) => handleAuditMore(String(key), audit)">
+              <n-button size="tiny" quaternary circle title="更多" aria-label="更多">
+                <template #icon><EllipsisHorizontalOutline /></template>
+              </n-button>
+            </n-dropdown>
             <div class="audit-primary-actions">
               <n-button size="small" secondary @click="openGuide(audit)">
                 <template #icon><LinkOutline /></template>
