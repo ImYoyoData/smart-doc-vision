@@ -982,7 +982,7 @@ watch(
   display: block;
   width: 100%;
   height: 122px;
-  object-fit: cover;
+  object-fit: contain;
 }
 
 .image-card :deep(.n-image) {
@@ -994,7 +994,7 @@ watch(
   display: block;
   width: 100%;
   height: 122px;
-  object-fit: cover;
+  object-fit: contain;
   cursor: zoom-in;
 }
 

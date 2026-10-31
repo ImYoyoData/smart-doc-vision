@@ -828,7 +828,7 @@ onMounted(async () => {
   display: block;
   width: 100%;
   height: 150px;
-  object-fit: cover;
+  object-fit: contain;
   cursor: zoom-in;
 }
 

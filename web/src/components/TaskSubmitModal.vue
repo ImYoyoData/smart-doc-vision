@@ -587,7 +587,7 @@ async function submit() {
   display: block;
   width: 100%;
   height: 68px;
-  object-fit: cover;
+  object-fit: contain;
   cursor: zoom-in;
 }
 
