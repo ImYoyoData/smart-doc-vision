@@ -651,6 +651,7 @@ onBeforeUnmount(() => {
       @created="handleCreated"
     />
     <TaskDetailDrawer
+      v-if="detailShow"
       v-model:show="detailShow"
       :task-id="selectedTaskId"
       @updated="load"

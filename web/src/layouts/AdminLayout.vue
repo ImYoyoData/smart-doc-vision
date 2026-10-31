@@ -7,6 +7,7 @@ import {
   NIcon,
   NMenu,
   NPopover,
+  NScrollbar,
   NWatermark,
   useMessage,
   type MenuOption,
@@ -138,24 +139,39 @@ const visibleSections = computed(() =>
     .map((section) => ({ ...section, items: section.items.filter((item) => auth.canMenu(item.name)) }))
     .filter((section) => section.items.length > 0),
 )
-const menuOptions = computed<MenuOption[]>(() =>
-  visibleSections.value.map((section) => ({
-    type: 'group',
-    key: `group:${section.label}`,
-    label: section.label,
-    children: section.items.map((item) => ({
-      key: item.name,
-      props: { title: item.label, 'aria-label': item.label },
-      label: () => h('span', { class: 'nav-label' }, [
-        h('span', { class: 'nav-label-text' }, item.label),
-        item.name === 'reviews' && review.pending > 0
-          ? h('span', { class: 'nav-badge' }, review.pending > 99 ? '99+' : String(review.pending))
-          : null,
-      ]),
-      icon: () => h(NIcon, { size: 18 }, { default: () => h(item.icon) }),
-    })),
-  })),
-)
+const menuOptions = computed<MenuOption[]>(() => {
+  const options: MenuOption[] = []
+  for (const section of visibleSections.value) {
+    // 分组标题用 render 选项渲染；折叠时不渲染标题，让菜单项保持根级，
+    // Naive 才会为折叠后的图标自动提供悬浮提示。
+    if (!menuCollapsed.value) {
+      options.push({
+        key: `section:${section.label}`,
+        label: () => h('div', { class: 'nav-section-title' }, section.label),
+        disabled: true,
+      })
+    }
+    for (const item of section.items) {
+      options.push({
+        key: item.name,
+        label: () => h('span', { class: 'nav-label' }, [
+          h('span', { class: 'nav-label-text' }, item.label),
+          item.name === 'reviews' && review.pending > 0
+            ? h('span', { class: 'nav-badge' }, review.pending > 99 ? '99+' : String(review.pending))
+            : null,
+        ]),
+        icon: () => h(NIcon, { size: 18 }, { default: () => h(item.icon) }),
+      })
+    }
+  }
+  return options
+})
+
+function menuNodeProps(option: MenuOption) {
+  const key = String(option.key || '')
+  if (key.startsWith('section:')) return { class: 'nav-section-option' }
+  return {}
+}
 const menuThemeOverrides = {
   itemHeight: '38px',
   fontSize: '13px',
@@ -415,16 +431,24 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
       </div>
 
       <div class="nav">
-        <n-menu
-          :value="activeMenuKey"
-          :options="menuOptions"
-          :collapsed="menuCollapsed"
-          :collapsed-width="68"
-          :collapsed-icon-size="18"
-          :indent="0"
-          :theme-overrides="menuThemeOverrides"
-          @update:value="handleMenuSelect"
-        />
+        <n-scrollbar
+          style="height: 100%"
+          :size="5"
+          trigger="hover"
+          :x-scrollable="false"
+        >
+          <n-menu
+            :value="activeMenuKey"
+            :options="menuOptions"
+            :collapsed="menuCollapsed"
+            :collapsed-width="68"
+            :collapsed-icon-size="18"
+            :indent="0"
+            :node-props="menuNodeProps"
+            :theme-overrides="menuThemeOverrides"
+            @update:value="handleMenuSelect"
+          />
+        </n-scrollbar>
       </div>
 
       <div class="sidebar-footer">
@@ -645,15 +669,7 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
 }
 
 .app-shell.sidebar-collapsed .nav {
-  padding: 2px 6px 12px;
-}
-
-.app-shell.sidebar-collapsed .nav :deep(.n-menu-item-group-title) {
-  display: none;
-}
-
-.app-shell.sidebar-collapsed .nav :deep(.n-menu-item-group) {
-  margin-bottom: 8px;
+  padding: 2px 0 12px;
 }
 
 /* 与 Naive UI LayoutSider 的 show-trigger 一致：贴在侧栏右边缘的圆形按钮 */
@@ -820,7 +836,7 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
   flex: 1;
   min-height: 0;
   padding: 2px 12px 12px;
-  overflow-y: auto;
+  overflow: hidden;
 }
 
 .nav :deep(.n-menu) {
@@ -832,9 +848,12 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
 }
 
 /* Naive 用内联 padding-left 控制缩进；展开时补回原来的 11px 左内边距。 */
-.app-shell:not(.sidebar-collapsed) .nav :deep(.n-menu-item-content),
-.app-shell:not(.sidebar-collapsed) .nav :deep(.n-menu-item-group-title) {
+.app-shell:not(.sidebar-collapsed) .nav :deep(.n-menu-item-content) {
   padding-left: 11px !important;
+}
+
+.app-shell:not(.sidebar-collapsed) .nav :deep(.nav-section-option .n-menu-item-content) {
+  padding: 0 11px 7px !important;
 }
 
 .nav :deep(.n-menu-item-content::before) {
@@ -864,9 +883,28 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
   font-weight: 600;
 }
 
-.nav :deep(.n-menu-item-group-title) {
+.nav :deep(.nav-section-option) {
+  height: auto;
   margin-top: 8px;
-  padding: 0 11px 7px;
+  pointer-events: none;
+}
+
+.nav :deep(.nav-section-option .n-menu-item-content) {
+  height: auto;
+  cursor: default;
+  opacity: 1;
+}
+
+.nav :deep(.nav-section-option .n-menu-item-content::before) {
+  display: none;
+}
+
+.nav :deep(.nav-section-option .n-menu-item-content-header) {
+  color: inherit;
+  opacity: 1;
+}
+
+.nav :deep(.nav-section-title) {
   color: var(--muted-light);
   font-size: 9.5px;
   font-weight: 650;
@@ -874,7 +912,7 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
   text-transform: uppercase;
 }
 
-.nav :deep(.n-menu-item-group:first-child .n-menu-item-group-title) {
+.nav :deep(.nav-section-option:first-child) {
   margin-top: 0;
 }
 
