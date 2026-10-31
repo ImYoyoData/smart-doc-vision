@@ -831,6 +831,12 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
   border-radius: 10px;
 }
 
+/* Naive 用内联 padding-left 控制缩进；展开时补回原来的 11px 左内边距。 */
+.app-shell:not(.sidebar-collapsed) .nav :deep(.n-menu-item-content),
+.app-shell:not(.sidebar-collapsed) .nav :deep(.n-menu-item-group-title) {
+  padding-left: 11px !important;
+}
+
 .nav :deep(.n-menu-item-content::before) {
   left: 0;
   right: 0;
