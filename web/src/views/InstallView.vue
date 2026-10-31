@@ -55,16 +55,18 @@ const databaseChoice = ref<'repair' | 'reset'>('repair')
 const confirmModal = ref(false)
 const databaseAck = ref(false)
 
-const stepTitles = ['介绍与协议', 'MySQL', 'Redis', '文件存储', '管理员', '检测并安装']
+const stepTitles = ['介绍与协议', '数据库', 'Redis', '文件存储', '管理员', '检测并安装']
 
 const form = reactive({
-  mysql: {
+  database: {
+    driver: 'mysql' as 'mysql' | 'postgres',
     host: '127.0.0.1',
     port: 3306 as number | null,
     user: 'root',
     password: '',
     database: 'smart-doc-vision',
     charset: 'utf8mb4',
+    sslmode: 'disable',
   },
   redis: {
     host: '127.0.0.1',
@@ -112,6 +114,25 @@ const endpointPlaceholder = computed(() =>
   selectedProvider.value ? `留空使用默认：${selectedProvider.value.hint}` : 'https://s3.example.com',
 )
 const configMissing = computed(() => status.value?.state === 'config_missing')
+const databaseLabel = computed(() => (form.database.driver === 'postgres' ? 'PostgreSQL' : 'MySQL'))
+const sslModeOptions = [
+  { label: 'disable（不加密，内网常用）', value: 'disable' },
+  { label: 'require（要求加密）', value: 'require' },
+  { label: 'verify-ca（校验证书）', value: 'verify-ca' },
+  { label: 'verify-full（校验证书与主机名）', value: 'verify-full' },
+]
+
+function onDatabaseDriverChange(value: string | number | null) {
+  const driver = value === 'postgres' ? 'postgres' : 'mysql'
+  const previousDefaultPort = form.database.driver === 'postgres' ? 5432 : 3306
+  form.database.driver = driver
+  if (form.database.port === previousDefaultPort || !form.database.port) {
+    form.database.port = driver === 'postgres' ? 5432 : 3306
+  }
+  if (!form.database.user || form.database.user === 'root' || form.database.user === 'postgres') {
+    form.database.user = driver === 'postgres' ? 'postgres' : 'root'
+  }
+}
 
 const canProceed = computed(() => {
   switch (activeStep.value) {
@@ -119,12 +140,12 @@ const canProceed = computed(() => {
       return agreed.value
     case 1:
       return Boolean(
-        form.mysql.host.trim() &&
-          form.mysql.user.trim() &&
-          form.mysql.database.trim() &&
-          form.mysql.port &&
-          form.mysql.port > 0 &&
-          form.mysql.port <= 65535,
+        form.database.host.trim() &&
+          form.database.user.trim() &&
+          form.database.database.trim() &&
+          form.database.port &&
+          form.database.port > 0 &&
+          form.database.port <= 65535,
       )
     case 2:
       return Boolean(form.redis.host.trim() && form.redis.port && form.redis.port > 0 && form.redis.port <= 65535)
@@ -147,8 +168,8 @@ const canProceed = computed(() => {
 })
 
 function applyDefaults(defaults: InstallDefaults) {
-  Object.assign(form.mysql, defaults.mysql)
-  form.mysql.password = ''
+  Object.assign(form.database, defaults.database)
+  form.database.password = ''
   Object.assign(form.redis, defaults.redis)
   form.redis.password = ''
   form.storage.driver = defaults.storage.driver === 's3' ? 's3' : 'local'
@@ -234,13 +255,15 @@ function prevStep() {
 function buildPayload(mode: DatabaseMode | '' = '', confirmReset = false, confirmRepair = false): InstallRequest {
   return {
     agreement: agreed.value,
-    mysql: {
-      host: form.mysql.host.trim(),
-      port: Number(form.mysql.port || 3306),
-      user: form.mysql.user.trim(),
-      password: form.mysql.password,
-      database: form.mysql.database.trim(),
-      charset: form.mysql.charset.trim() || 'utf8mb4',
+    database: {
+      driver: form.database.driver,
+      host: form.database.host.trim(),
+      port: Number(form.database.port || (form.database.driver === 'postgres' ? 5432 : 3306)),
+      user: form.database.user.trim(),
+      password: form.database.password,
+      database: form.database.database.trim(),
+      charset: form.database.driver === 'mysql' ? form.database.charset.trim() || 'utf8mb4' : '',
+      sslmode: form.database.driver === 'postgres' ? form.database.sslmode : '',
     },
     redis: {
       host: form.redis.host.trim(),
@@ -495,20 +518,35 @@ onMounted(initialize)
             <div class="step-head">
               <span class="step-icon"><ServerOutline /></span>
               <div>
-                <h2>MySQL 数据库</h2>
-                <p>用于保存账号、项目、审核配置和任务记录。数据库不存在时会自动创建。</p>
+                <h2>数据库</h2>
+                <p>支持 MySQL 与 PostgreSQL，用于保存账号、项目、审核配置和任务记录。数据库不存在时会自动创建。</p>
               </div>
             </div>
+            <n-radio-group :value="form.database.driver" class="database-switch" @update:value="onDatabaseDriverChange">
+              <n-radio value="mysql">MySQL</n-radio>
+              <n-radio value="postgres">PostgreSQL</n-radio>
+            </n-radio-group>
             <div class="form-grid">
-              <label>主机地址<em>*</em><n-input v-model:value="form.mysql.host" placeholder="127.0.0.1" /></label>
-              <label>端口<em>*</em><n-input-number v-model:value="form.mysql.port" :min="1" :max="65535" :show-button="false" /></label>
-              <label>用户名<em>*</em><n-input v-model:value="form.mysql.user" placeholder="root" /></label>
-              <label>密码<n-input v-model:value="form.mysql.password" type="password" show-password-on="click" placeholder="无密码可留空" /></label>
-              <label>数据库名<em>*</em><n-input v-model:value="form.mysql.database" placeholder="smart-doc-vision" /></label>
-              <label>字符集<n-input v-model:value="form.mysql.charset" placeholder="utf8mb4" /></label>
+              <label>主机地址<em>*</em><n-input v-model:value="form.database.host" placeholder="127.0.0.1" /></label>
+              <label>端口<em>*</em>
+                <n-input-number
+                  v-model:value="form.database.port"
+                  :min="1"
+                  :max="65535"
+                  :show-button="false"
+                  :placeholder="form.database.driver === 'postgres' ? '5432' : '3306'"
+                />
+              </label>
+              <label>用户名<em>*</em>
+                <n-input v-model:value="form.database.user" :placeholder="form.database.driver === 'postgres' ? 'postgres' : 'root'" />
+              </label>
+              <label>密码<n-input v-model:value="form.database.password" type="password" show-password-on="click" placeholder="无密码可留空" /></label>
+              <label>数据库名<em>*</em><n-input v-model:value="form.database.database" placeholder="smart-doc-vision" /></label>
+              <label v-if="form.database.driver === 'mysql'">字符集<n-input v-model:value="form.database.charset" placeholder="utf8mb4" /></label>
+              <label v-else>SSL 模式<n-select v-model:value="form.database.sslmode" :options="sslModeOptions" /></label>
             </div>
             <n-alert type="info" :bordered="false">
-              账号需要具备建库、建表和读写权限。安装时会执行 CREATE DATABASE IF NOT EXISTS 并创建全部数据表。
+              {{ databaseLabel }} 账号需要具备建库、建表和读写权限。安装时会自动创建数据库（MySQL 使用 CREATE DATABASE IF NOT EXISTS，PostgreSQL 使用 CREATE DATABASE）并创建全部数据表。
             </n-alert>
           </template>
 
@@ -619,12 +657,12 @@ onMounted(initialize)
               <span class="step-icon"><CheckmarkCircleOutline /></span>
               <div>
                 <h2>检测并安装</h2>
-                <p>系统将依次检测 MySQL、Redis 和文件存储，全部通过后创建表结构、基础数据和管理员账号。</p>
+                <p>系统将依次检测数据库、Redis 和文件存储，全部通过后创建表结构、基础数据和管理员账号。</p>
               </div>
             </div>
 
             <div class="review-list">
-              <div><span>MySQL</span><strong>{{ form.mysql.host }}:{{ form.mysql.port }} / {{ form.mysql.database }}</strong></div>
+              <div><span>{{ databaseLabel }}</span><strong>{{ form.database.host }}:{{ form.database.port }} / {{ form.database.database }}</strong></div>
               <div><span>Redis</span><strong>{{ redisSummary() }}</strong></div>
               <div><span>文件存储</span><strong>{{ storageSummary() }}</strong></div>
               <div><span>管理员</span><strong>{{ form.admin.username }}</strong></div>
@@ -1091,7 +1129,8 @@ onMounted(initialize)
   font-style: normal;
 }
 
-.storage-switch {
+.storage-switch,
+.database-switch {
   display: flex;
   gap: 24px;
   margin-bottom: 18px;

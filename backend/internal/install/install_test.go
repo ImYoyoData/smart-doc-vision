@@ -1,6 +1,7 @@
 package install
 
 import (
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -45,14 +46,19 @@ func TestWriteEnvRoundTrip(t *testing.T) {
 	cfg := config.Config{
 		AppEnv:                  "production",
 		ServerPort:              "8080",
-		MySQLDSN:                "root:pw@tcp(127.0.0.1:3306)/smart-doc-vision?charset=utf8mb4&parseTime=True",
+		DatabaseDriver:          config.DriverMySQL,
+		DatabaseHost:            "127.0.0.1",
+		DatabasePort:            3306,
+		DatabaseUser:            "root",
+		DatabasePassword:        "pw",
+		DatabaseName:            "smart-doc-vision",
+		DatabaseCharset:         "utf8mb4",
+		DatabaseDSN:             "root:pw@tcp(127.0.0.1:3306)/smart-doc-vision?charset=utf8mb4&parseTime=True",
 		RedisAddr:               "127.0.0.1:6379",
 		RedisPassword:           "",
 		RedisDB:                 3,
 		JWTSecret:               "jwt-secret",
 		MasterKey:               "master-key",
-		AdminUsername:           "admin",
-		AdminPassword:           "Admin@123456",
 		CORSOrigins:             []string{"http://localhost:5173"},
 		WorkerCount:             4,
 		DefaultAIBaseURL:        "https://api.openai.com/v1",
@@ -77,13 +83,16 @@ func TestWriteEnvRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, key := range []string{"MYSQL_DSN", "REDIS_ADDR", "JWT_SECRET", "MASTER_KEY", "ADMIN_PASSWORD", "STORAGE_DRIVER", "STORAGE_LOCAL_DIR"} {
+	for _, key := range []string{"DB_DRIVER", "DB_HOST", "DB_PORT", "DB_NAME", "REDIS_ADDR", "JWT_SECRET", "MASTER_KEY", "STORAGE_DRIVER", "STORAGE_LOCAL_DIR"} {
 		if strings.TrimSpace(values[key]) == "" {
 			t.Fatalf("missing %s in generated env", key)
 		}
 	}
-	if values["MYSQL_DSN"] != cfg.MySQLDSN {
-		t.Fatalf("DSN not preserved: %q", values["MYSQL_DSN"])
+	if _, ok := values["ADMIN_PASSWORD"]; ok {
+		t.Fatal("generated env must not contain administrator credentials")
+	}
+	if values["DB_HOST"] != cfg.DatabaseHost || values["DB_NAME"] != cfg.DatabaseName {
+		t.Fatalf("database values not preserved: %q / %q", values["DB_HOST"], values["DB_NAME"])
 	}
 	if _, err := WriteEnv(cfg); err == nil {
 		t.Fatal("expected an existing .env to be protected")
@@ -120,7 +129,7 @@ func TestBuildConfigAndValidation(t *testing.T) {
 	}
 	req := Request{
 		Agreement: true,
-		MySQL:     MySQL{Host: "db.local", Port: 3307, User: "svc", Password: "p@ss", Database: "smartdoc", Charset: "utf8mb4"},
+		Database:  Database{Driver: config.DriverMySQL, Host: "db.local", Port: 3307, User: "svc", Password: "p@ss", Database: "smartdoc", Charset: "utf8mb4"},
 		Redis:     Redis{Host: "redis.local", Port: 6380, DB: 5},
 		Storage:   Storage{Driver: "local", LocalDir: "data/uploads"},
 		Admin:     Admin{Username: "root_admin", Password: "Secret@123"},
@@ -130,7 +139,7 @@ func TestBuildConfigAndValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := BuildConfig(base, req)
-	parsed, err := mysqlDriver.ParseDSN(cfg.MySQLDSN)
+	parsed, err := mysqlDriver.ParseDSN(cfg.DatabaseDSN)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,6 +186,36 @@ func TestBuildConfigAndValidation(t *testing.T) {
 	bad.DatabaseMode = "drop-everything"
 	if err := bad.Validate(); err == nil {
 		t.Fatal("expected unknown database mode to fail")
+	}
+}
+
+func TestBuildPostgresConfigKeepsSecrets(t *testing.T) {
+	base := config.Config{Configured: true, JWTSecret: "existing-jwt", MasterKey: "existing-master-key"}
+	req := Request{
+		Agreement: true,
+		Database:  Database{Driver: "postgres", Host: "pg.local", Port: 5432, User: "postgres", Password: "secret", Database: "smart_doc", SSLMode: "require"},
+		Redis:     Redis{Host: "redis.local", Port: 6379, DB: 3},
+		Storage:   Storage{Driver: "local", LocalDir: "data/uploads"},
+		Admin:     Admin{Username: "admin", Password: "Secret@123"},
+	}
+	req.Normalize()
+	cfg := BuildConfig(base, req)
+	if cfg.DatabaseDriver != config.DriverPostgres {
+		t.Fatalf("unexpected driver: %s", cfg.DatabaseDriver)
+	}
+	if cfg.MasterKey != "existing-master-key" || cfg.JWTSecret != "existing-jwt" {
+		t.Fatal("repair must keep the existing MASTER_KEY and JWT_SECRET")
+	}
+	parsed, err := url.Parse(cfg.DatabaseDSN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Host != "pg.local:5432" || strings.TrimPrefix(parsed.Path, "/") != "smart_doc" || parsed.Query().Get("sslmode") != "require" {
+		t.Fatalf("unexpected postgres DSN: %s", cfg.DatabaseDSN)
+	}
+	password, _ := parsed.User.Password()
+	if parsed.User.Username() != "postgres" || password != "secret" {
+		t.Fatalf("unexpected postgres credentials: %s", cfg.DatabaseDSN)
 	}
 }
 

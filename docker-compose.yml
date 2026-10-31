@@ -39,14 +39,21 @@ services:
     environment:
       APP_ENV: production
       SERVER_PORT: 8080
+      # 数据库：默认使用下方 MySQL 服务。改用 PostgreSQL 时设置
+      # DB_DSN=postgres://user:pass@host:5432/db?sslmode=disable（DB_DRIVER 会按 DSN 自动识别），
+      # 并停用/移除 mysql 服务。
+      DB_DRIVER: ${DB_DRIVER:-}
+      DB_DSN: ${DB_DSN:-}
       MYSQL_DSN: root:${MYSQL_ROOT_PASSWORD:-smartdoc-change-me}@tcp(mysql:3306)/smart-doc-vision?charset=utf8mb4&parseTime=True&loc=Local
       REDIS_ADDR: redis:6379
       REDIS_PASSWORD: ""
       REDIS_DB: 3
       JWT_SECRET: ${JWT_SECRET:-replace-this-jwt-secret-in-production}
       MASTER_KEY: ${MASTER_KEY:-replace-this-master-key-in-production}
-      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-Admin@123456}
+      # 初始管理员只用于全新空库的首次启动；留空会自动生成随机密码并打印在启动日志中。
+      # 后台账号保存在数据库中，修改这里的值不会改变已有账号密码。
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8088,http://127.0.0.1:8088}
       WORKER_COUNT: ${WORKER_COUNT:-4}
       MEDIA_ALLOW_PRIVATE: "false"

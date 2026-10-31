@@ -2,6 +2,7 @@ package schema
 
 import (
 	"fmt"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
@@ -18,7 +19,7 @@ import (
 // Version must be bumped whenever model structs change in a way that requires
 // an explicit database structure upgrade. Existing installations compare this
 // value and the live schema when the process starts.
-const Version = "20261031.4"
+const Version = "20261101.1"
 
 type ColumnChange struct {
 	Table    string `json:"table"`
@@ -113,6 +114,7 @@ func newReport() Report {
 // changing it.
 func Inspect(db *gorm.DB) (Report, error) {
 	report := newReport()
+	driver := db.Dialector.Name()
 	tables, err := db.Migrator().GetTables()
 	if err != nil {
 		return report, fmt.Errorf("读取数据库表失败: %w", err)
@@ -152,23 +154,21 @@ func Inspect(db *gorm.DB) (Report, error) {
 				continue
 			}
 			expectedColumns[table][field.DBName] = true
+			expectedType := expectedDataType(db, field)
+			columnChange := ColumnChange{
+				Table: table, Column: field.DBName, Expected: expectedType,
+			}
 			column, exists := actual[field.DBName]
 			if !exists {
-				report.AddedColumns = append(report.AddedColumns, ColumnChange{
-					Table: table, Column: field.DBName,
-					Expected: db.Dialector.DataTypeOf(field),
-					Reason:   "字段缺失",
-				})
+				columnChange.Reason = "字段缺失"
+				report.AddedColumns = append(report.AddedColumns, columnChange)
 				continue
 			}
-			expectedType := db.Dialector.DataTypeOf(field)
 			actualType := columnTypeString(column)
-			if normalizeSQLType(expectedType) != normalizeSQLType(actualType) {
-				report.ModifiedColumns = append(report.ModifiedColumns, ColumnChange{
-					Table: table, Column: field.DBName,
-					Expected: expectedType, Actual: actualType,
-					Reason: "列类型不同",
-				})
+			if normalizeSQLTypeFor(driver, expectedType) != normalizeSQLTypeFor(driver, actualType) {
+				columnChange.Actual = actualType
+				columnChange.Reason = "列类型不同"
+				report.ModifiedColumns = append(report.ModifiedColumns, columnChange)
 				continue
 			}
 			if field.PrimaryKey || field.AutoIncrement {
@@ -261,7 +261,10 @@ func Inspect(db *gorm.DB) (Report, error) {
 
 // Apply performs the non-destructive GORM migration and records the version.
 func Apply(db *gorm.DB) error {
-	migrateDB := db.Set("gorm:table_options", "ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci")
+	migrateDB := db
+	if db.Dialector.Name() == "mysql" {
+		migrateDB = db.Set("gorm:table_options", "ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci")
+	}
 	if err := migrateDB.AutoMigrate(AllModels()...); err != nil {
 		return fmt.Errorf("应用数据库结构失败: %w", err)
 	}
@@ -292,6 +295,16 @@ func EnsureVersion(db *gorm.DB) error {
 // installer can recreate a clean schema. Call with an explicit admin choice.
 func Reset(db *gorm.DB) error {
 	tables := AllTableNames()
+	if db.Dialector.Name() == "postgres" {
+		return db.Transaction(func(tx *gorm.DB) error {
+			for _, table := range tables {
+				if err := tx.Exec(`DROP TABLE IF EXISTS "` + table + `" CASCADE`).Error; err != nil {
+					return fmt.Errorf("删除表 %s 失败: %w", table, err)
+				}
+			}
+			return nil
+		})
+	}
 	return db.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Exec("SET FOREIGN_KEY_CHECKS=0").Error; err != nil {
 			return err
@@ -388,6 +401,20 @@ func columnTypeString(column gorm.ColumnType) string {
 	return column.DatabaseTypeName()
 }
 
+// expectedDataType mirrors what GORM will create for the field, including
+// custom GormDBDataType implementations (for example JSONText).
+func expectedDataType(db *gorm.DB, field *gschema.Field) string {
+	fieldValue := reflect.New(field.IndirectFieldType)
+	if dataTyper, ok := fieldValue.Interface().(interface {
+		GormDBDataType(*gorm.DB, *gschema.Field) string
+	}); ok {
+		if dataType := dataTyper.GormDBDataType(db, field); dataType != "" {
+			return dataType
+		}
+	}
+	return db.Dialector.DataTypeOf(field)
+}
+
 func indexColumns(index gschema.Index) string {
 	parts := make([]string, 0, len(index.Fields))
 	for _, option := range index.Fields {
@@ -417,6 +444,51 @@ func lessColumn(left, right ColumnChange) bool {
 }
 
 var integerWidthPattern = regexp.MustCompile(`(?i)\b(tinyint|smallint|mediumint|int|integer|bigint)\(\d+\)`)
+
+func normalizeSQLTypeFor(driver, value string) string {
+	if driver == "postgres" {
+		return normalizePostgresSQLType(value)
+	}
+	return normalizeSQLType(value)
+}
+
+var (
+	pgTimestampTZPattern = regexp.MustCompile(`timestamp(?:\(\d+\))? with time zone`)
+	pgTimestampPattern   = regexp.MustCompile(`timestamp(?:\(\d+\))? without time zone`)
+	pgTimeTZPattern      = regexp.MustCompile(`\btime(?:\(\d+\))? with time zone`)
+	pgTimePattern        = regexp.MustCompile(`\btime(?:\(\d+\))? without time zone`)
+)
+
+// normalizePostgresSQLType folds PostgreSQL's canonical type names and GORM's
+// generated names (serial, timestamptz, ...) into one comparable form.
+func normalizePostgresSQLType(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	for _, suffix := range []string{" auto_increment", " not null", " null", " default ", " comment ", " on update "} {
+		if index := strings.Index(value, suffix); index >= 0 {
+			value = value[:index]
+		}
+	}
+	value = pgTimestampTZPattern.ReplaceAllString(value, "timestamptz")
+	value = pgTimestampPattern.ReplaceAllString(value, "timestamp")
+	value = pgTimeTZPattern.ReplaceAllString(value, "timetz")
+	value = pgTimePattern.ReplaceAllString(value, "time")
+	replacer := strings.NewReplacer(
+		"character varying", "varchar",
+		"double precision", "float8",
+		"bigserial", "bigint",
+		"smallserial", "smallint",
+		"serial", "integer",
+		"int8", "bigint",
+		"int4", "integer",
+		"int2", "smallint",
+		"boolean", "bool",
+		"decimal", "numeric",
+	)
+	value = replacer.Replace(value)
+	value = strings.ReplaceAll(value, "integer", "int")
+	value = strings.ReplaceAll(value, " ", "")
+	return value
+}
 
 func normalizeSQLType(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))

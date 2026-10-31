@@ -101,7 +101,7 @@ func (e *Engine) executeJSAction(render routeRender, action routeAction, actionI
 		Remark:      truncate(action.Remark, 128), ScriptHash: run.scriptHash,
 		StartedAt: started, DurationMS: duration.Milliseconds(),
 		Status: status, ErrorType: errType, ErrorMessage: truncate(errMsg, 1000),
-		LogText: run.logText(), MemoryBytes: run.memoryBytes,
+		LogText: model.LongText(run.logText()), MemoryBytes: run.memoryBytes,
 	}
 	if len(resultJSON) > 0 {
 		execution.ResultJSON = model.JSONText(resultJSON)

@@ -61,6 +61,11 @@ type appRuntime struct {
 func main() {
 	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
 	cfg := config.Load()
+	if backup, err := config.MigrateLegacyEnvFile(cfg); err != nil {
+		log.Printf("config: migrate legacy .env: %v", err)
+	} else if backup != "" {
+		log.Printf("config: converted legacy MYSQL_*/ADMIN_* settings in %s to DB_* (backup: %s)", cfg.EnvFile, backup)
+	}
 	if err := branding.Load(&cfg); err != nil {
 		log.Printf("branding: %v", err)
 	}
@@ -169,7 +174,7 @@ func main() {
 
 func installApplication(ctx context.Context, base config.Config, req install.Request) (http.Handler, func(), error) {
 	cfg := install.BuildConfig(base, req)
-	if err := install.EnsureDatabase(ctx, req.MySQL); err != nil {
+	if err := install.EnsureDatabase(ctx, req.Database); err != nil {
 		return nil, nil, err
 	}
 	db, cache, cipher, err := connectInfra(cfg)

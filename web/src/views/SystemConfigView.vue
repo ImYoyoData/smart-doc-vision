@@ -41,7 +41,7 @@ const logoDragging = ref(false)
 
 const groupIcons: Record<string, unknown> = {
   runtime: SettingsOutline,
-  mysql: ServerOutline,
+  database: ServerOutline,
   redis: LinkOutline,
   security: ShieldCheckmarkOutline,
   ai: SparklesOutline,

@@ -3,6 +3,7 @@ package install
 import (
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -28,11 +29,11 @@ type SystemInfo struct {
 }
 
 type Defaults struct {
-	MySQL   MySQL   `json:"mysql"`
-	Redis   Redis   `json:"redis"`
-	Storage Storage `json:"storage"`
-	Admin   Admin   `json:"admin"`
-	Site    Site    `json:"site"`
+	Database Database `json:"database"`
+	Redis    Redis    `json:"redis"`
+	Storage  Storage  `json:"storage"`
+	Admin    Admin    `json:"admin"`
+	Site     Site     `json:"site"`
 }
 
 type Status struct {
@@ -97,8 +98,9 @@ func defaultsFromConfig(cfg config.Config) Defaults {
 		localDir = abs
 	}
 	defaults := Defaults{
-		MySQL: MySQL{
-			Host: "127.0.0.1", Port: 3306, User: "root", Database: "smart-doc-vision", Charset: "utf8mb4",
+		Database: Database{
+			Driver: config.NormalizeDatabaseDriver(cfg.DatabaseDriver),
+			Host:   "127.0.0.1", Port: 3306, User: "root", Database: "smart-doc-vision", Charset: "utf8mb4", SSLMode: "disable",
 		},
 		Redis: Redis{
 			Host: "127.0.0.1", Port: 6379, DB: cfg.RedisDB,
@@ -117,18 +119,44 @@ func defaultsFromConfig(cfg config.Config) Defaults {
 			Logo:   cfg.SiteLogo,
 		},
 	}
-	if parsed, err := mysqlDriver.ParseDSN(cfg.MySQLDSN); err == nil {
+	if defaults.Database.Driver == config.DriverPostgres {
+		defaults.Database.Port = 5432
+		defaults.Database.User = "postgres"
+		defaults.Database.Charset = ""
+	}
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(cfg.DatabaseDSN)), "postgres") {
+		if parsed, err := url.Parse(cfg.DatabaseDSN); err == nil {
+			if host, port, err := net.SplitHostPort(parsed.Host); err == nil {
+				defaults.Database.Host = host
+				if value, err := strconv.Atoi(port); err == nil {
+					defaults.Database.Port = value
+				}
+			}
+			if parsed.User != nil && parsed.User.Username() != "" {
+				defaults.Database.User = parsed.User.Username()
+			}
+			if name := strings.TrimPrefix(parsed.Path, "/"); name != "" {
+				defaults.Database.Database = name
+			}
+			if sslmode := parsed.Query().Get("sslmode"); sslmode != "" {
+				defaults.Database.SSLMode = sslmode
+			}
+		}
+	} else if parsed, err := mysqlDriver.ParseDSN(cfg.DatabaseDSN); err == nil {
 		if host, port, err := net.SplitHostPort(parsed.Addr); err == nil {
-			defaults.MySQL.Host = host
+			defaults.Database.Host = host
 			if value, err := strconv.Atoi(port); err == nil {
-				defaults.MySQL.Port = value
+				defaults.Database.Port = value
 			}
 		}
 		if parsed.User != "" {
-			defaults.MySQL.User = parsed.User
+			defaults.Database.User = parsed.User
 		}
 		if parsed.DBName != "" {
-			defaults.MySQL.Database = parsed.DBName
+			defaults.Database.Database = parsed.DBName
+		}
+		if charset := parsed.Params["charset"]; charset != "" {
+			defaults.Database.Charset = charset
 		}
 	}
 	if host, port, err := net.SplitHostPort(cfg.RedisAddr); err == nil {

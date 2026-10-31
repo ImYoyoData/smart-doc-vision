@@ -3,14 +3,17 @@ import type { SchemaReport } from './schema'
 
 export type InstallState = 'installed' | 'needs_install' | 'config_missing'
 export type DatabaseMode = 'create' | 'repair' | 'reset'
+export type DatabaseDriver = 'mysql' | 'postgres'
 
-export interface InstallMySQL {
+export interface InstallDatabase {
+  driver: DatabaseDriver
   host: string
   port: number
   user: string
   password: string
   database: string
   charset: string
+  sslmode: string
 }
 
 export interface InstallRedis {
@@ -51,7 +54,7 @@ export interface InstallSite {
 
 export interface InstallRequest {
   agreement: boolean
-  mysql: InstallMySQL
+  database: InstallDatabase
   redis: InstallRedis
   storage: InstallStorage
   admin: InstallAdmin
@@ -74,7 +77,7 @@ export interface InstallSystemInfo {
 }
 
 export interface InstallDefaults {
-  mysql: InstallMySQL
+  database: InstallDatabase
   redis: InstallRedis
   storage: InstallStorage
   admin: InstallAdmin

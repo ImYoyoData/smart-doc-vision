@@ -40,9 +40,9 @@ type ScriptExecution struct {
 	Status       string    `gorm:"size:16;not null;index" json:"status"`
 	ErrorType    string    `gorm:"size:32" json:"error_type"`
 	ErrorMessage string    `gorm:"size:1024" json:"error_message"`
-	LogText      string    `gorm:"type:longtext" json:"log_text"`
+	LogText      LongText  `json:"log_text"`
 	MemoryBytes  int64     `json:"memory_bytes"`
-	ResultJSON   JSONText  `gorm:"type:longtext" json:"result_json"`
+	ResultJSON   JSONText  `json:"result_json"`
 	CreatedAt    time.Time `json:"created_at"`
 }
 

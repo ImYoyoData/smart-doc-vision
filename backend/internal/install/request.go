@@ -3,8 +3,10 @@ package install
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -13,8 +15,10 @@ import (
 	"time"
 
 	mysqlDriver "github.com/go-sql-driver/mysql"
-	"github.com/joho/godotenv"
+	"github.com/jackc/pgx/v5/pgconn"
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	gormlogger "gorm.io/gorm/logger"
 
@@ -24,17 +28,22 @@ import (
 )
 
 var (
-	databaseNamePattern = regexp.MustCompile(`^[A-Za-z0-9_]{1,64}$`)
+	databaseNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,63}$`)
 	adminNamePattern    = regexp.MustCompile(`^[A-Za-z0-9_.-]{3,32}$`)
 )
 
-type MySQL struct {
+// Database describes how to reach the application database. Driver is
+// mysql (default) or postgres; Charset only applies to MySQL and SSLMode only
+// applies to PostgreSQL.
+type Database struct {
+	Driver   string `json:"driver"`
 	Host     string `json:"host"`
 	Port     int    `json:"port"`
 	User     string `json:"user"`
 	Password string `json:"password"`
 	Database string `json:"database"`
 	Charset  string `json:"charset"`
+	SSLMode  string `json:"sslmode"`
 }
 
 type Redis struct {
@@ -74,12 +83,12 @@ type Site struct {
 }
 
 type Request struct {
-	Agreement bool    `json:"agreement"`
-	MySQL     MySQL   `json:"mysql"`
-	Redis     Redis   `json:"redis"`
-	Storage   Storage `json:"storage"`
-	Admin     Admin   `json:"admin"`
-	Site      Site    `json:"site"`
+	Agreement bool     `json:"agreement"`
+	Database  Database `json:"database"`
+	Redis     Redis    `json:"redis"`
+	Storage   Storage  `json:"storage"`
+	Admin     Admin    `json:"admin"`
+	Site      Site     `json:"site"`
 	// DatabaseMode is create, repair or reset. The installer requires an
 	// explicit choice when application tables already exist.
 	DatabaseMode  string `json:"database_mode"`
@@ -88,21 +97,37 @@ type Request struct {
 }
 
 func (r *Request) Normalize() {
-	r.MySQL.Host = strings.TrimSpace(r.MySQL.Host)
-	r.MySQL.User = strings.TrimSpace(r.MySQL.User)
-	r.MySQL.Database = strings.TrimSpace(r.MySQL.Database)
-	r.MySQL.Charset = strings.TrimSpace(r.MySQL.Charset)
-	if r.MySQL.Port == 0 {
-		r.MySQL.Port = 3306
+	r.Database.Driver = config.NormalizeDatabaseDriver(r.Database.Driver)
+	r.Database.Host = strings.TrimSpace(r.Database.Host)
+	r.Database.User = strings.TrimSpace(r.Database.User)
+	r.Database.Database = strings.TrimSpace(r.Database.Database)
+	r.Database.Charset = strings.TrimSpace(r.Database.Charset)
+	r.Database.SSLMode = strings.ToLower(strings.TrimSpace(r.Database.SSLMode))
+	if r.Database.Driver == config.DriverPostgres {
+		if r.Database.Port == 0 {
+			r.Database.Port = 5432
+		}
+		if r.Database.User == "" {
+			r.Database.User = "postgres"
+		}
+		r.Database.Charset = ""
+		if r.Database.SSLMode == "" {
+			r.Database.SSLMode = "disable"
+		}
+	} else {
+		if r.Database.Port == 0 {
+			r.Database.Port = 3306
+		}
+		if r.Database.User == "" {
+			r.Database.User = "root"
+		}
+		r.Database.SSLMode = ""
+		if r.Database.Charset == "" {
+			r.Database.Charset = "utf8mb4"
+		}
 	}
-	if r.MySQL.User == "" {
-		r.MySQL.User = "root"
-	}
-	if r.MySQL.Database == "" {
-		r.MySQL.Database = "smart-doc-vision"
-	}
-	if r.MySQL.Charset == "" {
-		r.MySQL.Charset = "utf8mb4"
+	if r.Database.Database == "" {
+		r.Database.Database = "smart-doc-vision"
 	}
 
 	r.Redis.Host = strings.TrimSpace(r.Redis.Host)
@@ -181,17 +206,27 @@ func (r Request) ValidateSite() error {
 // ValidateConnections checks the fields needed before probing MySQL, Redis and
 // storage. The test endpoint does not require the agreement or admin account.
 func (r Request) ValidateConnections() error {
-	if r.MySQL.Host == "" {
-		return fmt.Errorf("MySQL 地址不能为空")
+	if r.Database.Driver != config.DriverMySQL && r.Database.Driver != config.DriverPostgres {
+		return fmt.Errorf("数据库类型需为 mysql 或 postgres")
 	}
-	if r.MySQL.Port < 1 || r.MySQL.Port > 65535 {
-		return fmt.Errorf("MySQL 端口无效")
+	if r.Database.Host == "" {
+		return fmt.Errorf("数据库地址不能为空")
 	}
-	if r.MySQL.User == "" {
-		return fmt.Errorf("MySQL 用户名不能为空")
+	if r.Database.Port < 1 || r.Database.Port > 65535 {
+		return fmt.Errorf("数据库端口无效")
 	}
-	if !databaseNamePattern.MatchString(r.MySQL.Database) {
-		return fmt.Errorf("MySQL 数据库名只能包含字母、数字和下划线")
+	if r.Database.User == "" {
+		return fmt.Errorf("数据库用户名不能为空")
+	}
+	if !databaseNamePattern.MatchString(r.Database.Database) {
+		return fmt.Errorf("数据库名只能包含字母、数字、下划线或短横线，且不超过 63 个字符")
+	}
+	if r.Database.Driver == config.DriverPostgres {
+		switch r.Database.SSLMode {
+		case "", "disable", "allow", "prefer", "require", "verify-ca", "verify-full":
+		default:
+			return fmt.Errorf("PostgreSQL SSL 模式无效")
+		}
 	}
 	if r.Redis.Host == "" {
 		return fmt.Errorf("Redis 地址不能为空")
@@ -220,7 +255,14 @@ func (r Request) ValidateConnections() error {
 	return nil
 }
 
-func mysqlDSN(cfg MySQL, includeDatabase bool) string {
+func databaseDSN(cfg Database, includeDatabase bool) string {
+	if cfg.Driver == config.DriverPostgres {
+		return postgresDSN(cfg, includeDatabase)
+	}
+	return mysqlDSN(cfg, includeDatabase)
+}
+
+func mysqlDSN(cfg Database, includeDatabase bool) string {
 	driverCfg := mysqlDriver.NewConfig()
 	driverCfg.User = cfg.User
 	driverCfg.Passwd = cfg.Password
@@ -235,11 +277,39 @@ func mysqlDSN(cfg MySQL, includeDatabase bool) string {
 	return driverCfg.FormatDSN()
 }
 
+func postgresDSN(cfg Database, includeDatabase bool) string {
+	target := url.URL{Scheme: "postgres", Path: "/postgres"}
+	if includeDatabase {
+		target.Path = "/" + cfg.Database
+	}
+	if cfg.User != "" {
+		target.User = url.UserPassword(cfg.User, cfg.Password)
+	}
+	target.Host = net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port))
+	query := url.Values{}
+	sslmode := strings.TrimSpace(cfg.SSLMode)
+	if sslmode == "" {
+		sslmode = "disable"
+	}
+	query.Set("sslmode", sslmode)
+	query.Set("connect_timeout", "10")
+	target.RawQuery = query.Encode()
+	return target.String()
+}
+
 // BuildConfig converts the installer form into an in-memory application config.
 func BuildConfig(base config.Config, req Request) config.Config {
 	req.Normalize()
 	base.AppEnv = "production"
-	base.MySQLDSN = mysqlDSN(req.MySQL, true)
+	base.DatabaseDriver = req.Database.Driver
+	base.DatabaseDSN = databaseDSN(req.Database, true)
+	base.DatabaseHost = req.Database.Host
+	base.DatabasePort = req.Database.Port
+	base.DatabaseUser = req.Database.User
+	base.DatabasePassword = req.Database.Password
+	base.DatabaseName = req.Database.Database
+	base.DatabaseCharset = req.Database.Charset
+	base.DatabaseSSLMode = req.Database.SSLMode
 	base.RedisAddr = net.JoinHostPort(req.Redis.Host, strconv.Itoa(req.Redis.Port))
 	base.RedisPassword = req.Redis.Password
 	base.RedisDB = req.Redis.DB
@@ -254,8 +324,18 @@ func BuildConfig(base config.Config, req Request) config.Config {
 		base.SiteNameEn = "SmartDoc Vision"
 	}
 	base.SiteLogo = req.Site.Logo
-	base.JWTSecret = config.RandomSecret(32)
-	base.MasterKey = config.RandomSecret(32)
+	// A repair or reinstall against an existing database must keep the original
+	// secrets: MASTER_KEY decrypts every stored API key and channel secret.
+	if !base.Configured {
+		base.JWTSecret = config.RandomSecret(32)
+		base.MasterKey = config.RandomSecret(32)
+	}
+	if strings.TrimSpace(base.JWTSecret) == "" {
+		base.JWTSecret = config.RandomSecret(32)
+	}
+	if strings.TrimSpace(base.MasterKey) == "" {
+		base.MasterKey = config.RandomSecret(32)
+	}
 	base.Configured = true
 
 	base.StorageDriver = req.Storage.Driver
@@ -294,9 +374,12 @@ func StorageConfig(cfg config.Config) storage.Config {
 	}
 }
 
-func EnsureDatabase(ctx context.Context, cfg MySQL) error {
+func EnsureDatabase(ctx context.Context, cfg Database) error {
 	if !databaseNamePattern.MatchString(cfg.Database) {
 		return fmt.Errorf("数据库名不合法")
+	}
+	if cfg.Driver == config.DriverPostgres {
+		return ensurePostgresDatabase(ctx, cfg)
 	}
 	db, err := sql.Open("mysql", mysqlDSN(cfg, false))
 	if err != nil {
@@ -316,12 +399,41 @@ func EnsureDatabase(ctx context.Context, cfg MySQL) error {
 	return nil
 }
 
+func ensurePostgresDatabase(ctx context.Context, cfg Database) error {
+	db, err := sql.Open("pgx", postgresDSN(cfg, false))
+	if err != nil {
+		return fmt.Errorf("连接 PostgreSQL 失败: %w", err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	pingCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	if err := db.PingContext(pingCtx); err != nil {
+		return fmt.Errorf("连接 PostgreSQL 失败: %w", err)
+	}
+	var exists bool
+	if err := db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = $1)", cfg.Database).Scan(&exists); err != nil {
+		return fmt.Errorf("检测数据库是否存在失败: %w", err)
+	}
+	if exists {
+		return nil
+	}
+	if _, err := db.ExecContext(ctx, `CREATE DATABASE "`+cfg.Database+`" ENCODING 'UTF8'`); err != nil {
+		return fmt.Errorf("创建数据库失败: %w", err)
+	}
+	return nil
+}
+
 // InspectDatabase connects to the target database and reports structural
 // differences without modifying anything.
-func InspectDatabase(ctx context.Context, cfg MySQL) (schema.Report, error) {
+func InspectDatabase(ctx context.Context, cfg Database) (schema.Report, error) {
 	timeoutCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	db, err := gorm.Open(mysql.Open(mysqlDSN(cfg, true)), &gorm.Config{
+	dialector := gorm.Dialector(mysql.Open(mysqlDSN(cfg, true)))
+	if cfg.Driver == config.DriverPostgres {
+		dialector = postgres.Open(postgresDSN(cfg, true))
+	}
+	db, err := gorm.Open(dialector, &gorm.Config{
 		Logger:  gormlogger.Default.LogMode(gormlogger.Silent),
 		NowFunc: func() time.Time { return time.Now().Local() },
 	})
@@ -329,7 +441,7 @@ func InspectDatabase(ctx context.Context, cfg MySQL) (schema.Report, error) {
 		if unknownDatabaseError(err) {
 			return schema.FreshReport(), nil
 		}
-		return schema.Report{}, fmt.Errorf("连接 MySQL 失败: %w", err)
+		return schema.Report{}, fmt.Errorf("连接 %s 失败: %w", databaseLabel(cfg.Driver), err)
 	}
 	sqlDB, err := db.DB()
 	if err != nil {
@@ -341,7 +453,7 @@ func InspectDatabase(ctx context.Context, cfg MySQL) (schema.Report, error) {
 		if unknownDatabaseError(err) {
 			return schema.FreshReport(), nil
 		}
-		return schema.Report{}, fmt.Errorf("连接 MySQL 失败: %w", err)
+		return schema.Report{}, fmt.Errorf("连接 %s 失败: %w", databaseLabel(cfg.Driver), err)
 	}
 	report, err := schema.Inspect(db.WithContext(timeoutCtx))
 	if err != nil {
@@ -357,8 +469,20 @@ func unknownDatabaseError(err error) bool {
 	if err == nil {
 		return false
 	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "3D000" {
+		return true
+	}
 	value := strings.ToLower(err.Error())
-	return strings.Contains(value, "unknown database") || strings.Contains(value, "error 1049")
+	return strings.Contains(value, "unknown database") || strings.Contains(value, "error 1049") ||
+		(strings.Contains(value, "database") && strings.Contains(value, "does not exist"))
+}
+
+func databaseLabel(driver string) string {
+	if driver == config.DriverPostgres {
+		return "PostgreSQL"
+	}
+	return "MySQL"
 }
 
 // WriteEnv serializes the installed configuration. It never overwrites an
@@ -371,14 +495,19 @@ func WriteEnv(cfg config.Config) (string, error) {
 	values := map[string]string{
 		"APP_ENV":                     cfg.AppEnv,
 		"SERVER_PORT":                 cfg.ServerPort,
-		"MYSQL_DSN":                   cfg.MySQLDSN,
+		"DB_DRIVER":                   cfg.DatabaseDriver,
+		"DB_HOST":                     cfg.DatabaseHost,
+		"DB_PORT":                     strconv.Itoa(cfg.DatabasePort),
+		"DB_USER":                     cfg.DatabaseUser,
+		"DB_PASSWORD":                 cfg.DatabasePassword,
+		"DB_NAME":                     cfg.DatabaseName,
+		"DB_SSLMODE":                  cfg.DatabaseSSLMode,
+		"DB_CHARSET":                  cfg.DatabaseCharset,
 		"REDIS_ADDR":                  cfg.RedisAddr,
 		"REDIS_PASSWORD":              cfg.RedisPassword,
 		"REDIS_DB":                    strconv.Itoa(cfg.RedisDB),
 		"JWT_SECRET":                  cfg.JWTSecret,
 		"MASTER_KEY":                  cfg.MasterKey,
-		"ADMIN_USERNAME":              cfg.AdminUsername,
-		"ADMIN_PASSWORD":              cfg.AdminPassword,
 		"SITE_NAME":                   cfg.SiteName,
 		"SITE_NAME_EN":                cfg.SiteNameEn,
 		"SITE_LOGO":                   cfg.SiteLogo,
@@ -404,10 +533,7 @@ func WriteEnv(cfg config.Config) (string, error) {
 		"STORAGE_S3_PREFIX":           cfg.StorageS3Prefix,
 		"STORAGE_S3_FORCE_PATH_STYLE": strconv.FormatBool(cfg.StorageS3ForcePathStyle),
 	}
-	body, err := godotenv.Marshal(values)
-	if err != nil {
-		return "", fmt.Errorf("生成 .env 失败: %w", err)
-	}
+	body := config.EnvTemplate(values)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return "", fmt.Errorf("创建配置目录失败: %w", err)
 	}
@@ -428,8 +554,8 @@ func WriteEnv(cfg config.Config) (string, error) {
 		return "", fmt.Errorf("写入 .env 失败: %w", err)
 	}
 	defer file.Close()
-	header := "# SmartDoc Vision configuration generated by the web installer\n" +
-		"# Installed at " + time.Now().Format(time.RFC3339) + "\n"
+	header := "# SmartDoc Vision 配置文件（由安装向导生成）\n" +
+		"# 安装时间 " + time.Now().Format(time.RFC3339) + "\n"
 	if _, err := file.WriteString(header + body); err != nil {
 		_ = os.Remove(path)
 		return "", fmt.Errorf("写入 .env 失败: %w", err)

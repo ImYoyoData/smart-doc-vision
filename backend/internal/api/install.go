@@ -124,7 +124,7 @@ func (s *InstallerServer) test(c *gin.Context) {
 	results := install.TestAll(ctx, s.cfg, req)
 	payload := gin.H{"ok": install.AllOK(results), "results": results}
 	if install.AllOK(results) {
-		if report, err := install.InspectDatabase(ctx, req.MySQL); err != nil {
+		if report, err := install.InspectDatabase(ctx, req.Database); err != nil {
 			payload["ok"] = false
 			payload["database_error"] = "数据库结构检测失败: " + err.Error()
 		} else {
@@ -159,7 +159,7 @@ func (s *InstallerServer) install(c *gin.Context) {
 	}
 
 	inspectCtx, inspectCancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
-	report, inspectErr := install.InspectDatabase(inspectCtx, req.MySQL)
+	report, inspectErr := install.InspectDatabase(inspectCtx, req.Database)
 	inspectCancel()
 	if inspectErr != nil {
 		fail(c, http.StatusUnprocessableEntity, "DATABASE_INSPECT_FAILED", "数据库结构检测失败: "+inspectErr.Error(), nil)

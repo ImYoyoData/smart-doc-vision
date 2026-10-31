@@ -2,7 +2,7 @@
 
 > 多模型驱动的档案图档智能审核平台。让每一份图档都经过可配置、可追溯、可复核的智能审核。
 
-**SmartDoc Vision** 是一个面向档案、图纸、扫描件与文本内容的审核中台。后端使用 **Go + Gin**，数据层使用 **MySQL + Redis**，管理后台使用 **Vue 3 + TypeScript + Naive UI + ECharts**。平台支持**通用大模型**（OpenAI 兼容协议或 **Anthropic Claude Messages API**，两者属于同一业务分类，仅协议不同），并原生支持 **JEV / TypeSafe System One** 结构化决策模型。
+**SmartDoc Vision** 是一个面向档案、图纸、扫描件与文本内容的审核中台。后端使用 **Go + Gin**，数据层使用 **MySQL 或 PostgreSQL + Redis**，管理后台使用 **Vue 3 + TypeScript + Naive UI + ECharts**。平台支持**通用大模型**（OpenAI 兼容协议或 **Anthropic Claude Messages API**，两者属于同一业务分类，仅协议不同），并原生支持 **JEV / TypeSafe System One** 结构化决策模型。
 
 ### 发布会宣传片
 
@@ -41,7 +41,7 @@
 | 文本编码 | 输入文本自动处理 UTF-8 BOM、GB18030/Big5 和常见 Latin-1 乱码，MySQL 连接与建表默认 utf8mb4 |
 | 部署 | 本地开发模式、Docker Compose 一键部署、Nginx 反向代理 |
 | 观测 | 结构化任务事件时间线、审计日志（含全局登录日志与 AI 查询助手）、运营工作台、ECharts 数据报表、Provider 健康状态、Prometheus `/metrics`（含项目 Worker 活跃/排队/上限） |
-| 系统配置 | 只读展示进程启动时解析的 `.env` / `config.yml`：运行环境、MySQL、Redis、JWT/Master Key、初始化管理员、默认模型等；密码和密钥服务端脱敏 |
+| 系统配置 | 只读展示进程启动时解析的 `.env` / `config.yml`：运行环境、数据库、Redis、JWT/Master Key、默认模型等；密码和密钥服务端脱敏。后台账号保存在数据库中，请到「账号管理」维护 |
 
 ### 界面预览
 
@@ -73,7 +73,7 @@ Vue 3 + TS + Naive UI (Vite)
             ▼
         Gin API  ──────────────┐
             │                  │
-            ├─ MySQL 5.7+/8    │  smart-doc-vision
+            ├─ MySQL / PostgreSQL │  smart-doc-vision
             │  项目 / 模型 / 审核 / 任务 / 审计
             │                  │
             ├─ Redis DB 3      │  去重键 / 登录锁定 / 健康状态
@@ -103,14 +103,22 @@ Vue 3 + TS + Naive UI (Vite)
 
 - Go 1.23+
 - Node.js 20+
-- MySQL 5.7+ / 8.0（建议 8.0，字符集 `utf8mb4`）
+- MySQL 5.7+ / 8.0（建议 8.0，字符集 `utf8mb4`）或 PostgreSQL 13+
 - Redis 6+（本项目默认使用 **DB 3**，无密码）
 
 ### 2. 初始化数据库
 
+使用安装向导时会自动建库；手工部署可先执行：
+
 ```sql
+-- MySQL
 CREATE DATABASE IF NOT EXISTS `smart-doc-vision`
   CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+```
+
+```sql
+-- PostgreSQL
+CREATE DATABASE "smart-doc-vision" ENCODING 'UTF8';
 ```
 
 表结构由 GORM 在启动时自动迁移。首次启动会创建管理员、演示项目、默认审核配置，以及通用大模型 / JEV 两个供应商占位。
@@ -125,7 +133,10 @@ CREATE DATABASE IF NOT EXISTS `smart-doc-vision`
 
 - 管理后台固定入口：`http://127.0.0.1:<SERVER_PORT>/admin`，根路径 `/` 会自动跳转。
 - 编译发布默认 `APP_ENV=production`；本地开发请显式设置 `APP_ENV=development`。安装向导生成的 `.env` 固定为 `production`。
-- MySQL 和 Redis 配置全部写在同一个 `.env` 中；MySQL 可用独立字段或完整 `MYSQL_DSN`，Redis 可用 `REDIS_ADDR` 或 `REDIS_HOST` + `REDIS_PORT`。
+- 数据库和 Redis 配置全部写在同一个 `.env` 中：`DB_DRIVER=mysql|postgres` 选择数据库类型，连接参数使用 `DB_HOST` / `DB_PORT` / `DB_USER` / `DB_PASSWORD` / `DB_NAME`，也可用完整 `DB_DSN` 覆盖分项配置；旧版 `MYSQL_*` / `MYSQL_DSN` 写法仍然兼容。Redis 可用 `REDIS_ADDR` 或 `REDIS_HOST` + `REDIS_PORT`。
+- **所有 `.env` 配置只在启动时读取，修改后必须重启服务才会生效。** 其中 `DEFAULT_AI_*` / `JEV_*` 只在首次创建模型时使用，已有模型请在后台「模型接入」修改。
+- **旧版 `.env` 自动升级**：如果文件中仍是 `MYSQL_HOST` / `MYSQL_DSN` / `ADMIN_USERNAME` / `ADMIN_PASSWORD` 等旧键，程序启动时会自动识别并转换为新的 `DB_*` 格式，原文件备份为 `.env.bak.<时间戳>`，未识别的自定义键会保留在文件末尾。运行期也始终兼容旧键，因此即使文件不可写、转换失败，旧配置仍可正常启动。
+- `.env` 不再包含 `ADMIN_USERNAME` / `ADMIN_PASSWORD`：后台账号保存在数据库中，由安装向导或「账号管理」页面创建和维护。手工部署到全新空库时，可通过系统环境变量 `ADMIN_USERNAME` / `ADMIN_PASSWORD` 提供一次性初始账号；都不提供时会生成随机密码并打印在启动日志中。
 - 如果当前目录及其上级目录没有 `.env`、`config.yml`，也没有数据库/Redis 相关环境变量，程序会以「安装模式」启动，通过 `/admin` 的安装向导生成配置和随机 JWT/MASTER 密钥，不会用默认值连接数据库。
 - `build.ps1` 会把 `.env.example` 复制到 `dist/.env.example`，不再自动生成 `dist/.env`；首次启动会进入安装向导。
 - 旧版 `config.yml` 仅作为兼容兜底读取，但 `.env` 中的同名配置优先；新部署不再需要它。
@@ -138,21 +149,26 @@ CREATE DATABASE IF NOT EXISTS `smart-doc-vision`
 ```dotenv
 SERVER_PORT=8080
 
-MYSQL_HOST=127.0.0.1
-MYSQL_PORT=3306
-MYSQL_USER=root
-MYSQL_PASSWORD=你的密码
-MYSQL_DATABASE=smart-doc-vision
-MYSQL_CHARSET=utf8mb4
+# 数据库：mysql 或 postgres
+DB_DRIVER=mysql
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_USER=root
+DB_PASSWORD=你的密码
+DB_NAME=smart-doc-vision
+DB_CHARSET=utf8mb4
+# PostgreSQL 部署使用 5432 端口，并按需设置 sslmode
+# DB_DRIVER=postgres
+# DB_PORT=5432
+# DB_USER=postgres
+# DB_SSLMODE=disable
 
-REDIS_HOST=127.0.0.1
-REDIS_PORT=6379
+REDIS_ADDR=127.0.0.1:6379
 REDIS_PASSWORD=
 REDIS_DB=3
 
 JWT_SECRET=一段足够长的随机字符串
-MASTER_KEY=至少 32 字符的密钥
-ADMIN_PASSWORD=你的管理员密码
+MASTER_KEY=至少 32 字符的密钥（首次安装后不要修改）
 
 # 站点品牌（可选，重启生效）
 SITE_NAME=智审图档
@@ -160,6 +176,8 @@ SITE_NAME_EN=SmartDoc Vision
 SITE_LOGO=
 SITE_URL=http://127.0.0.1:8080
 ```
+
+> `.env` 中不再配置管理员账号。超级管理员由安装向导创建，之后在「账号管理」页面维护。管理员密码修改与 `.env` 无关，修改 `.env` 也不会改变已有账号。
 
 > 当前工作区的本地 `.env` 已按本机 MySQL / Redis 配置好，且被 `.gitignore` 忽略。`dbhub.toml` 也已被忽略，避免数据库口令进入版本库。
 
@@ -186,28 +204,27 @@ npm run dev
 
 首次使用（或新项目）请在「接入凭证」页面创建项目凭证，并勾选允许访问的审核配置；创建时复制一次 AppSecret。凭证是调用开放 API / WebSocket 的唯一机器身份。
 
-默认管理员由环境变量初始化，示例配置下为：
+首次使用的管理员账号由安装向导创建，账号和密码保存在数据库中：
 
-```text
-账号：admin
-密码：Admin@123456
-```
+- 通过安装向导部署时，在第 4 步设置超级管理员账号密码；
+- 手工部署到全新空库且未配置初始账号时，程序会生成随机管理员密码并打印在启动日志中，首次登录后请立即修改；
+- 之后所有账号维护（新增、停用、重置密码、角色与项目范围）都在后台「账号管理」中完成，修改 `.env` 不会影响已有账号。
 
-**首次登录后请立即修改管理员密码，并在生产环境更换 `JWT_SECRET`、`MASTER_KEY`。**
+**`JWT_SECRET` 可以随时更换（会让已登录会话失效）；`MASTER_KEY` 首次安装后绝对不要修改。** `MASTER_KEY` 用于加密数据库中的模型密钥、接入凭证 AppSecret、通知渠道配置、Redis 密码、回调密钥等；修改后这些数据将无法解密，等同于丢失。如需轮换，必须先用原密钥解密并重新加密全部数据（当前版本未内置轮换工具）。
 
 #### 首次安装向导
 
-当前版本起，全新部署不需要预先准备 `.env`：当程序没有找到任何配置（`.env`、`config.yml` 或配置环境变量）时，会以「安装模式」启动，不连接 MySQL/Redis，直接打开 `/admin` 进入安装向导：
+当前版本起，全新部署不需要预先准备 `.env`：当程序没有找到任何配置（`.env`、`config.yml` 或配置环境变量）时，会以「安装模式」启动，不连接数据库/Redis，直接打开 `/admin` 进入安装向导：
 
 1. 阅读并滚动到底部后同意 MIT 许可证与免责声明；
-2. 填写 MySQL（数据库不存在时自动创建）与 Redis（密码可为空）；
+2. 选择 MySQL 或 PostgreSQL 并填写连接参数（数据库不存在时自动创建），再填写 Redis（密码可为空）；
 3. 选择文件存储：本地目录，或阿里云 OSS / 腾讯云 COS / 七牛云 Kodo / AWS S3 / MinIO 等 S3 兼容对象存储；
 4. 设置超级管理员账号密码；可同时填写网站名称、英文名称和 Logo（留空使用平台默认品牌）；
 5. 点击「开始检测并安装」，系统检测依赖并检查目标数据库。如果数据库中已经存在本系统的表，会先弹出处理方式：**校验并修复表结构（保留数据）** 或 **清空数据表并重新安装**，两种操作都需要二次确认；确认后才创建/修复表、基础数据和管理员账号。
 
 安装完成后会生成：
 
-- `.env`：包含数据库、Redis、`JWT_SECRET`、`MASTER_KEY`、管理员、站点品牌和存储配置，权限 `0600`；
+- `.env`：包含数据库、Redis、`JWT_SECRET`、`MASTER_KEY`、站点品牌和存储配置（全中文注释，权限 `0600`）；后台账号不写入该文件；
 - `.install.txt`：安装标记，记录安装时间与版本。
 
 安装标记存在时，即使 `.env` 丢失也不会再次进入安装向导，而是提示恢复配置文件，避免误重装覆盖数据。刷新页面即可使用刚设置的管理员账号登录，无需重启进程。如果目录中只有构建模板生成的占位 `.env`，安装器会先将其备份为 `.env.bak.<时间戳>` 再写入新配置；真实配置不会被覆盖。
@@ -221,6 +238,7 @@ npm run dev
 - 安装时发现已有业务表：可选择「校验并修复」或「清空并重新安装」。修复只补齐缺失的表、字段和索引，不删除模型之外的列/表；清空只删除本系统已知表，无关表保留。
 - 升级程序后发现结构不一致：业务接口统一返回 `SCHEMA_UPGRADE_REQUIRED`，只有超级管理员可以登录。登录后自动进入「数据库兼容升级」页，列出将新建的表/字段/索引、将调整的字段（含原因）、以及模型之外会保留不删除的内容；确认并备份后才会执行修复，完成后自动恢复业务功能。
 - 非破坏性修复使用 GORM AutoMigrate：不会主动删除列或表；但列类型/可空性调整在极端情况下可能截断超长数据，执行前请备份数据库。
+- MySQL 与 PostgreSQL 共用同一套结构检测、升级门禁和安装流程；数据库类型在安装向导中选择，或通过 `.env` 的 `DB_DRIVER=mysql|postgres` 指定。
 - 如果 `sys_users` 等核心表或超级管理员账号缺失，网页无法完成登录和在线修复；此时需要恢复数据库备份，或删除 `.install.txt` 后重新安装。
 - 开发者修改 `backend/internal/model` 中的持久化结构时，应同步提升 `backend/internal/schema` 的 `Version` 常量；即使忘记提升，实际结构差异仍会触发升级门禁。
 
@@ -361,7 +379,7 @@ http://127.0.0.1:8080/admin
 
 根路径 `/` 会自动跳转到 `/admin/`；前端静态资源、SPA 路由、管理 API（`/api/admin/v1`）和开放 API（`/open/v1`）都由同一个进程提供，不再需要单独部署前端或 Nginx。
 
-> 单文件包含的是程序与前端页面，不包含数据库口令等敏感配置。MySQL、Redis、JWT_SECRET、MASTER_KEY 仍通过 `.env` 或环境变量注入。直接 `go run` 且未执行 `build.ps1` 时，`/admin` 会提示前端资源未打包，开发者继续使用 Vite `5173` 即可。
+> 单文件包含的是程序与前端页面，不包含数据库口令等敏感配置。数据库、Redis、JWT_SECRET、MASTER_KEY 仍通过 `.env` 或环境变量注入。直接 `go run` 且未执行 `build.ps1` 时，`/admin` 会提示前端资源未打包，开发者继续使用 Vite `5173` 即可。
 
 ### GitHub Release 自动发布
 
@@ -424,11 +442,13 @@ docker compose up -d --build
 
 默认访问地址：<http://localhost:8088>。Nginx 会将 `/api/`、`/open/`（含 WebSocket Upgrade）和 `/health` 转发到后端容器，前后端同源，无需额外 CORS；本地 Vite 开发服务器同样代理 `/open`。
 
+如需改用 PostgreSQL，在 `.env` 中设置 `DB_DSN=postgres://user:password@host:5432/smart-doc-vision?sslmode=disable`（驱动会按 DSN 自动识别），停用 `docker-compose.yml` 中的 `mysql` 服务，并确保后端容器能访问该地址即可。
+
 生产建议：
 
-- MySQL 使用托管实例或 8.0 主从；
+- MySQL 使用托管实例或 8.0 主从；PostgreSQL 建议 13+ 并使用托管实例或主从；
 - Redis 开启持久化和访问密码；
-- `MASTER_KEY` 使用 KMS 托管或独立密钥管理系统；
+- `MASTER_KEY` 使用 KMS 托管或独立密钥管理系统，且首次安装后不要更换；
 - 给 Nginx 配置 HTTPS；
 - Worker 与 API 服务拆分部署（当前为同一进程内异步 Worker）。
 
@@ -554,7 +574,7 @@ db.close()
 
 ## 系统配置
 
-「系统管理 → 系统配置」只读展示当前进程启动时解析的 `.env` / `config.yml`，包括运行环境、服务端口、Worker 数、MySQL、Redis、JWT Secret、Master Key、初始化管理员和默认模型等。
+「系统管理 → 系统配置」只读展示当前进程启动时解析的 `.env` / `config.yml`，包括运行环境、服务端口、Worker 数、数据库（MySQL / PostgreSQL）、Redis、JWT Secret、Master Key 和默认模型等。后台账号不在这里展示，请到「账号管理」维护。
 
 - 密码、API Key、JWT Secret、Master Key 等敏感字段在服务端脱敏后才返回，页面不展示明文；
 - 页面不提供修改入口，修改 `.env` 或 `config.yml` 后需要重启服务生效；

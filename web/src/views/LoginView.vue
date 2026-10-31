@@ -189,7 +189,7 @@ watch(captchaPayload, (payload) => {
 })
 
 function forgot() {
-  message.info('请联系系统管理员重置密码。管理员可在服务端通过 ADMIN_PASSWORD 重新初始化。')
+  message.info('请联系系统管理员重置密码。管理员可在「账号管理」中重置密码。')
 }
 </script>
 
@@ -365,7 +365,7 @@ function forgot() {
           </n-button>
 
           <div v-if="authMode === 'password'" class="form-meta">
-            <span>首次登录账号由 <code>ADMIN_USERNAME</code> / <code>ADMIN_PASSWORD</code> 初始化</span>
+            <span>首次登录账号由安装向导创建，账号信息保存在数据库中</span>
             <button type="button" class="forgot" @click="forgot">忘记密码？</button>
           </div>
           <div v-else class="form-meta authenticator-meta">

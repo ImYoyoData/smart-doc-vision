@@ -11,7 +11,7 @@ type AIProvider struct {
 	Model      string   `gorm:"size:128;not null" json:"model"`
 	APIKeyEnc  string   `gorm:"type:text" json:"-"`
 	Prompt     string   `gorm:"type:text" json:"prompt"`
-	ConfigJSON JSONText `gorm:"type:longtext" json:"config"`
+	ConfigJSON JSONText `json:"config"`
 	Status     string   `gorm:"size:16;not null;default:ACTIVE;index" json:"status"`
 	// Priority orders failover candidates within the same business category:
 	// smaller numbers are tried first. The audit-bound provider always goes

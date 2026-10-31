@@ -149,20 +149,46 @@ func (s *Seeder) ensureDefaultAPICredentials() error {
 }
 
 func (s *Seeder) ensureAdmin() (*model.User, error) {
+	// Accounts are stored in the database. ADMIN_USERNAME / ADMIN_PASSWORD are
+	// only honoured as a one-time bootstrap for manual deployments, and the web
+	// installer creates the account from its own form.
 	var user model.User
-	err := s.DB.Where("username = ?", s.Cfg.AdminUsername).First(&user).Error
+	if username := strings.TrimSpace(s.Cfg.AdminUsername); username != "" {
+		err := s.DB.Where("username = ?", username).First(&user).Error
+		if err == nil {
+			return &user, nil
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, err
+		}
+	}
+	err := s.DB.Where("role = ?", model.RoleSuperAdmin).Order("id asc").First(&user).Error
 	if err == nil {
 		return &user, nil
 	}
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
 	}
-	hash, err := security.HashPassword(s.Cfg.AdminPassword)
+	username := strings.TrimSpace(s.Cfg.AdminUsername)
+	if username == "" {
+		username = "admin"
+	}
+	password := s.Cfg.AdminPassword
+	generated := false
+	if strings.TrimSpace(password) == "" {
+		random, err := security.RandomSecret(16)
+		if err != nil {
+			return nil, err
+		}
+		password = random
+		generated = true
+	}
+	hash, err := security.HashPassword(password)
 	if err != nil {
 		return nil, err
 	}
 	user = model.User{
-		Username:     s.Cfg.AdminUsername,
+		Username:     username,
 		PasswordHash: hash,
 		DisplayName:  "系统管理员",
 		Role:         model.RoleSuperAdmin,
@@ -171,7 +197,11 @@ func (s *Seeder) ensureAdmin() (*model.User, error) {
 	if err := s.DB.Create(&user).Error; err != nil {
 		return nil, err
 	}
-	log.Printf("seeded admin user: %s", user.Username)
+	if generated {
+		log.Printf("seeded administrator %q with a generated password: %s (change it after first login)", user.Username, password)
+	} else {
+		log.Printf("seeded admin user: %s", user.Username)
+	}
 	return &user, nil
 }
 

@@ -32,7 +32,7 @@ func TestAll(ctx context.Context, base config.Config, req Request) []ProbeResult
 	wg.Add(3)
 	go func() {
 		defer wg.Done()
-		results[0] = probeMySQL(ctx, req.MySQL)
+		results[0] = probeDatabase(ctx, req.Database)
 	}()
 	go func() {
 		defer wg.Done()
@@ -55,41 +55,47 @@ func AllOK(results []ProbeResult) bool {
 	return true
 }
 
-func probeMySQL(ctx context.Context, req MySQL) ProbeResult {
+func probeDatabase(ctx context.Context, req Database) ProbeResult {
 	started := time.Now()
-	result := ProbeResult{Key: "mysql", Label: "MySQL"}
+	label := "MySQL"
+	driver := "mysql"
+	if req.Driver == config.DriverPostgres {
+		label = "PostgreSQL"
+		driver = "pgx"
+	}
+	result := ProbeResult{Key: "database", Label: label}
 	defer func() { result.LatencyMS = time.Since(started).Milliseconds() }()
 
 	timeoutCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
-	db, err := sql.Open("mysql", mysqlDSN(req, true))
+	db, err := sql.Open(driver, databaseDSN(req, true))
 	if err != nil {
-		result.Message = "MySQL 连接参数无效: " + err.Error()
+		result.Message = label + " 连接参数无效: " + err.Error()
 		return result
 	}
 	defer db.Close()
 	db.SetMaxOpenConns(1)
 	if err := db.PingContext(timeoutCtx); err != nil {
-		if strings.Contains(strings.ToLower(err.Error()), "unknown database") {
-			serverDB, openErr := sql.Open("mysql", mysqlDSN(req, false))
+		if unknownDatabaseError(err) {
+			serverDB, openErr := sql.Open(driver, databaseDSN(req, false))
 			if openErr == nil {
 				defer serverDB.Close()
 				serverDB.SetMaxOpenConns(1)
 				if pingErr := serverDB.PingContext(timeoutCtx); pingErr == nil {
 					result.OK = true
-					result.Message = "MySQL 连接正常"
+					result.Message = label + " 连接正常"
 					result.Note = fmt.Sprintf("数据库 %s 尚不存在，安装时会自动创建", req.Database)
 					return result
 				}
 			}
-			result.Message = "MySQL 连接正常，但数据库不存在且无法自动创建"
+			result.Message = label + " 连接正常，但数据库不存在且无法自动创建"
 			return result
 		}
-		result.Message = fmt.Sprintf("MySQL 连接失败: %s", mysqlErrorMessage(err))
+		result.Message = fmt.Sprintf("%s 连接失败: %s", label, databaseErrorMessage(err))
 		return result
 	}
 	result.OK = true
-	result.Message = "MySQL 连接正常"
+	result.Message = label + " 连接正常"
 	return result
 }
 
@@ -144,17 +150,17 @@ func probeStorage(ctx context.Context, base config.Config, req Request) ProbeRes
 	return result
 }
 
-func mysqlErrorMessage(err error) string {
+func databaseErrorMessage(err error) string {
 	message := err.Error()
 	lower := strings.ToLower(message)
 	switch {
-	case strings.Contains(lower, "access denied"):
+	case strings.Contains(lower, "access denied") || strings.Contains(lower, "password authentication failed"):
 		return "用户名或密码错误，或该账号没有访问权限"
 	case strings.Contains(lower, "connection refused"):
 		return "无法连接，请检查地址、端口和网络/防火墙"
 	case strings.Contains(lower, "timeout") || strings.Contains(lower, "deadline exceeded"):
 		return "连接超时，请检查网络"
-	case strings.Contains(lower, "no such host"):
+	case strings.Contains(lower, "no such host") || strings.Contains(lower, "name or service not known"):
 		return "无法解析主机名"
 	default:
 		return message

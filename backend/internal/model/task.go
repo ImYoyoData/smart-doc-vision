@@ -16,10 +16,10 @@ type Task struct {
 	MediaType        string     `gorm:"size:16;not null" json:"media_type"`
 	Status           string     `gorm:"size:24;not null;index" json:"status"`
 	Result           string     `gorm:"size:16;not null;default:UNKNOWN;index" json:"result"`
-	InputJSON        JSONText   `gorm:"type:longtext" json:"input"`
-	ModelResult      JSONText   `gorm:"type:longtext" json:"model_result"`
-	RuleTrace        JSONText   `gorm:"type:longtext" json:"rule_trace"`
-	ResultJSON       JSONText   `gorm:"type:longtext" json:"result_detail"`
+	InputJSON        JSONText   `json:"input"`
+	ModelResult      JSONText   `json:"model_result"`
+	RuleTrace        JSONText   `json:"rule_trace"`
+	ResultJSON       JSONText   `json:"result_detail"`
 	ProviderID       uint64     `json:"provider_id"`
 	ProviderName     string     `gorm:"-" json:"provider_name,omitempty"`
 	AuditName        string     `gorm:"-" json:"audit_name,omitempty"`

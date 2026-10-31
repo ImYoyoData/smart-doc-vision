@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -54,8 +55,8 @@ func (s *Server) systemConfigGroups() []systemConfigGroup {
 			},
 		},
 		{
-			Key: "mysql", Title: "MySQL", Description: "主数据库连接；密码在服务端脱敏后返回。",
-			Fields: mysqlConfigFields(cfg.MySQLDSN),
+			Key: "database", Title: "数据库", Description: "主数据库连接（MySQL 或 PostgreSQL）；密码在服务端脱敏后返回。",
+			Fields: databaseConfigFields(cfg),
 		},
 		{
 			Key: "ai", Title: "默认模型", Description: "未在模型接入中单独配置时使用的默认 AI 参数。",
@@ -69,12 +70,10 @@ func (s *Server) systemConfigGroups() []systemConfigGroup {
 			},
 		},
 		{
-			Key: "security", Title: "安全与初始账号", Description: "JWT、加密主密钥和初始化管理员；密钥只显示脱敏值。",
+			Key: "security", Title: "安全与密钥", Description: "登录令牌与数据加密密钥；密钥只显示脱敏值。后台账号保存在数据库中，请在「账号管理」中维护。",
 			Fields: []systemConfigField{
 				secretConfigField("JWT_SECRET", "JWT 签名密钥", cfg.JWTSecret),
 				secretConfigField("MASTER_KEY", "数据加密主密钥", cfg.MasterKey),
-				plainConfigField("ADMIN_USERNAME", "初始管理员账号", cfg.AdminUsername),
-				secretConfigField("ADMIN_PASSWORD", "初始管理员密码", cfg.AdminPassword),
 			},
 		},
 		{
@@ -124,22 +123,46 @@ func storageConfigFields(cfg config.Config) []systemConfigField {
 	return fields
 }
 
-func mysqlConfigFields(dsn string) []systemConfigField {
-	if strings.TrimSpace(dsn) == "" {
-		return []systemConfigField{plainConfigField("MYSQL_DSN", "连接 DSN", "")}
+func databaseConfigFields(cfg config.Config) []systemConfigField {
+	driver := config.NormalizeDatabaseDriver(cfg.DatabaseDriver)
+	label := "MySQL"
+	if driver == config.DriverPostgres {
+		label = "PostgreSQL"
+	}
+	fields := []systemConfigField{plainConfigField("DB_DRIVER", "类型", label)}
+	dsn := strings.TrimSpace(cfg.DatabaseDSN)
+	if dsn == "" {
+		return append(fields, secretConfigField("DB_DSN", "连接 DSN", ""))
+	}
+	if driver == config.DriverPostgres {
+		parsed, err := url.Parse(dsn)
+		if err != nil {
+			return append(fields, secretConfigField("DB_DSN", "连接 DSN", dsn))
+		}
+		username, password := "", ""
+		if parsed.User != nil {
+			username = parsed.User.Username()
+			password, _ = parsed.User.Password()
+		}
+		return append(fields,
+			plainConfigField("DB_HOST", "地址", parsed.Host),
+			plainConfigField("DB_NAME", "数据库", strings.TrimPrefix(parsed.Path, "/")),
+			plainConfigField("DB_USER", "用户名", username),
+			secretConfigField("DB_PASSWORD", "密码", password),
+			plainConfigField("DB_SSLMODE", "SSL 模式", parsed.Query().Get("sslmode")),
+		)
 	}
 	parsed, err := mysqldriver.ParseDSN(dsn)
 	if err != nil {
-		return []systemConfigField{secretConfigField("MYSQL_DSN", "连接 DSN", dsn)}
+		return append(fields, secretConfigField("DB_DSN", "连接 DSN", dsn))
 	}
-	charset := parsed.Params["charset"]
-	return []systemConfigField{
-		plainConfigField("MYSQL_HOST", "地址", parsed.Addr),
-		plainConfigField("MYSQL_DATABASE", "数据库", parsed.DBName),
-		plainConfigField("MYSQL_USER", "用户名", parsed.User),
-		secretConfigField("MYSQL_PASSWORD", "密码", parsed.Passwd),
-		plainConfigField("MYSQL_CHARSET", "字符集", charset),
-	}
+	return append(fields,
+		plainConfigField("DB_HOST", "地址", parsed.Addr),
+		plainConfigField("DB_NAME", "数据库", parsed.DBName),
+		plainConfigField("DB_USER", "用户名", parsed.User),
+		secretConfigField("DB_PASSWORD", "密码", parsed.Passwd),
+		plainConfigField("DB_CHARSET", "字符集", parsed.Params["charset"]),
+	)
 }
 
 func plainConfigField(key, label, value string) systemConfigField {

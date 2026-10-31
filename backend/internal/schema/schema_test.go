@@ -23,6 +23,24 @@ func TestNormalizeSQLType(t *testing.T) {
 	}
 }
 
+func TestNormalizePostgresSQLType(t *testing.T) {
+	cases := map[string]string{
+		"bigserial":                   "bigint",
+		"character varying(64)":       "varchar(64)",
+		"timestamp with time zone":    "timestamptz",
+		"timestamp(3) with time zone": "timestamptz",
+		"boolean":                     "bool",
+		"numeric(10, 2)":              "numeric(10,2)",
+		"bigint NOT NULL":             "bigint",
+		"timestamp without time zone": "timestamp",
+	}
+	for input, want := range cases {
+		if got := normalizePostgresSQLType(input); got != want {
+			t.Fatalf("normalizePostgresSQLType(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
 func TestTableNames(t *testing.T) {
 	app := strings.Join(AppTableNames(), ",")
 	for _, table := range []string{"sys_users", "sys_roles", "projects", "audits", "tasks"} {

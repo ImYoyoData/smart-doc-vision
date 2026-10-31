@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	gormlogger "gorm.io/gorm/logger"
 
@@ -16,7 +17,11 @@ import (
 )
 
 func Open(cfg config.Config) (*gorm.DB, error) {
-	db, err := gorm.Open(mysql.Open(cfg.MySQLDSN), &gorm.Config{
+	dialector := gorm.Dialector(mysql.Open(cfg.DatabaseDSN))
+	if cfg.DatabaseDriver == config.DriverPostgres {
+		dialector = postgres.Open(cfg.DatabaseDSN)
+	}
+	db, err := gorm.Open(dialector, &gorm.Config{
 		Logger:  gormlogger.Default.LogMode(gormlogger.Warn),
 		NowFunc: func() time.Time { return time.Now().Local() },
 	})
