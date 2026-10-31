@@ -7,6 +7,7 @@ import {
   NIcon,
   NMenu,
   NPopover,
+  NWatermark,
   useMessage,
   type MenuOption,
 } from 'naive-ui'
@@ -71,6 +72,14 @@ const isMobile = ref(window.matchMedia('(max-width: 960px)').matches)
 let mobileMedia: MediaQueryList | null = null
 const menuCollapsed = computed(() => sidebarCollapsed.value && !isMobile.value)
 const activeMenuKey = computed(() => (route.name ? String(route.name) : ''))
+const watermarkContent = computed(() => {
+  const username = auth.user?.username || auth.displayName || ''
+  const email = auth.user?.email?.trim() || ''
+  return [username, email].filter(Boolean).join('\n')
+})
+const watermarkColor = computed(() =>
+  theme.isDark ? 'rgba(255, 255, 255, 0.10)' : 'rgba(15, 23, 42, 0.09)',
+)
 const githubURL = 'https://github.com/ImYoyoData/smart-doc-vision'
 const version = ref('1.0.0')
 const metaLoading = ref(false)
@@ -362,6 +371,19 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
 
 <template>
   <div class="app-shell" :class="{ 'sidebar-collapsed': menuCollapsed }">
+    <n-watermark
+      fullscreen
+      :content="watermarkContent"
+      :font-size="13"
+      :font-color="watermarkColor"
+      :rotate="-18"
+      :width="320"
+      :height="150"
+      :x-gap="24"
+      :y-gap="24"
+      :z-index="60"
+      :selectable="false"
+    />
     <div v-if="sidebarOpen" class="sidebar-overlay" @click="sidebarOpen = false"></div>
     <aside class="sidebar" :class="{ open: sidebarOpen, collapsed: menuCollapsed }">
       <div class="sidebar-brand" @click="navigate('dashboard')">
