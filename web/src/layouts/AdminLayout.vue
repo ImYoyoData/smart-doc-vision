@@ -39,6 +39,7 @@ import MessageDetailModal from '@/components/MessageDetailModal.vue'
 import UpdateModal from '@/components/UpdateModal.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useWorkspaceStore } from '@/stores/workspace'
+import { useSiteStore } from '@/stores/site'
 import { useThemeStore } from '@/stores/theme'
 import { useUpdateStore } from '@/stores/update'
 import { messageApi, metaApi } from '@/api'
@@ -50,6 +51,7 @@ const router = useRouter()
 const message = useMessage()
 const auth = useAuthStore()
 const workspace = useWorkspaceStore()
+const site = useSiteStore()
 const review = useReviewStore()
 const theme = useThemeStore()
 const update = useUpdateStore()
@@ -294,8 +296,8 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
       <div class="sidebar-brand" @click="navigate('dashboard')">
         <BrandMark :size="38" />
         <div class="brand-copy">
-          <div class="brand-name">智审图档</div>
-          <div class="brand-en">SMARTDOC VISION</div>
+          <div class="brand-name">{{ site.displayName }}</div>
+          <div class="brand-en">{{ site.nameEn }}</div>
         </div>
       </div>
 
@@ -361,10 +363,10 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
             aria-label="检查更新"
             @click="update.openAndCheck()"
           >
-            <span>SmartDoc Vision v{{ version }}</span>
+            <span>{{ site.nameEn }} v{{ version }}</span>
             <span v-if="update.hasUpdate" class="version-dot"></span>
           </button>
-          <span v-else>SmartDoc Vision v{{ version }}</span>
+          <span v-else>{{ site.nameEn }} v{{ version }}</span>
           <span class="footer-meta-right">
             <span class="mono">Redis DB 3</span>
             <a

@@ -9,6 +9,7 @@ type RedisConnection struct {
 	ProjectID   uint64 `gorm:"not null;index;uniqueIndex:idx_redis_conn_project_name,priority:1" json:"project_id"`
 	Name        string `gorm:"size:64;not null;uniqueIndex:idx_redis_conn_project_name,priority:2" json:"name"`
 	Addr        string `gorm:"size:255;not null" json:"addr"`
+	DB          int    `gorm:"not null;default:0" json:"db"`
 	Username    string `gorm:"size:128" json:"username"`
 	PasswordEnc string `gorm:"type:text" json:"-"`
 	TLS         bool   `gorm:"not null;default:false" json:"tls"`

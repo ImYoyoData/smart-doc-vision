@@ -108,6 +108,8 @@ func (s *Server) Router() *gin.Engine {
 	r.GET("/health", s.health)
 	r.GET("/metrics", s.prometheusMetrics)
 	r.GET("/api/install/status", s.installStatus)
+	r.GET("/api/site", func(c *gin.Context) { ok(c, siteInfoPayload(s.cfg)) })
+	r.GET("/api/site/logo", func(c *gin.Context) { serveSiteLogo(s.cfg, c) })
 	r.GET("/api/media/*key", s.serveMedia)
 	registerAdminUI(r)
 
@@ -305,8 +307,9 @@ func failOrOk(c *gin.Context, status int, data gin.H) {
 
 func (s *Server) systemInfo(c *gin.Context) {
 	ok(c, gin.H{
-		"name":         "智审图档",
-		"name_en":      "SmartDoc Vision",
+		"name":         s.cfg.SiteName,
+		"name_en":      s.cfg.SiteNameEn,
+		"logo":         siteInfoPayload(s.cfg)["logo"],
 		"version":      appversion.Version,
 		"redis_db":     s.cfg.RedisDB,
 		"worker_count": s.cfg.WorkerCount,

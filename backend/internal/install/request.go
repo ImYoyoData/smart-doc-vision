@@ -67,12 +67,19 @@ type Admin struct {
 	Password string `json:"password"`
 }
 
+type Site struct {
+	Name   string `json:"name"`
+	NameEn string `json:"name_en"`
+	Logo   string `json:"logo"`
+}
+
 type Request struct {
 	Agreement bool    `json:"agreement"`
 	MySQL     MySQL   `json:"mysql"`
 	Redis     Redis   `json:"redis"`
 	Storage   Storage `json:"storage"`
 	Admin     Admin   `json:"admin"`
+	Site      Site    `json:"site"`
 	// DatabaseMode is create, repair or reset. The installer requires an
 	// explicit choice when application tables already exist.
 	DatabaseMode  string `json:"database_mode"`
@@ -125,6 +132,10 @@ func (r *Request) Normalize() {
 	if r.Admin.Username == "" {
 		r.Admin.Username = "admin"
 	}
+
+	r.Site.Name = strings.TrimSpace(r.Site.Name)
+	r.Site.NameEn = strings.TrimSpace(r.Site.NameEn)
+	r.Site.Logo = strings.TrimSpace(r.Site.Logo)
 }
 
 func (r Request) Validate() error {
@@ -148,7 +159,23 @@ func (r Request) Validate() error {
 	if r.DatabaseMode == "repair" && !r.ConfirmRepair {
 		return fmt.Errorf("修复数据库结构需要二次确认")
 	}
+	if err := r.ValidateSite(); err != nil {
+		return err
+	}
 	return r.ValidateConnections()
+}
+
+func (r Request) ValidateSite() error {
+	if len([]rune(r.Site.Name)) > 64 {
+		return fmt.Errorf("网站名称不能超过 64 个字符")
+	}
+	if len([]rune(r.Site.NameEn)) > 64 {
+		return fmt.Errorf("英文名称不能超过 64 个字符")
+	}
+	if len(r.Site.Logo) > 1024 {
+		return fmt.Errorf("Logo 地址过长")
+	}
+	return nil
 }
 
 // ValidateConnections checks the fields needed before probing MySQL, Redis and
@@ -218,6 +245,15 @@ func BuildConfig(base config.Config, req Request) config.Config {
 	base.RedisDB = req.Redis.DB
 	base.AdminUsername = req.Admin.Username
 	base.AdminPassword = req.Admin.Password
+	base.SiteName = req.Site.Name
+	if base.SiteName == "" {
+		base.SiteName = "智审图档"
+	}
+	base.SiteNameEn = req.Site.NameEn
+	if base.SiteNameEn == "" {
+		base.SiteNameEn = "SmartDoc Vision"
+	}
+	base.SiteLogo = req.Site.Logo
 	base.JWTSecret = config.RandomSecret(32)
 	base.MasterKey = config.RandomSecret(32)
 	base.Configured = true
@@ -343,6 +379,9 @@ func WriteEnv(cfg config.Config) (string, error) {
 		"MASTER_KEY":                  cfg.MasterKey,
 		"ADMIN_USERNAME":              cfg.AdminUsername,
 		"ADMIN_PASSWORD":              cfg.AdminPassword,
+		"SITE_NAME":                   cfg.SiteName,
+		"SITE_NAME_EN":                cfg.SiteNameEn,
+		"SITE_LOGO":                   cfg.SiteLogo,
 		"CORS_ORIGINS":                strings.Join(cfg.CORSOrigins, ","),
 		"WORKER_COUNT":                strconv.Itoa(cfg.WorkerCount),
 		"MEDIA_ALLOW_PRIVATE":         strconv.FormatBool(cfg.AllowPrivate),

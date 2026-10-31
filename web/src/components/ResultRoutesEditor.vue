@@ -51,7 +51,7 @@ const connectionOptions = computed(() => connections.value.map((connection) => {
       ? ' · 未通过测试'
       : ''
   return {
-    label: `${connection.name} · ${connection.addr}${suffix}`,
+    label: `${connection.name} · ${connection.addr} · DB ${connection.db}${suffix}`,
     value: connection.id,
     disabled: unavailable,
   }
@@ -83,6 +83,13 @@ watch(() => workspace.currentProjectId, () => {
 
 function goConnections() {
   router.push({ name: 'connections' })
+}
+
+function onRedisActionConnectionChange(action: RouteAction, value: string | number | null) {
+  const id = typeof value === 'number' ? value : Number(value || 0)
+  action.connection_id = id || undefined
+  const connection = connections.value.find((item) => item.id === id)
+  if (connection) action.db = connection.db ?? 0
 }
 
 const results = [
@@ -464,8 +471,9 @@ function actionTitle(action: RouteAction, index: number): string {
             <div class="field">
               <label>Redis 连接 <span>只能选择当前项目已启用且测试成功的连接</span></label>
               <n-select
-                v-model:value="action.connection_id"
+                :value="action.connection_id ?? null"
                 :options="connectionOptions"
+                @update:value="(value: string | number | null) => onRedisActionConnectionChange(action, value)"
                 :loading="loadingConnections"
                 size="small"
                 clearable

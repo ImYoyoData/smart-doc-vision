@@ -301,6 +301,7 @@ export interface RedisConnection {
   project_id: number
   name: string
   addr: string
+  db: number
   username: string
   tls: boolean
   status: 'ACTIVE' | 'DISABLED' | string

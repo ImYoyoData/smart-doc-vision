@@ -27,7 +27,7 @@ func New(connection model.RedisConnection, password string, db int) *redis.Clien
 }
 
 func Test(ctx context.Context, connection model.RedisConnection, password string) (time.Duration, error) {
-	client := New(connection, password, 0)
+	client := New(connection, password, connection.DB)
 	defer client.Close()
 	started := time.Now()
 	err := client.Ping(ctx).Err()

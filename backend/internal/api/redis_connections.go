@@ -18,6 +18,7 @@ import (
 type redisConnectionInput struct {
 	Name               string  `json:"name"`
 	Addr               string  `json:"addr"`
+	DB                 *int    `json:"db"`
 	Username           *string `json:"username"`
 	Password           string  `json:"password"`
 	TLS                *bool   `json:"tls"`
@@ -104,6 +105,7 @@ func (s *Server) updateRedisConnection(c *gin.Context) {
 		return
 	}
 	previousAddr := connection.Addr
+	previousDB := connection.DB
 	previousUser := connection.Username
 	previousPassword := connection.PasswordEnc
 	previousTLS := connection.TLS
@@ -112,7 +114,7 @@ func (s *Server) updateRedisConnection(c *gin.Context) {
 		badRequest(c, err.Error())
 		return
 	}
-	configChanged := connection.Addr != previousAddr || connection.Username != previousUser ||
+	configChanged := connection.Addr != previousAddr || connection.DB != previousDB || connection.Username != previousUser ||
 		connection.PasswordEnc != previousPassword || connection.TLS != previousTLS
 	statusChanged := connection.Status != previousStatus
 	if configChanged || statusChanged {
@@ -285,6 +287,12 @@ func (s *Server) applyRedisConnectionInput(connection *model.RedisConnection, re
 	}
 	if connection.Addr == "" {
 		return fmt.Errorf("请填写 Redis 地址")
+	}
+	if req.DB != nil {
+		if *req.DB < 0 || *req.DB > 255 {
+			return fmt.Errorf("Redis DB 编号需在 0~255 之间")
+		}
+		connection.DB = *req.DB
 	}
 	if req.Username != nil {
 		connection.Username = strings.TrimSpace(*req.Username)

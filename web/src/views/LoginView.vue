@@ -16,12 +16,14 @@ import BrandMark from '@/components/BrandMark.vue'
 import SliderCaptcha from '@/components/SliderCaptcha.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useWorkspaceStore } from '@/stores/workspace'
+import { useSiteStore } from '@/stores/site'
 
 const router = useRouter()
 const route = useRoute()
 const message = useMessage()
 const auth = useAuthStore()
 const workspace = useWorkspaceStore()
+const site = useSiteStore()
 
 const username = ref(localStorage.getItem('sdv.last_user') || '')
 const password = ref('')
@@ -158,8 +160,8 @@ function forgot() {
       <div class="visual-top">
         <BrandMark :size="46" />
         <div>
-          <div class="visual-brand">智审图档</div>
-          <div class="visual-en">SMARTDOC VISION</div>
+          <div class="visual-brand">{{ site.displayName }}</div>
+          <div class="visual-en">{{ site.nameEn }}</div>
         </div>
       </div>
 
@@ -222,7 +224,7 @@ function forgot() {
       </div>
 
       <div class="visual-foot">
-        <span>SMARTDOC VISION</span>
+        <span>{{ site.nameEn }}</span>
         <span>Go · Gin · MySQL · Redis</span>
       </div>
     </section>
@@ -232,8 +234,8 @@ function forgot() {
         <div class="mobile-brand">
           <BrandMark :size="42" />
           <div>
-            <div class="visual-brand">智审图档</div>
-            <div class="visual-en">SMARTDOC VISION</div>
+            <div class="visual-brand">{{ site.displayName }}</div>
+            <div class="visual-en">{{ site.nameEn }}</div>
           </div>
         </div>
         <div class="form-heading">
@@ -288,7 +290,7 @@ function forgot() {
           <span>滑块验证 · 同一 IP 连续 3 次失败封禁 10 分钟 · 全量操作审计</span>
         </div>
       </div>
-      <div class="form-footer">智审图档 SmartDoc Vision · 让审核可追溯、可复用、可进化</div>
+      <div class="form-footer">{{ site.displayName }} {{ site.nameEn }} · 让审核可追溯、可复用、可进化</div>
     </section>
 
     <n-modal :show="captchaShow" :mask-closable="!loading" @update:show="onCaptchaModalChange">

@@ -310,6 +310,7 @@ export const metaApi = {
     get<{
       name: string
       name_en: string
+      logo: string
       version: string
       redis_db: number
       worker_count: number

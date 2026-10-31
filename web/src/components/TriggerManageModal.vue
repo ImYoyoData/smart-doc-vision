@@ -62,13 +62,20 @@ const connectionOptions = computed(() => connections.value.map((connection) => {
       ? ' · 未通过测试'
       : ''
   return {
-    label: `${connection.name} · ${connection.addr}${suffix}`,
+    label: `${connection.name} · ${connection.addr} · DB ${connection.db}${suffix}`,
     value: connection.id,
     disabled: unavailable,
   }
 }))
 const hasEligibleConnection = computed(() => connections.value.some((connection) =>
   connection.status === 'ACTIVE' && connection.last_test_ok && connection.health === 'OK'))
+
+function onRedisConnectionChange(value: string | number | null) {
+  const id = typeof value === 'number' ? value : Number(value || 0)
+  form.redisConnectionId = id || null
+  const connection = connections.value.find((item) => item.id === id)
+  if (connection) form.redisDb = connection.db ?? 0
+}
 
 function pauseReasonLabel(reason: string) {
   const labels: Record<string, string> = {
@@ -233,7 +240,8 @@ function formatTime(value?: string | null): string {
           <div class="field">
             <label>Redis 连接 <span>只能选择当前项目已启用且测试成功的连接</span></label>
             <n-select
-              v-model:value="form.redisConnectionId"
+              :value="form.redisConnectionId"
+              @update:value="onRedisConnectionChange"
               :options="connectionOptions"
               :loading="loadingConnections"
               size="small"
@@ -248,7 +256,7 @@ function formatTime(value?: string | null): string {
           </div>
           <div class="two-col">
             <div class="field">
-              <label>DB 编号 <span>0~255</span></label>
+              <label>DB 编号 <span>默认来自连接，可覆盖</span></label>
               <n-input-number v-model:value="form.redisDb" size="small" :min="0" :max="255" style="width: 100%" />
             </div>
             <div class="field">
@@ -323,7 +331,7 @@ function formatTime(value?: string | null): string {
   display: flex;
   flex-direction: column;
   border-radius: 14px;
-  background: #fff;
+  background: var(--card);
   box-shadow: var(--shadow-lg, 0 18px 48px rgba(20, 32, 52, 0.18));
 }
 .modal-head {
@@ -361,7 +369,7 @@ function formatTime(value?: string | null): string {
 }
 .field label {
   font-size: 12px;
-  color: #5a6472;
+  color: var(--muted);
 }
 .field label span {
   color: var(--muted);
@@ -376,23 +384,24 @@ function formatTime(value?: string | null): string {
 .hint code {
   padding: 1px 4px;
   border-radius: 4px;
-  background: #eef2f8;
+  background: var(--surface-strong);
+  color: var(--text);
   font-size: 11px;
   word-break: break-all;
 }
 .connection-hint {
   padding: 8px 10px;
-  border: 1px solid #dbe7fb;
+  border: 1px solid var(--brand-border);
   border-radius: 8px;
-  background: #f6faff;
-  color: #4b6a9b;
+  background: var(--brand-softer);
+  color: var(--brand-strong);
   font-size: 11px;
   line-height: 1.7;
 }
 .connection-hint.paused {
-  border-color: #fde68a;
-  background: #fffbeb;
-  color: #92400e;
+  border-color: var(--amber-border);
+  background: var(--amber-soft);
+  color: var(--amber-ink);
 }
 .runtime {
   display: grid;
@@ -400,7 +409,7 @@ function formatTime(value?: string | null): string {
   gap: 8px 14px;
   padding: 10px 12px;
   border-radius: 10px;
-  background: #f7f9fc;
+  background: var(--surface-soft);
   font-size: 12px;
 }
 .runtime div {
@@ -412,7 +421,7 @@ function formatTime(value?: string | null): string {
   flex-shrink: 0;
 }
 .error-text {
-  color: #d03050;
+  color: var(--red);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -432,7 +441,7 @@ function formatTime(value?: string | null): string {
   word-break: break-all;
 }
 .test-error {
-  color: #d03050;
+  color: var(--red);
 }
 .modal-foot {
   display: flex;

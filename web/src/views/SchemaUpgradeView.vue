@@ -8,6 +8,7 @@ import {
   ShieldCheckmarkOutline,
   WarningOutline,
 } from '@vicons/ionicons5'
+import BrandMark from '@/components/BrandMark.vue'
 import { schemaApi } from '@/api/schema'
 import { useAuthStore } from '@/stores/auth'
 import { useSchemaStore } from '@/stores/schema'
@@ -81,7 +82,7 @@ onMounted(load)
   <div class="schema-page">
     <div class="schema-shell">
       <header class="schema-head">
-        <div class="brand-mark">智</div>
+        <BrandMark :size="52" />
         <div>
           <div class="eyebrow">DATABASE COMPATIBILITY</div>
           <h1>数据库兼容升级</h1>
@@ -267,21 +268,6 @@ onMounted(load)
   align-items: center;
   gap: 16px;
   margin-bottom: 22px;
-}
-
-.brand-mark {
-  display: flex;
-  width: 52px;
-  height: 52px;
-  align-items: center;
-  justify-content: center;
-  border-radius: 15px;
-  background: linear-gradient(140deg, var(--brand), var(--brand-strong));
-  color: #fff;
-  font-size: 22px;
-  font-weight: 700;
-  box-shadow: 0 10px 24px rgba(43, 108, 246, 0.28);
-  flex: none;
 }
 
 .schema-head > div:nth-child(2) {

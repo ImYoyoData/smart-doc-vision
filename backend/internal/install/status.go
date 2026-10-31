@@ -32,6 +32,7 @@ type Defaults struct {
 	Redis   Redis   `json:"redis"`
 	Storage Storage `json:"storage"`
 	Admin   Admin   `json:"admin"`
+	Site    Site    `json:"site"`
 }
 
 type Status struct {
@@ -110,6 +111,11 @@ func defaultsFromConfig(cfg config.Config) Defaults {
 			},
 		},
 		Admin: Admin{Username: "admin"},
+		Site: Site{
+			Name:   cfg.SiteName,
+			NameEn: cfg.SiteNameEn,
+			Logo:   cfg.SiteLogo,
+		},
 	}
 	if parsed, err := mysqlDriver.ParseDSN(cfg.MySQLDSN); err == nil {
 		if host, port, err := net.SplitHostPort(parsed.Addr); err == nil {

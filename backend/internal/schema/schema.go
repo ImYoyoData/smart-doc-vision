@@ -18,7 +18,7 @@ import (
 // Version must be bumped whenever model structs change in a way that requires
 // an explicit database structure upgrade. Existing installations compare this
 // value and the live schema when the process starts.
-const Version = "20261031.3"
+const Version = "20261031.4"
 
 type ColumnChange struct {
 	Table    string `json:"table"`

@@ -2,6 +2,7 @@ import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useInstallStore } from '@/stores/install'
 import { useSchemaStore } from '@/stores/schema'
+import { useSiteStore } from '@/stores/site'
 
 const routes: RouteRecordRaw[] = [
   {
@@ -145,12 +146,16 @@ const router = createRouter({
 
 router.beforeEach(async (to) => {
   const install = useInstallStore()
+  const site = useSiteStore()
   if (!install.checked) {
     await install.load()
   }
+  if (!site.checked) {
+    await site.load()
+  }
   if (install.isInstallerState()) {
     if (to.path !== '/') return { path: '/' }
-    document.title = '安装系统 · 智审图档'
+    document.title = `安装系统 · ${site.displayName}`
     return true
   }
   const auth = useAuthStore()
@@ -175,7 +180,7 @@ router.beforeEach(async (to) => {
   if (to.meta.menu && auth.user?.menus?.length && !auth.user.menus.includes(String(to.meta.menu))) {
     return { path: '/dashboard' }
   }
-  document.title = `${String(to.meta.title || '')} · 智审图档`
+  document.title = `${String(to.meta.title || '')} · ${site.displayName}`
   return true
 })
 

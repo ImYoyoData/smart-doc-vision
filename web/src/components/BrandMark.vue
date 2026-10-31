@@ -1,13 +1,18 @@
 <script setup lang="ts">
+import { useSiteStore } from '@/stores/site'
+
 withDefaults(defineProps<{ size?: number; variant?: 'gradient' | 'plain' }>(), {
   size: 38,
   variant: 'gradient',
 })
+
+const site = useSiteStore()
 </script>
 
 <template>
-  <span class="brand-mark" :class="variant" :style="{ width: `${size}px`, height: `${size}px` }">
-    <svg viewBox="0 0 48 48" fill="none" aria-hidden="true">
+  <span class="brand-mark" :class="[variant, { 'has-logo': site.logo }]" :style="{ width: `${size}px`, height: `${size}px` }">
+    <img v-if="site.logo" class="brand-logo" :src="site.logo" alt="" />
+    <svg v-else viewBox="0 0 48 48" fill="none" aria-hidden="true">
       <path
         d="M13 9.5h16.5L37 17v21.5H13z"
         stroke="currentColor"
@@ -36,6 +41,13 @@ withDefaults(defineProps<{ size?: number; variant?: 'gradient' | 'plain' }>(), {
   height: 76%;
 }
 
+.brand-logo {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: inherit;
+}
+
 .brand-mark.gradient {
   color: #fff;
   background: linear-gradient(140deg, #4f8bff 0%, #2358df 58%, #1b3fae 100%);
@@ -49,5 +61,10 @@ withDefaults(defineProps<{ size?: number; variant?: 'gradient' | 'plain' }>(), {
 .brand-mark.plain {
   color: var(--brand);
   background: var(--brand-soft);
+}
+
+.brand-mark.has-logo {
+  background: transparent;
+  box-shadow: none;
 }
 </style>

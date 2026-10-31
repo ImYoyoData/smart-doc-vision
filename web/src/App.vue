@@ -13,11 +13,14 @@ import {
 import { darkThemeOverrides, themeOverrides } from './theme'
 import { useThemeStore } from '@/stores/theme'
 import { useInstallStore } from '@/stores/install'
+import { useSiteStore } from '@/stores/site'
 import InstallView from '@/views/InstallView.vue'
 
 const theme = useThemeStore()
 theme.init()
 const install = useInstallStore()
+const site = useSiteStore()
+void site.load()
 void install.load()
 </script>
 

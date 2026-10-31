@@ -93,6 +93,8 @@ func (s *InstallerServer) Router() *gin.Engine {
 		ok(c, gin.H{"status": "installing", "state": s.state, "version": appversion.Version})
 	})
 	r.GET("/api/install/status", s.status)
+	r.GET("/api/site", func(c *gin.Context) { ok(c, siteInfoPayload(s.cfg)) })
+	r.GET("/api/site/logo", func(c *gin.Context) { serveSiteLogo(s.cfg, c) })
 	r.POST("/api/install/test", s.test)
 	r.POST("/api/install", s.install)
 	return r

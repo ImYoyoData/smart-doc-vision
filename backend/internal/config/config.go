@@ -35,6 +35,10 @@ type Config struct {
 	WorkerCount   int
 	AllowPrivate  bool
 
+	SiteName   string
+	SiteNameEn string
+	SiteLogo   string
+
 	DefaultAIBaseURL        string
 	DefaultAIModel          string
 	DefaultAIAPIKey         string
@@ -194,6 +198,9 @@ func Load() Config {
 		CORSOrigins:             pickList("CORS_ORIGINS", fileCfg.CORS.Origins, dotenvValues, []string{"http://localhost:5173", "http://127.0.0.1:5173"}),
 		WorkerCount:             pickInt("WORKER_COUNT", fileCfg.WorkerCount, dotenvValues, 4),
 		AllowPrivate:            pickBool("MEDIA_ALLOW_PRIVATE", fileCfg.Media.AllowPrivate, dotenvValues, false),
+		SiteName:                fallbackString(pickString("SITE_NAME", nil, dotenvValues, "智审图档"), "智审图档"),
+		SiteNameEn:              fallbackString(pickString("SITE_NAME_EN", nil, dotenvValues, "SmartDoc Vision"), "SmartDoc Vision"),
+		SiteLogo:                pickString("SITE_LOGO", nil, dotenvValues, ""),
 		DefaultAIBaseURL:        fallbackString(pickString("DEFAULT_AI_BASE_URL", fileCfg.AI.DefaultBaseURL, dotenvValues, "https://api.openai.com/v1"), "https://api.openai.com/v1"),
 		DefaultAIModel:          fallbackString(pickString("DEFAULT_AI_MODEL", fileCfg.AI.DefaultModel, dotenvValues, "gpt-4o-mini"), "gpt-4o-mini"),
 		DefaultAIAPIKey:         pickString("DEFAULT_AI_API_KEY", fileCfg.AI.DefaultAPIKey, dotenvValues, ""),
@@ -504,6 +511,12 @@ MASTER_KEY=%s
 
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=Admin@123456
+
+# Site branding. Restart after editing. SITE_LOGO accepts a local image path,
+# an https URL, or a data:image/... URI; leave empty to use the built-in mark.
+SITE_NAME=智审图档
+SITE_NAME_EN=SmartDoc Vision
+SITE_LOGO=
 
 CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 WORKER_COUNT=4

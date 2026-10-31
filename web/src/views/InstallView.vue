@@ -27,11 +27,14 @@ import {
   ServerOutline,
   ShieldCheckmarkOutline,
 } from '@vicons/ionicons5'
+import BrandMark from '@/components/BrandMark.vue'
 import { installApi, type DatabaseMode, type InstallDefaults, type InstallProbeResult, type InstallRequest } from '@/api/install'
 import type { SchemaReport } from '@/api/schema'
 import { useInstallStore } from '@/stores/install'
+import { useSiteStore } from '@/stores/site'
 
 const store = useInstallStore()
+const site = useSiteStore()
 const status = computed(() => store.status)
 const loading = ref(true)
 const loadError = ref('')
@@ -88,6 +91,11 @@ const form = reactive({
     username: 'admin',
     password: '',
     confirm: '',
+  },
+  site: {
+    name: '',
+    name_en: '',
+    logo: '',
   },
 })
 
@@ -153,6 +161,9 @@ function applyDefaults(defaults: InstallDefaults) {
   form.admin.username = defaults.admin.username || 'admin'
   form.admin.password = ''
   form.admin.confirm = ''
+  form.site.name = defaults.site?.name || '智审图档'
+  form.site.name_en = defaults.site?.name_en || 'SmartDoc Vision'
+  form.site.logo = defaults.site?.logo || ''
 }
 
 async function initialize() {
@@ -255,6 +266,11 @@ function buildPayload(mode: DatabaseMode | '' = '', confirmReset = false, confir
     admin: {
       username: form.admin.username.trim(),
       password: form.admin.password,
+    },
+    site: {
+      name: form.site.name.trim(),
+      name_en: form.site.name_en.trim(),
+      logo: form.site.logo.trim(),
     },
     database_mode: mode,
     confirm_reset: confirmReset,
@@ -365,10 +381,10 @@ onMounted(initialize)
   <div class="install-page">
     <div class="install-shell">
       <header class="install-head">
-        <div class="brand-mark">智</div>
+        <BrandMark :size="52" />
         <div class="brand-copy">
-          <div class="eyebrow">SMARTDOC VISION · SETUP</div>
-          <h1>智审图档 · 系统安装</h1>
+          <div class="eyebrow">{{ site.nameEn }} · SETUP</div>
+          <h1>{{ site.displayName }} · 系统安装</h1>
           <p>首次启动检测到尚未配置数据库与存储，请完成安装向导。</p>
         </div>
         <span v-if="status" class="version-chip">v{{ status.version }}</span>
@@ -457,8 +473,8 @@ onMounted(initialize)
             </div>
 
             <div ref="agreementBox" class="agreement-box" @scroll="onAgreementScroll">
-              <h3>智审图档（SmartDoc Vision）用户使用协议与免责声明</h3>
-              <p>一、软件许可。智审图档以 MIT 许可证开源发布。您可以在遵守 MIT 许可证条款的前提下自由使用、复制、修改、合并、发布、分发、再许可和/或销售本软件的副本。</p>
+              <h3>{{ site.displayName }}（{{ site.nameEn }}）用户使用协议与免责声明</h3>
+              <p>一、软件许可。{{ site.displayName }} 以 MIT 许可证开源发布。您可以在遵守 MIT 许可证条款的前提下自由使用、复制、修改、合并、发布、分发、再许可和/或销售本软件的副本。</p>
               <p>二、按“现状”提供。本软件按“现状”提供，不附带任何明示或默示的担保，包括但不限于对适销性、特定用途适用性以及不侵权的担保。无论在任何情况下，作者或版权持有人均不对因本软件或本软件的使用或其他交易而产生的任何索赔、损害或其他责任负责，无论是在合同诉讼、侵权行为还是其他方面。</p>
               <p>三、使用风险自担。您理解并同意：部署、配置、使用本系统所产生的全部风险由您自行承担。包括但不限于数据丢失、数据泄露、审核结论错误、业务中断、合规风险、法律风险以及因模型服务、数据库、Redis、对象存储或网络环境导致的任何损失。</p>
               <p>四、审核结论仅供参考。本系统调用第三方或本地大模型输出审核建议，模型结果可能存在错误、遗漏或偏差。您不得将系统输出作为唯一依据用于作出具有法律效力的决定；涉及档案合规、行政认定、司法程序等场景时，应由具备相应资质的专业人员复核。</p>
@@ -585,6 +601,17 @@ onMounted(initialize)
               <label>确认密码<em>*</em><n-input v-model:value="form.admin.confirm" type="password" show-password-on="click" placeholder="再次输入密码" /></label>
             </div>
             <p class="hint">密码长度为 8~72 位。安装完成后请妥善保存，后续可在个人中心修改。</p>
+
+            <div class="brand-subhead">
+              <h3>站点品牌（可选）</h3>
+              <p>留空使用平台默认名称和内置图标；安装后也可以修改 .env 中的 SITE_NAME、SITE_NAME_EN、SITE_LOGO。</p>
+            </div>
+            <div class="form-grid">
+              <label>网站名称<n-input v-model:value="form.site.name" placeholder="留空使用默认：智审图档" maxlength="64" /></label>
+              <label>英文名称<n-input v-model:value="form.site.name_en" placeholder="留空使用默认：SmartDoc Vision" maxlength="64" /></label>
+              <label class="span-2">Logo 地址或路径<n-input v-model:value="form.site.logo" placeholder="https://... 或服务器本地图片路径；留空使用内置图标" maxlength="1024" /></label>
+            </div>
+            <p class="hint">自定义 Logo 支持 https 链接、data:image 数据或服务器上可读的 png/jpg/webp/svg 图片路径。修改 .env 后需要重启服务生效。</p>
           </template>
 
           <template v-else>
@@ -601,6 +628,7 @@ onMounted(initialize)
               <div><span>Redis</span><strong>{{ redisSummary() }}</strong></div>
               <div><span>文件存储</span><strong>{{ storageSummary() }}</strong></div>
               <div><span>管理员</span><strong>{{ form.admin.username }}</strong></div>
+              <div><span>站点品牌</span><strong>{{ form.site.name || '默认平台品牌' }}{{ form.site.logo ? ' · 自定义 Logo' : '' }}</strong></div>
             </div>
 
             <div v-if="probes.length" class="probe-list">
@@ -801,21 +829,6 @@ onMounted(initialize)
   align-items: center;
   gap: 16px;
   margin-bottom: 22px;
-}
-
-.brand-mark {
-  display: flex;
-  width: 52px;
-  height: 52px;
-  align-items: center;
-  justify-content: center;
-  border-radius: 15px;
-  background: linear-gradient(140deg, var(--brand), var(--brand-strong));
-  color: #fff;
-  font-size: 22px;
-  font-weight: 700;
-  box-shadow: 0 10px 24px rgba(43, 108, 246, 0.28);
-  flex: none;
 }
 
 .brand-copy {
@@ -1094,6 +1107,24 @@ onMounted(initialize)
 
 .public-base {
   margin-top: 16px;
+}
+
+.brand-subhead {
+  margin: 18px 0 10px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.brand-subhead h3 {
+  margin: 0 0 4px;
+  font-size: 14px;
+}
+
+.brand-subhead p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
 }
 
 .hint {

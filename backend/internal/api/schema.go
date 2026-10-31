@@ -103,6 +103,8 @@ func (s *SchemaServer) Router() *gin.Engine {
 	registerAdminUI(r)
 	r.GET("/health", s.srv.health)
 	r.GET("/api/install/status", s.srv.installStatus)
+	r.GET("/api/site", func(c *gin.Context) { ok(c, siteInfoPayload(s.srv.cfg)) })
+	r.GET("/api/site/logo", func(c *gin.Context) { serveSiteLogo(s.srv.cfg, c) })
 
 	admin := r.Group("/api/admin/v1")
 	{

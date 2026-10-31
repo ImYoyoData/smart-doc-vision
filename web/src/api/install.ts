@@ -43,12 +43,19 @@ export interface InstallAdmin {
   password: string
 }
 
+export interface InstallSite {
+  name: string
+  name_en: string
+  logo: string
+}
+
 export interface InstallRequest {
   agreement: boolean
   mysql: InstallMySQL
   redis: InstallRedis
   storage: InstallStorage
   admin: InstallAdmin
+  site: InstallSite
   database_mode: DatabaseMode | ''
   confirm_reset: boolean
   confirm_repair: boolean
@@ -71,6 +78,7 @@ export interface InstallDefaults {
   redis: InstallRedis
   storage: InstallStorage
   admin: InstallAdmin
+  site: InstallSite
 }
 
 export interface InstallStatus {

@@ -552,7 +552,7 @@ onMounted(async () => {
 }
 
 .queue-row:hover {
-  background: #fffbef;
+  background: var(--amber-soft-2);
 }
 
 .queue-bar {
@@ -678,7 +678,7 @@ onMounted(async () => {
 }
 
 .recent-row:hover {
-  background: #f8faff;
+  background: var(--brand-softer);
 }
 
 .recent-icon {

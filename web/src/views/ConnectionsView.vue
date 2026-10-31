@@ -3,6 +3,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import {
   NButton,
   NInput,
+  NInputNumber,
   NModal,
   NSelect,
   NSpin,
@@ -39,6 +40,7 @@ const errorText = ref('')
 const form = reactive({
   name: '',
   addr: '127.0.0.1:6379',
+  db: 0,
   username: '',
   password: '',
   tls: false,
@@ -84,6 +86,7 @@ async function load() {
 function resetForm() {
   form.name = ''
   form.addr = '127.0.0.1:6379'
+  form.db = 0
   form.username = ''
   form.password = ''
   form.tls = false
@@ -106,6 +109,7 @@ function openEdit(connection: RedisConnection) {
   editing.value = connection
   form.name = connection.name
   form.addr = connection.addr
+  form.db = connection.db ?? 0
   form.username = connection.username || ''
   form.password = ''
   form.tls = connection.tls
@@ -127,6 +131,7 @@ async function save() {
     const payload: Record<string, unknown> = {
       name: form.name.trim(),
       addr: form.addr.trim(),
+      db: form.db,
       username: form.username.trim(),
       tls: form.tls,
       status: form.status,
@@ -219,7 +224,7 @@ onMounted(() => {
 
     <div class="connection-note">
       <LinkOutline />
-      <span>一个项目可以配置多个 Redis 实例。具体监听的 DB 编号和 Stream 在审核触发中填写；结果动作也会复用这里的连接。</span>
+      <span>一个项目可以配置多个 Redis 实例。连接上的 DB 编号用于测试和作为触发源默认值；触发源仍可单独覆盖，结果动作使用动作自己的 DB。</span>
     </div>
 
     <div v-if="!hasProject" class="panel">
@@ -262,6 +267,7 @@ onMounted(() => {
         </div>
 
         <div class="connection-meta">
+          <div><span>DB</span><strong>{{ connection.db }}</strong></div>
           <div><span>用户名</span><strong>{{ connection.username || '未设置' }}</strong></div>
           <div><span>TLS</span><strong>{{ connection.tls ? '开启' : '关闭' }}</strong></div>
           <div><span>自动恢复触发</span><strong>{{ connection.auto_resume_triggers ? '开启' : '关闭' }}</strong></div>
@@ -306,7 +312,7 @@ onMounted(() => {
           <div>
             <div class="modal-kicker">{{ editing ? 'EDIT REDIS CONNECTION' : 'NEW REDIS CONNECTION' }}</div>
             <h2>{{ editing ? '编辑 Redis 连接' : '新增 Redis 连接' }}</h2>
-            <p>密码加密存储；启用前请先测试连接。DB 编号在触发源中单独选择。</p>
+            <p>密码加密存储；启用前请先测试连接。连接 DB 作为触发源默认值。</p>
           </div>
           <div class="modal-head-actions">
             <span class="modal-icon"><LinkOutline /></span>
@@ -322,6 +328,11 @@ onMounted(() => {
             <label>Redis 地址 <span class="required">*</span></label>
             <n-input v-model:value="form.addr" placeholder="127.0.0.1:6379" class="mono-input" />
             <div class="form-hint">host:port；不写端口时默认 6379。</div>
+          </div>
+          <div class="field">
+            <label>DB 编号</label>
+            <n-input-number v-model:value="form.db" :min="0" :max="255" style="width: 180px" />
+            <div class="form-hint">连接的默认 DB（0~255）；审核触发源和结果动作仍可单独覆盖。</div>
           </div>
           <div class="two-col">
             <div class="field">

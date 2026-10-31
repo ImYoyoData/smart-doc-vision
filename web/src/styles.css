@@ -16,6 +16,7 @@
   --red: #dc2626;
   --red-soft: #fef2f2;
   --amber: #f59e0b;
+  --amber-ink: #92400e;
   --amber-soft: #fffbeb;
   --purple: #7c3aed;
   --purple-soft: #f5f3ff;
@@ -58,6 +59,7 @@ html[data-theme='dark'] {
   --red: #f87171;
   --red-soft: #2a1519;
   --amber: #fbbf24;
+  --amber-ink: #fbbf24;
   --amber-soft: #2a2214;
   --purple: #a78bfa;
   --purple-soft: #211a33;
