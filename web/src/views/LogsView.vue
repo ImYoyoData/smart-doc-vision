@@ -20,6 +20,7 @@ import {
   SparklesOutline,
 } from '@vicons/ionicons5'
 import PageHeader from '@/components/PageHeader.vue'
+import PageSkeleton from '@/components/PageSkeleton.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import LogsAssistantModal from '@/components/LogsAssistantModal.vue'
@@ -331,6 +332,7 @@ onMounted(load)
         </n-button>
       </template>
     </PageHeader>
+    <PageSkeleton v-if="loading && !logs.length" variant="table" />
 
     <div class="retention-banner">
       <ShieldCheckmarkOutline />

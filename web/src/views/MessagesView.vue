@@ -20,6 +20,7 @@ import {
 } from '@vicons/ionicons5'
 import dayjs from 'dayjs'
 import PageHeader from '@/components/PageHeader.vue'
+import PageSkeleton from '@/components/PageSkeleton.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import MessageDetailModal from '@/components/MessageDetailModal.vue'
 import { messageApi, notificationPreferenceApi } from '@/api'
@@ -228,7 +229,7 @@ onMounted(load)
         <span class="message-count">共 {{ total }} 条 · 全局未读 {{ unread }}</span>
       </div>
 
-      <div v-if="loading" class="message-page-loading">正在加载…</div>
+      <div v-if="loading && !items.length" class="message-page-loading"><PageSkeleton variant="table" :rows="6" /></div>
       <div v-else-if="items.length" class="message-table">
         <button
           v-for="item in items"

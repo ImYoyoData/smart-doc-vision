@@ -50,6 +50,7 @@ import {
 } from '@vicons/ionicons5'
 import AiContextUsage from '@/components/AiContextUsage.vue'
 import PageHeader from '@/components/PageHeader.vue'
+import PageSkeleton from '@/components/PageSkeleton.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import TaskSubmitModal from '@/components/TaskSubmitModal.vue'
@@ -2286,6 +2287,7 @@ onMounted(async () => {
         </n-button>
       </template>
     </PageHeader>
+    <PageSkeleton v-if="loading && !audits.length" variant="cards" />
 
     <div class="audit-summary">
       <div>

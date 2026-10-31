@@ -11,6 +11,7 @@ import {
   WarningOutline,
 } from '@vicons/ionicons5'
 import PageHeader from '@/components/PageHeader.vue'
+import PageSkeleton from '@/components/PageSkeleton.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import SliderCaptcha from '@/components/SliderCaptcha.vue'
@@ -261,6 +262,7 @@ onMounted(load)
         </n-button>
       </template>
     </PageHeader>
+    <PageSkeleton v-if="loading && !items.length" variant="table" />
 
     <div class="recycle-notice">
       <div class="notice-icon"><ArchiveOutline /></div>

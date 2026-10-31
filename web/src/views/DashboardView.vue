@@ -17,6 +17,7 @@ import {
   WarningOutline,
 } from '@vicons/ionicons5'
 import PageHeader from '@/components/PageHeader.vue'
+import PageSkeleton from '@/components/PageSkeleton.vue'
 import MetricCard from '@/components/MetricCard.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -179,6 +180,7 @@ onMounted(async () => {
         </n-button>
       </template>
     </PageHeader>
+    <PageSkeleton v-if="loading && !analytics" variant="dashboard" />
 
     <section class="filter-bar">
       <div class="filter-item"><span>项目</span><n-select v-model:value="projectFilter" :options="projectOptions" style="width: 195px" /></div>

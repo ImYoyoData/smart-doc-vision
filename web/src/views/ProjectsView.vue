@@ -29,6 +29,7 @@ import {
   TrashOutline,
 } from '@vicons/ionicons5'
 import PageHeader from '@/components/PageHeader.vue'
+import PageSkeleton from '@/components/PageSkeleton.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import ProjectSecretsModal from '@/components/ProjectSecretsModal.vue'
@@ -302,6 +303,7 @@ onMounted(async () => {
         </n-button>
       </template>
     </PageHeader>
+    <PageSkeleton v-if="loading && !workspace.projects.length" variant="cards" />
 
     <div class="project-summary">
       <div class="summary-item">

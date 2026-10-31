@@ -29,6 +29,7 @@ import {
   TrashOutline,
 } from '@vicons/ionicons5'
 import PageHeader from '@/components/PageHeader.vue'
+import PageSkeleton from '@/components/PageSkeleton.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import TaskSubmitModal from '@/components/TaskSubmitModal.vue'
@@ -685,9 +686,7 @@ onBeforeUnmount(() => {
         <template #icon><FlashOutline /></template>
       </EmptyState>
 
-      <div v-else class="loading-table">
-        <div v-for="i in 5" :key="i" class="loading-row"></div>
-      </div>
+      <PageSkeleton v-else variant="table" :rows="6" />
     </section>
 
     <TaskSubmitModal

@@ -12,6 +12,7 @@ import {
   TimeOutline,
 } from '@vicons/ionicons5'
 import PageHeader from '@/components/PageHeader.vue'
+import PageSkeleton from '@/components/PageSkeleton.vue'
 import MetricCard from '@/components/MetricCard.vue'
 import EChart from '@/components/EChart.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -347,6 +348,7 @@ onMounted(async () => {
         </n-button>
       </template>
     </PageHeader>
+    <PageSkeleton v-if="loading && !data" variant="dashboard" />
 
     <section class="filter-panel">
       <div class="filter-group">

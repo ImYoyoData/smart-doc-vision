@@ -17,6 +17,7 @@ import {
 } from '@vicons/ionicons5'
 import BrandMark from '@/components/BrandMark.vue'
 import PageHeader from '@/components/PageHeader.vue'
+import PageSkeleton from '@/components/PageSkeleton.vue'
 import { systemConfigApi } from '@/api'
 import type { SystemConfigData, SystemConfigGroup } from '@/api/types'
 import { useAuthStore } from '@/stores/auth'
@@ -243,7 +244,7 @@ onMounted(() => {
       <span class="banner-badge">READ ONLY</span>
     </div>
 
-    <div v-if="loading" class="config-loading">正在读取配置…</div>
+    <div v-if="loading && !data" class="config-loading"><PageSkeleton variant="form" /></div>
     <div v-else-if="errorText" class="config-empty">{{ errorText }}</div>
     <template v-else-if="data">
       <div class="config-summary">

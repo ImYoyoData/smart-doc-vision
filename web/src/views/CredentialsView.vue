@@ -14,6 +14,7 @@ import {
   WarningOutline,
 } from '@vicons/ionicons5'
 import PageHeader from '@/components/PageHeader.vue'
+import PageSkeleton from '@/components/PageSkeleton.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import CopyButton from '@/components/CopyButton.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -252,6 +253,7 @@ onMounted(load)
         </n-button>
       </template>
     </PageHeader>
+    <PageSkeleton v-if="loading && !credentials.length" variant="table" />
 
     <div class="credential-notice">
       <ShieldCheckmarkOutline />

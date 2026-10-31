@@ -22,6 +22,7 @@ import {
   TimeOutline,
 } from '@vicons/ionicons5'
 import PageHeader from '@/components/PageHeader.vue'
+import PageSkeleton from '@/components/PageSkeleton.vue'
 import ReviewContext from '@/components/ReviewContext.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -252,6 +253,7 @@ onMounted(async () => {
         </n-button>
       </template>
     </PageHeader>
+    <PageSkeleton v-if="loading && !queue.length" variant="review" />
 
     <div class="review-banner">
       <span class="review-banner-icon"><AlertCircleOutline /></span>

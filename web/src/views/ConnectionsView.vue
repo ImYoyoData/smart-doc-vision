@@ -21,6 +21,7 @@ import {
   TrashOutline,
 } from '@vicons/ionicons5'
 import PageHeader from '@/components/PageHeader.vue'
+import PageSkeleton from '@/components/PageSkeleton.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import { redisConnectionApi } from '@/api'
 import type { RedisConnection } from '@/api/types'
@@ -236,9 +237,8 @@ onMounted(() => {
       />
     </div>
 
-    <div v-else-if="loading" class="panel connection-loading">
-      <n-spin size="small" />
-      <span>正在加载 Redis 连接…</span>
+    <div v-else-if="loading && !connections.length" class="panel">
+      <PageSkeleton variant="cards" :cards="4" />
     </div>
 
     <div v-else-if="!connections.length" class="panel">
