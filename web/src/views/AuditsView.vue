@@ -28,6 +28,7 @@ import {
 } from 'naive-ui'
 import {
   AddOutline,
+  BarChartOutline,
   CheckmarkCircleOutline,
   CloudOutline,
   CloseCircleOutline,
@@ -35,9 +36,9 @@ import {
   CopyOutline,
   CreateOutline,
   DownloadOutline,
-  EllipsisHorizontalOutline,
   EyeOutline,
   FlashOutline,
+  LinkOutline,
   PersonOutline,
   RefreshOutline,
   SearchOutline,
@@ -1415,50 +1416,17 @@ function validateCategoryForm(): string {
   return ''
 }
 
-function auditMoreOptions() {
-  const options: Array<Record<string, unknown>> = [
-    { label: '查看详情', key: 'detail' },
-    { label: '查看数据报表', key: 'analytics' },
-  ]
-  if (auth.can('audit:write')) {
-    options.push(
-      { type: 'divider', key: 'd1' },
-      { label: '编辑配置', key: 'edit' },
-      { label: '脚本日志', key: 'script-logs' },
-      { label: '复制配置', key: 'clone' },
-      { type: 'divider', key: 'd2' },
-      { label: '移入回收站', key: 'delete' },
-    )
-  }
-  return options
+function openAnalytics(audit: Audit) {
+  router.push({ name: 'analytics', query: { project_id: String(audit.project_id), audit_id: String(audit.id) } })
+}
+
+function openScriptLogs(audit: Audit) {
+  scriptLogsAudit.value = audit
+  scriptLogsShow.value = true
 }
 
 function copyAuditCode(audit: Audit) {
   copyText(audit.code).then((ok) => (ok ? message.success('审核编码已复制') : message.error('复制失败')))
-}
-
-function handleAuditMore(key: string, audit: Audit) {
-  switch (key) {
-    case 'detail':
-      openDetail(audit)
-      break
-    case 'analytics':
-      router.push({ name: 'analytics', query: { project_id: String(audit.project_id), audit_id: String(audit.id) } })
-      break
-    case 'edit':
-      openEdit(audit)
-      break
-    case 'script-logs':
-      scriptLogsAudit.value = audit
-      scriptLogsShow.value = true
-      break
-    case 'clone':
-      openClone(audit)
-      break
-    case 'delete':
-      remove(audit)
-      break
-  }
 }
 
 function resetExportFilters() {
@@ -2402,22 +2370,35 @@ onMounted(async () => {
         </div>
         <div class="audit-prompt" :title="audit.review_prompt">{{ audit.review_prompt }}</div>
         <div class="audit-actions">
-          <n-button v-if="auth.can('task:submit')" class="audit-run" size="small" type="primary" :disabled="audit.status !== 'ACTIVE'" @click="openSubmit(audit)">
-            <template #icon><FlashOutline /></template>
-            发起审核
-          </n-button>
           <div class="audit-action-row">
-            <n-button size="small" secondary @click="openGuide(audit)">接入指南</n-button>
-            <n-button size="small" quaternary @click="openExport(audit)">
-              <template #icon><DownloadOutline /></template>
-              导出记录
+            <n-button size="tiny" quaternary circle title="查看详情" aria-label="查看详情" @click="openDetail(audit)">
+              <template #icon><EyeOutline /></template>
             </n-button>
-            <n-dropdown trigger="click" :options="auditMoreOptions()" @select="(key) => handleAuditMore(String(key), audit)">
-              <n-button size="small" quaternary>
-                <template #icon><EllipsisHorizontalOutline /></template>
-                更多
-              </n-button>
-            </n-dropdown>
+            <n-button size="tiny" quaternary circle title="查看数据报表" aria-label="查看数据报表" @click="openAnalytics(audit)">
+              <template #icon><BarChartOutline /></template>
+            </n-button>
+            <n-button v-if="auth.can('audit:write')" size="tiny" quaternary circle title="编辑配置" aria-label="编辑配置" @click="openEdit(audit)">
+              <template #icon><CreateOutline /></template>
+            </n-button>
+            <n-button v-if="auth.can('audit:write')" size="tiny" quaternary circle title="脚本日志" aria-label="脚本日志" @click="openScriptLogs(audit)">
+              <template #icon><TextOutline /></template>
+            </n-button>
+            <n-button v-if="auth.can('audit:write')" size="tiny" quaternary circle title="复制配置" aria-label="复制配置" @click="openClone(audit)">
+              <template #icon><CopyOutline /></template>
+            </n-button>
+            <n-button size="tiny" quaternary circle title="接入指南" aria-label="接入指南" @click="openGuide(audit)">
+              <template #icon><LinkOutline /></template>
+            </n-button>
+            <n-button size="tiny" quaternary circle title="导出记录" aria-label="导出记录" @click="openExport(audit)">
+              <template #icon><DownloadOutline /></template>
+            </n-button>
+            <n-button v-if="auth.can('audit:write')" size="tiny" quaternary circle class="delete-btn" title="移入回收站" aria-label="移入回收站" @click="remove(audit)">
+              <template #icon><TrashOutline /></template>
+            </n-button>
+            <n-button v-if="auth.can('task:submit')" class="audit-run" size="small" type="primary" :disabled="audit.status !== 'ACTIVE'" @click="openSubmit(audit)">
+              <template #icon><FlashOutline /></template>
+              发起审核
+            </n-button>
           </div>
         </div>
       </article>
@@ -3730,18 +3711,18 @@ onMounted(async () => {
 }
 
 .audit-run {
-  width: 100%;
+  margin-left: auto;
 }
 
 .audit-action-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 4px;
 }
 
 .audit-action-row :deep(.n-button) {
   min-width: 0;
-  flex: 1;
 }
 
 .delete-btn {
