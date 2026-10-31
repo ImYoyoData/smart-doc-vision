@@ -114,7 +114,7 @@ func (s *Server) listAuditLogs(c *gin.Context) {
 		return
 	}
 	var items []model.AuditLog
-	if err := q.Order("created_at desc").Offset((page - 1) * pageSize).Limit(pageSize).Find(&items).Error; err != nil {
+	if err := q.Order(auditLogOrder(c.Query("sort"))).Offset((page - 1) * pageSize).Limit(pageSize).Find(&items).Error; err != nil {
 		serverError(c, err)
 		return
 	}

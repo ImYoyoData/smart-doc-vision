@@ -6,7 +6,6 @@ import {
   NDatePicker,
   NInput,
   NModal,
-  NPagination,
   NSelect,
   useMessage,
   type DataTableColumns,
@@ -27,6 +26,7 @@ import LogsAssistantModal from '@/components/LogsAssistantModal.vue'
 import { logApi } from '@/api'
 import type { AuditLog, LogsAssistantFilter } from '@/api/types'
 import { useWorkspaceStore } from '@/stores/workspace'
+import { sortersToQuery } from '@/utils/table'
 
 const workspace = useWorkspaceStore()
 const message = useMessage()
@@ -126,6 +126,7 @@ async function load() {
       params.start = dayjs(dateRange.value[0]).format('YYYY-MM-DD')
       params.end = dayjs(dateRange.value[1]).format('YYYY-MM-DD')
     }
+    if (logSort.value) params.sort = logSort.value
     const data = await logApi.list(params)
     logs.value = data.items
     total.value = data.total
@@ -156,6 +157,34 @@ function actionLabel(value: string) {
   return actionLabels[value] || value
 }
 
+const logSort = ref('')
+
+function onLogSorterChange(value: unknown) {
+  const next = sortersToQuery(value)
+  if (next === logSort.value) return
+  logSort.value = next
+  if (page.value === 1) {
+    load()
+  } else {
+    page.value = 1
+  }
+}
+
+const logPagination = computed(() => ({
+  page: page.value,
+  pageSize: pageSize.value,
+  itemCount: total.value,
+  pageSizes: [20, 50, 100],
+  showSizePicker: true,
+  showQuickJumper: true,
+  onChange: (value: number) => {
+    page.value = value
+  },
+  onUpdatePageSize: (value: number) => {
+    pageSize.value = value
+  },
+}))
+
 const logRowKey = (row: AuditLog) => row.id
 
 const logColumns = computed<DataTableColumns<AuditLog>>(() => [
@@ -163,13 +192,19 @@ const logColumns = computed<DataTableColumns<AuditLog>>(() => [
     title: '时间',
     key: 'created_at',
     width: 155,
+    align: 'center',
+    resizable: true,
+    sorter: { multiple: 1, compare: 'default' },
     render: (row) => h('span', { class: 'log-time mono' },
       row.created_at?.replace('T', ' ').slice(0, 19) || '—'),
   },
   {
     title: '操作人',
     key: 'operator',
-    minWidth: 170,
+    width: 170,
+    align: 'center',
+    resizable: true,
+    sorter: { multiple: 1, compare: 'default' },
     render: (row) => h('div', { class: 'operator-cell' }, [
       h('span', { class: 'mini-avatar' }, row.operator?.slice(0, 1).toUpperCase() || '?'),
       h('div', [
@@ -181,7 +216,10 @@ const logColumns = computed<DataTableColumns<AuditLog>>(() => [
   {
     title: '操作',
     key: 'action',
-    minWidth: 190,
+    width: 190,
+    align: 'center',
+    resizable: true,
+    sorter: { multiple: 1, compare: 'default' },
     render: (row) => h('div', [
       h('div', { class: 'cell-title' }, actionLabel(row.action)),
       h('div', { class: 'cell-sub mono' }, row.action),
@@ -189,8 +227,11 @@ const logColumns = computed<DataTableColumns<AuditLog>>(() => [
   },
   {
     title: '对象',
-    key: 'object',
-    minWidth: 170,
+    key: 'object_type',
+    width: 170,
+    align: 'center',
+    resizable: true,
+    sorter: { multiple: 1, compare: 'default' },
     render: (row) => h('div', [
       h('div', { class: 'cell-title' }, row.object_type || '—'),
       h('div', { class: 'cell-sub mono' }, row.object_id || '—'),
@@ -200,26 +241,33 @@ const logColumns = computed<DataTableColumns<AuditLog>>(() => [
     title: '结果',
     key: 'result',
     width: 100,
+    align: 'center',
+    resizable: true,
+    sorter: { multiple: 1, compare: 'default' },
     render: (row) => h(StatusTag, { status: row.result, type: 'log' }),
   },
   {
     title: 'Trace ID',
     key: 'trace_id',
     width: 135,
+    align: 'center',
+    resizable: true,
+    sorter: { multiple: 1, compare: 'default' },
     render: (row) => h('span', { class: 'trace mono' },
       row.trace_id ? row.trace_id.slice(0, 12) : '—'),
   },
   {
     title: '详情',
     key: 'detail',
-    width: 80,
-    align: 'right',
+    width: 95,
+    align: 'center',
     fixed: 'right',
+    resizable: false,
     render: (row) => h(NButton, {
       size: 'tiny',
       quaternary: true,
       onClick: () => openDetail(row),
-    }, { icon: () => h(EyeOutline) }),
+    }, { icon: () => h(EyeOutline), default: () => '详情' }),
   },
 ])
 
@@ -357,10 +405,15 @@ onMounted(load)
           :columns="logColumns"
           :data="logs"
           :row-key="logRowKey"
-          :scroll-x="1080"
+          :pagination="logPagination"
+          :scroll-x="1115"
+          max-height="calc(100vh - 330px)"
+          remote
+          striped
           size="small"
           :bordered="false"
           class="sdv-data-table"
+          @update:sorter="onLogSorterChange"
         />
       </div>
 
@@ -368,16 +421,6 @@ onMounted(load)
         <template #icon><DocumentTextOutline /></template>
       </EmptyState>
 
-      <div class="pagination-row sticky-pagination">
-        <span>共 {{ total }} 条记录</span>
-        <n-pagination
-          v-model:page="page"
-          v-model:page-size="pageSize"
-          :page-sizes="[20, 50, 100]"
-          show-size-picker
-          :item-count="total"
-        />
-      </div>
     </section>
 
     <n-modal v-model:show="detailShow">

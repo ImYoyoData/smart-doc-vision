@@ -721,8 +721,10 @@ const treatyColumns = computed<DataTableColumns<AuditTreaty>>(() => [
   {
     title: '条约名称',
     key: 'name',
-    minWidth: 240,
+    width: 240,
     align: 'center',
+    resizable: true,
+    sorter: { multiple: 1, compare: 'default' },
     render: (row) => h('div', { class: 'treaty-name' }, [
       h('strong', row.name),
       row.file_name ? h('small', row.file_name) : null,
@@ -733,8 +735,10 @@ const treatyColumns = computed<DataTableColumns<AuditTreaty>>(() => [
   {
     title: '简介',
     key: 'summary',
-    minWidth: 180,
+    width: 180,
     align: 'center',
+    resizable: true,
+    sorter: { multiple: 1, compare: 'default' },
     render: (row) => h('span', {
       class: 'treaty-summary',
       title: row.summary || '',
@@ -745,6 +749,8 @@ const treatyColumns = computed<DataTableColumns<AuditTreaty>>(() => [
     key: 'status',
     width: 130,
     align: 'center',
+    resizable: true,
+    sorter: { multiple: 1, compare: 'default' },
     render: (row) => row.status === 'UPLOADING'
       ? h('div', { class: 'treaty-upload-progress' }, [
           h(NProgress, {
@@ -766,6 +772,8 @@ const treatyColumns = computed<DataTableColumns<AuditTreaty>>(() => [
     key: 'original_chars',
     width: 90,
     align: 'center',
+    resizable: true,
+    sorter: { multiple: 1, compare: 'default' },
     render: (row) => h('span', { class: 'num-cell' },
       row.original_chars ? `${row.original_chars} 字` : '—'),
   },
@@ -774,6 +782,8 @@ const treatyColumns = computed<DataTableColumns<AuditTreaty>>(() => [
     key: 'content_chars',
     width: 90,
     align: 'center',
+    resizable: true,
+    sorter: { multiple: 1, compare: 'default' },
     render: (row) => h('span', { class: 'num-cell' },
       row.status === 'READY' ? `${row.content_chars} 字` : '—'),
   },
@@ -782,6 +792,8 @@ const treatyColumns = computed<DataTableColumns<AuditTreaty>>(() => [
     key: 'created_at',
     width: 135,
     align: 'center',
+    resizable: true,
+    sorter: { multiple: 1, compare: 'default' },
     render: (row) => treatyTimeLabel(row.created_at),
   },
   {
@@ -789,6 +801,8 @@ const treatyColumns = computed<DataTableColumns<AuditTreaty>>(() => [
     key: 'parse_ms',
     width: 100,
     align: 'center',
+    resizable: true,
+    sorter: { multiple: 1, compare: 'default' },
     render: (row) => row.status === 'PARSING'
       ? '解析中'
       : row.parse_ms ? treatyDurationLabel(row.parse_ms) : '—',
@@ -796,37 +810,38 @@ const treatyColumns = computed<DataTableColumns<AuditTreaty>>(() => [
   {
     title: '操作',
     key: 'actions',
-    width: 150,
+    width: 200,
     align: 'center',
     fixed: 'right',
+    resizable: false,
     render: (row) => h('div', { class: 'treaty-row-actions' }, [
       row.status === 'UPLOADING'
         ? h(NButton, {
-            quaternary: true, circle: true, size: 'tiny', type: 'warning',
+            quaternary: true, size: 'tiny', type: 'warning',
             title: '取消上传', 'aria-label': '取消上传',
             onClick: () => cancelTreatyUpload(row),
-          }, { icon: () => h(CloseOutline) })
+          }, { icon: () => h(CloseOutline), default: () => '取消' })
         : null,
       row.status === 'READY'
         ? h(NButton, {
-            quaternary: true, circle: true, size: 'tiny', type: 'primary',
+            quaternary: true, size: 'tiny', type: 'primary',
             title: '查看条约内容', 'aria-label': '查看条约内容',
             onClick: () => openTreatyPreview(row),
-          }, { icon: () => h(EyeOutline) })
+          }, { icon: () => h(EyeOutline), default: () => '查看' })
         : null,
       row.status === 'FAILED' && row.retryable
         ? h(NButton, {
-            quaternary: true, circle: true, size: 'tiny', type: 'warning',
+            quaternary: true, size: 'tiny', type: 'warning',
             title: '重新解析', 'aria-label': '重新解析',
             onClick: () => reparseTreaty(row),
-          }, { icon: () => h(RefreshOutline) })
+          }, { icon: () => h(RefreshOutline), default: () => '重试' })
         : null,
       row.status !== 'UPLOADING'
         ? h(NButton, {
-            quaternary: true, circle: true, size: 'tiny', type: 'error',
+            quaternary: true, size: 'tiny', type: 'error',
             title: '删除条约', 'aria-label': '删除条约',
             onClick: () => confirmRemoveTreaty(row),
-          }, { icon: () => h(TrashOutline) })
+          }, { icon: () => h(TrashOutline), default: () => '删除' })
         : null,
     ]),
   },
@@ -2674,7 +2689,9 @@ onMounted(async () => {
               :data="treatyDocs"
               :row-key="treatyRowKey"
               :row-class-name="treatyRowClassName"
-              :scroll-x="1040"
+              :scroll-x="1190"
+              max-height="calc(100vh - 320px)"
+              striped
               size="small"
               :bordered="false"
               class="sdv-data-table"

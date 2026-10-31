@@ -448,16 +448,47 @@ func taskOrder(sort string) string {
 		"created_at": "created_at", "finished_at": "finished_at", "duration_ms": "duration_ms",
 		"status": "status", "result": "result", "task_no": "task_no",
 	}
-	parts := strings.Split(sort, ":")
-	field := allowed[strings.TrimSpace(parts[0])]
-	if field == "" {
+	orders := make([]string, 0, 4)
+	for _, raw := range strings.Split(sort, ",") {
+		parts := strings.SplitN(strings.TrimSpace(raw), ":", 2)
+		field := allowed[strings.ToLower(strings.TrimSpace(parts[0]))]
+		if field == "" {
+			continue
+		}
+		dir := "DESC"
+		if len(parts) > 1 && strings.EqualFold(strings.TrimSpace(parts[1]), "asc") {
+			dir = "ASC"
+		}
+		orders = append(orders, field+" "+dir)
+	}
+	if len(orders) == 0 {
 		return "created_at DESC"
 	}
-	dir := "DESC"
-	if len(parts) > 1 && strings.EqualFold(parts[1], "asc") {
-		dir = "ASC"
+	return strings.Join(orders, ", ")
+}
+
+func auditLogOrder(sort string) string {
+	allowed := map[string]string{
+		"created_at": "created_at", "operator": "operator", "action": "action",
+		"object_type": "object_type", "result": "result", "trace_id": "trace_id",
 	}
-	return field + " " + dir
+	orders := make([]string, 0, 4)
+	for _, raw := range strings.Split(sort, ",") {
+		parts := strings.SplitN(strings.TrimSpace(raw), ":", 2)
+		field := allowed[strings.ToLower(strings.TrimSpace(parts[0]))]
+		if field == "" {
+			continue
+		}
+		dir := "DESC"
+		if len(parts) > 1 && strings.EqualFold(strings.TrimSpace(parts[1]), "asc") {
+			dir = "ASC"
+		}
+		orders = append(orders, field+" "+dir)
+	}
+	if len(orders) == 0 {
+		return "created_at DESC"
+	}
+	return strings.Join(orders, ", ")
 }
 
 func prefixScheme(raw string) string {

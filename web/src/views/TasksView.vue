@@ -8,7 +8,6 @@ import {
   NDataTable,
   NDatePicker,
   NInput,
-  NPagination,
   NPopover,
   NSelect,
   useDialog,
@@ -21,6 +20,7 @@ import {
   ArrowForwardOutline,
   BookmarkOutline,
   DocumentTextOutline,
+  EyeOutline,
   FlashOutline,
   ImagesOutline,
   RefreshOutline,
@@ -37,6 +37,7 @@ import { auditApi, taskApi } from '@/api'
 import type { Audit, Task } from '@/api/types'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { useAuthStore } from '@/stores/auth'
+import { sortersToQuery } from '@/utils/table'
 
 const route = useRoute()
 const router = useRouter()
@@ -101,6 +102,34 @@ const savedViewOptions = computed(() =>
 function isColumnVisible(key: string) {
   return visibleColumnKeys.value.includes(key)
 }
+
+const taskSort = ref('')
+
+function onTaskSorterChange(value: unknown) {
+  const next = sortersToQuery(value)
+  if (next === taskSort.value) return
+  taskSort.value = next
+  if (page.value === 1) {
+    load()
+  } else {
+    page.value = 1
+  }
+}
+
+const taskPagination = computed(() => ({
+  page: page.value,
+  pageSize: pageSize.value,
+  itemCount: total.value,
+  pageSizes: [20, 50, 100],
+  showSizePicker: true,
+  showQuickJumper: true,
+  onChange: (value: number) => {
+    page.value = value
+  },
+  onUpdatePageSize: (value: number) => {
+    pageSize.value = value
+  },
+}))
 
 function loadLayout() {
   try {
@@ -216,8 +245,11 @@ const taskColumns = computed<DataTableColumns<Task>>(() => {
   if (isColumnVisible('task')) {
     columns.push({
       title: '任务',
-      key: 'task',
-      minWidth: 210,
+      key: 'task_no',
+      width: 220,
+      align: 'center',
+      resizable: true,
+      sorter: { multiple: 1, compare: 'default' },
       render: (row) => h('div', [
         h('div', { class: 'cell-title mono' }, row.task_no),
         h('div', { class: 'cell-sub' }, [
@@ -230,8 +262,10 @@ const taskColumns = computed<DataTableColumns<Task>>(() => {
   if (isColumnVisible('audit')) {
     columns.push({
       title: '审核配置',
-      key: 'audit',
-      minWidth: 160,
+      key: 'audit_name',
+      width: 160,
+      align: 'center',
+      resizable: true,
       render: (row) => h('div', [
         h('div', { class: 'cell-title' }, row.audit_name || '—'),
         h('div', { class: 'cell-sub' }, sourceLabel(row.source_type)),
@@ -241,8 +275,10 @@ const taskColumns = computed<DataTableColumns<Task>>(() => {
   if (isColumnVisible('media')) {
     columns.push({
       title: '媒体',
-      key: 'media',
-      width: 110,
+      key: 'media_type',
+      width: 105,
+      align: 'center',
+      resizable: true,
       render: (row) => {
         const icon = row.media_type === 'text'
           ? DocumentTextOutline
@@ -257,7 +293,10 @@ const taskColumns = computed<DataTableColumns<Task>>(() => {
     columns.push({
       title: '状态',
       key: 'status',
-      width: 105,
+      width: 100,
+      align: 'center',
+      resizable: true,
+      sorter: { multiple: 1, compare: 'default' },
       render: (row) => h(StatusTag, { status: row.status, type: 'task' }),
     })
   }
@@ -265,23 +304,31 @@ const taskColumns = computed<DataTableColumns<Task>>(() => {
     columns.push({
       title: '结论',
       key: 'result',
-      width: 105,
+      width: 100,
+      align: 'center',
+      resizable: true,
+      sorter: { multiple: 1, compare: 'default' },
       render: (row) => h(StatusTag, { status: row.result, type: 'result' }),
     })
   }
   if (isColumnVisible('model')) {
     columns.push({
       title: '模型',
-      key: 'model',
-      minWidth: 150,
+      key: 'provider_name',
+      width: 150,
+      align: 'center',
+      resizable: true,
       render: (row) => h('div', { class: 'cell-title model-cell' }, row.provider_name || '—'),
     })
   }
   if (isColumnVisible('duration')) {
     columns.push({
       title: '耗时',
-      key: 'duration',
-      width: 90,
+      key: 'duration_ms',
+      width: 95,
+      align: 'center',
+      resizable: true,
+      sorter: { multiple: 1, compare: 'default' },
       render: (row) => h('span', { class: 'duration mono' },
         row.duration_ms ? `${(row.duration_ms / 1000).toFixed(2)}s` : '—'),
     })
@@ -289,8 +336,11 @@ const taskColumns = computed<DataTableColumns<Task>>(() => {
   if (isColumnVisible('created')) {
     columns.push({
       title: '创建时间',
-      key: 'created',
+      key: 'created_at',
       width: 165,
+      align: 'center',
+      resizable: true,
+      sorter: { multiple: 1, compare: 'default' },
       render: (row) => h('span', { class: 'task-time' },
         row.created_at?.replace('T', ' ').slice(0, 19) || '—'),
     })
@@ -298,9 +348,10 @@ const taskColumns = computed<DataTableColumns<Task>>(() => {
   columns.push({
     title: '操作',
     key: 'actions',
-    width: 130,
-    align: 'right',
+    width: 150,
+    align: 'center',
     fixed: 'right',
+    resizable: false,
     render: (row) => h('div', { class: 'row-actions' }, [
       h(NButton, {
         size: 'tiny',
@@ -309,7 +360,7 @@ const taskColumns = computed<DataTableColumns<Task>>(() => {
           event.stopPropagation()
           openTask(row)
         },
-      }, { default: () => '查看' }),
+      }, { icon: () => h(EyeOutline), default: () => '查看' }),
       row.status === 'FAILED' && auth.can('task:retry')
         ? h(NButton, {
             size: 'tiny',
@@ -320,7 +371,7 @@ const taskColumns = computed<DataTableColumns<Task>>(() => {
               event.stopPropagation()
               retry(row)
             },
-          }, { default: () => '重试' })
+          }, { icon: () => h(RefreshOutline), default: () => '重试' })
         : null,
     ]),
   })
@@ -371,6 +422,7 @@ async function load() {
       params.start = dayjs(dateRange.value[0]).format('YYYY-MM-DD')
       params.end = dayjs(dateRange.value[1]).format('YYYY-MM-DD')
     }
+    if (taskSort.value) params.sort = taskSort.value
     const data = await taskApi.list(params)
     tasks.value = data.items
     total.value = data.total
@@ -611,10 +663,15 @@ onBeforeUnmount(() => {
           :data="tasks"
           :row-key="taskRowKey"
           :row-props="taskRowProps"
-          :scroll-x="1180"
+          :pagination="taskPagination"
+          :scroll-x="1240"
+          max-height="calc(100vh - 330px)"
+          remote
+          striped
           size="small"
           :bordered="false"
           class="sdv-data-table"
+          @update:sorter="onTaskSorterChange"
         />
       </div>
 
@@ -630,18 +687,6 @@ onBeforeUnmount(() => {
 
       <div v-else class="loading-table">
         <div v-for="i in 5" :key="i" class="loading-row"></div>
-      </div>
-
-      <div class="pagination-row sticky-pagination">
-        <span>第 {{ page }} 页 · 每页 {{ pageSize }} 条</span>
-        <n-pagination
-          v-model:page="page"
-          v-model:page-size="pageSize"
-          :page-sizes="[20, 50, 100]"
-          show-size-picker
-          show-quick-jumper
-          :item-count="total"
-        />
       </div>
     </section>
 

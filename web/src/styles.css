@@ -439,6 +439,7 @@ textarea {
 /* Naive UI data tables used by 审核任务 / 审计日志 / 审核条约 */
 .sdv-data-table .n-data-table-th {
   padding: 10px 9px;
+  text-align: center;
   color: var(--muted-light);
   font-size: 9px;
   font-weight: 600;
@@ -449,6 +450,7 @@ textarea {
 
 .sdv-data-table .n-data-table-td {
   padding: 10px 9px;
+  text-align: center;
   color: var(--text);
   border-bottom: 1px solid var(--border);
   font-size: 11px;
@@ -523,6 +525,7 @@ textarea {
 .sdv-data-table .operator-cell {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
 }
 
@@ -560,8 +563,8 @@ textarea {
 .sdv-data-table .row-actions {
   display: inline-flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 4px;
+  justify-content: center;
+  gap: 6px;
 }
 
 .sdv-data-table .treaty-name {
