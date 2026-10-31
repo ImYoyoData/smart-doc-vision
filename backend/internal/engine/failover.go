@@ -180,6 +180,13 @@ func (e *Engine) reviewWithFailover(
 				task.TaskNo, candidate.Name, candidate.Model, reviewErr)
 			return nil, candidate, reviewErr
 		}
+		if ai.IsModelOutputError(reviewErr) {
+			// 一次畸形/截断的输出不能代表模型不可用，否则单次解析失败会让
+			// 熔断器把后续所有任务都跳过；适配器已就地重试过一次。
+			log.Printf("task %s model %s(%s) returned unusable output, provider stays healthy: %v",
+				task.TaskNo, candidate.Name, candidate.Model, reviewErr)
+			continue
+		}
 		e.recordProviderFailure(candidate, reviewErr)
 		log.Printf("task %s model %s(%s) failed, trying next provider: %v",
 			task.TaskNo, candidate.Name, candidate.Model, reviewErr)

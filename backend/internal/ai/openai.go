@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -149,78 +150,102 @@ func (a *OpenAIAdapter) Review(ctx context.Context, req Request) (*model.Verdict
 		userContent = parts
 	}
 
-	body := openAIRequest{
-		Model: req.Provider.Model,
-		Messages: []openAIMessage{
-			{Role: "system", Content: systemPrompt},
-			{Role: "user", Content: userContent},
-		},
-		Temperature: cfg.Temperature,
-		MaxTokens:   cfg.MaxTokens,
-		Stream:      false,
-	}
-	payload, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
 	endpoint := openAIEndpoint(req.Provider.BaseURL)
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
-	if err != nil {
-		return nil, err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+req.APIKey)
-	ApplyCustomHeaders(httpReq, ParseConfig(req.Provider).Headers)
+	attempt := func(maxTokens int) (*model.Verdict, error) {
+		body := openAIRequest{
+			Model: req.Provider.Model,
+			Messages: []openAIMessage{
+				{Role: "system", Content: systemPrompt},
+				{Role: "user", Content: userContent},
+			},
+			Temperature: cfg.Temperature,
+			MaxTokens:   maxTokens,
+			Stream:      false,
+		}
+		payload, err := json.Marshal(body)
+		if err != nil {
+			return nil, err
+		}
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
+		if err != nil {
+			return nil, err
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("Authorization", "Bearer "+req.APIKey)
+		ApplyCustomHeaders(httpReq, cfg.Headers)
 
-	start := time.Now()
-	resp, err := a.client().Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("调用大模型失败: %w", err)
-	}
-	defer resp.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
-	if err != nil {
-		return nil, err
-	}
-	latency := time.Since(start).Milliseconds()
-	var parsed openAIResponse
-	_ = json.Unmarshal(raw, &parsed)
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		msg := strings.TrimSpace(string(raw))
-		if parsed.Error != nil && parsed.Error.Message != "" {
-			msg = parsed.Error.Message
+		start := time.Now()
+		resp, err := a.client().Do(httpReq)
+		if err != nil {
+			return nil, fmt.Errorf("调用大模型失败: %w", err)
 		}
-		if len([]rune(msg)) > 400 {
-			msg = string([]rune(msg)[:400])
+		defer resp.Body.Close()
+		raw, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+		if err != nil {
+			return nil, err
 		}
-		return nil, fmt.Errorf("大模型返回 HTTP %d: %s", resp.StatusCode, msg)
-	}
-	if len(parsed.Choices) == 0 {
-		return nil, fmt.Errorf("大模型未返回审核结果")
-	}
-	content := strings.TrimSpace(parsed.Choices[0].Message.Content)
-	if content == "" {
-		hint := parsed.Choices[0].Message.ReasoningContent
-		if hint != "" {
-			return nil, fmt.Errorf("模型只返回了推理内容，未输出 JSON 结论（finish_reason=%s）", parsed.Choices[0].FinishReason)
+		latency := time.Since(start).Milliseconds()
+		var parsed openAIResponse
+		_ = json.Unmarshal(raw, &parsed)
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			msg := strings.TrimSpace(string(raw))
+			if parsed.Error != nil && parsed.Error.Message != "" {
+				msg = parsed.Error.Message
+			}
+			if len([]rune(msg)) > 400 {
+				msg = string([]rune(msg)[:400])
+			}
+			return nil, fmt.Errorf("大模型返回 HTTP %d: %s", resp.StatusCode, msg)
 		}
-		return nil, fmt.Errorf("模型返回内容为空")
+		if len(parsed.Choices) == 0 {
+			return nil, fmt.Errorf("%w: 大模型未返回审核结果", ErrModelOutput)
+		}
+		content := strings.TrimSpace(parsed.Choices[0].Message.Content)
+		if content == "" {
+			hint := parsed.Choices[0].Message.ReasoningContent
+			if hint != "" {
+				return nil, fmt.Errorf("%w: 模型只返回了推理内容，未输出 JSON 结论（finish_reason=%s）",
+					ErrModelOutput, parsed.Choices[0].FinishReason)
+			}
+			return nil, fmt.Errorf("%w: 模型返回内容为空", ErrModelOutput)
+		}
+		obj, err := extractJSONObject(content)
+		if err != nil {
+			return nil, fmt.Errorf("%w: 解析模型 JSON 失败: %v; 原始内容: %s; finish_reason=%s",
+				ErrModelOutput, err, truncate(content, 300), parsed.Choices[0].FinishReason)
+		}
+		verdict := verdictFromObject(obj)
+		verdict.Provider = "OPENAI_COMPATIBLE"
+		verdict.Model = req.Provider.Model
+		if parsed.Model != "" {
+			verdict.Model = parsed.Model
+		}
+		verdict.LatencyMS = latency
+		verdict.Raw = obj
+		applyUsageToVerdict(verdict, parsed.Usage.usage())
+		normalizeVerdict(verdict)
+		return verdict, nil
 	}
-	obj, err := extractJSONObject(content)
-	if err != nil {
-		return nil, fmt.Errorf("解析模型 JSON 失败: %w; 原始内容: %s", err, truncate(content, 300))
+
+	verdict, err := attempt(cfg.MaxTokens)
+	if err == nil || !IsModelOutputError(err) || cfg.MaxTokens <= 0 {
+		return verdict, err
 	}
-	verdict := verdictFromObject(obj)
-	verdict.Provider = "OPENAI_COMPATIBLE"
-	verdict.Model = req.Provider.Model
-	if parsed.Model != "" {
-		verdict.Model = parsed.Model
+	// A reasoning model occasionally spends the whole output budget on
+	// thinking or emits malformed JSON. Retry once with a larger budget
+	// before failing the audit; this is much cheaper than a manual retry.
+	retryTokens := cfg.MaxTokens * 2
+	if retryTokens > 8192 {
+		retryTokens = 8192
 	}
-	verdict.LatencyMS = latency
-	verdict.Raw = obj
-	applyUsageToVerdict(verdict, parsed.Usage.usage())
-	normalizeVerdict(verdict)
-	return verdict, nil
+	if retryTokens <= cfg.MaxTokens {
+		return verdict, err
+	}
+	retried, retryErr := attempt(retryTokens)
+	if retryErr == nil {
+		return retried, nil
+	}
+	return nil, fmt.Errorf("重试后仍失败: %w", retryErr)
 }
 
 func (a *OpenAIAdapter) Test(ctx context.Context, req Request) (TestResult, error) {
@@ -331,8 +356,18 @@ func extensionJSON(ext map[string]any) string {
 	return string(b)
 }
 
+// ErrModelOutput marks failures caused by the model's response body (empty,
+// truncated or malformed JSON) rather than provider connectivity. Callers must
+// not bench the provider for these errors: another task may succeed.
+var ErrModelOutput = errors.New("模型输出无法解析")
+
+// IsModelOutputError reports whether err came from an unusable model response.
+func IsModelOutputError(err error) bool {
+	return errors.Is(err, ErrModelOutput)
+}
+
 func extractJSONObject(content string) (map[string]any, error) {
-	s := strings.TrimSpace(content)
+	s := strings.TrimSpace(strings.TrimPrefix(content, "\ufeff"))
 	if strings.HasPrefix(s, "```") {
 		s = strings.TrimPrefix(s, "```json")
 		s = strings.TrimPrefix(s, "```JSON")
@@ -345,13 +380,71 @@ func extractJSONObject(content string) (map[string]any, error) {
 	if start < 0 || end <= start {
 		return nil, fmt.Errorf("未找到 JSON 对象")
 	}
+	raw := s[start : end+1]
+	obj, err := decodeJSONObject(raw)
+	if err == nil {
+		return obj, nil
+	}
+	// Models occasionally append a trailing comma before } or ].
+	repaired := stripTrailingCommas(raw)
+	if repaired == raw {
+		return nil, err
+	}
+	obj, repairedErr := decodeJSONObject(repaired)
+	if repairedErr != nil {
+		return nil, err
+	}
+	return obj, nil
+}
+
+func decodeJSONObject(raw string) (map[string]any, error) {
 	var obj map[string]any
-	dec := json.NewDecoder(strings.NewReader(s[start : end+1]))
+	dec := json.NewDecoder(strings.NewReader(raw))
 	dec.UseNumber()
 	if err := dec.Decode(&obj); err != nil {
 		return nil, err
 	}
 	return obj, nil
+}
+
+// stripTrailingCommas removes commas immediately before a closing brace or
+// bracket without touching string contents.
+func stripTrailingCommas(raw string) string {
+	var out strings.Builder
+	out.Grow(len(raw))
+	inString := false
+	escaped := false
+	for i := 0; i < len(raw); i++ {
+		c := raw[i]
+		if inString {
+			out.WriteByte(c)
+			switch {
+			case escaped:
+				escaped = false
+			case c == '\\':
+				escaped = true
+			case c == '"':
+				inString = false
+			}
+			continue
+		}
+		if c == '"' {
+			inString = true
+			out.WriteByte(c)
+			continue
+		}
+		if c == ',' {
+			j := i + 1
+			for j < len(raw) && (raw[j] == ' ' || raw[j] == '\t' || raw[j] == '\n' || raw[j] == '\r') {
+				j++
+			}
+			if j < len(raw) && (raw[j] == '}' || raw[j] == ']') {
+				continue
+			}
+		}
+		out.WriteByte(c)
+	}
+	return out.String()
 }
 
 func verdictFromObject(obj map[string]any) *model.Verdict {

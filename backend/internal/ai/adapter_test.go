@@ -1,6 +1,12 @@
 package ai
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"smartdoc-vision/backend/internal/model"
@@ -92,6 +98,76 @@ func TestClassificationVerdictMapsCategoryResult(t *testing.T) {
 	}
 	if verdict.CategoryConfidence != 0.88 {
 		t.Fatalf("expected category confidence 0.88, got %v", verdict.CategoryConfidence)
+	}
+}
+
+func TestExtractJSONObjectRepairsTrailingCommas(t *testing.T) {
+	obj, err := extractJSONObject(`{"result":"PASS","labels":["a","b",],"score":0.1,}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := verdictFromObject(obj)
+	normalizeVerdict(v)
+	if v.Result != model.ResultPass || len(v.Labels) != 2 {
+		t.Fatalf("unexpected repaired verdict: %+v", v)
+	}
+}
+
+func TestIsModelOutputError(t *testing.T) {
+	wrapped := fmt.Errorf("重试后仍失败: %w", ErrModelOutput)
+	if !IsModelOutputError(wrapped) {
+		t.Fatal("wrapped output error should be detected")
+	}
+	if IsModelOutputError(fmt.Errorf("大模型返回 HTTP 500")) {
+		t.Fatal("provider errors must not be treated as output errors")
+	}
+}
+
+func TestOpenAIRetriesMalformedOutputWithLargerBudget(t *testing.T) {
+	var calls int
+	var budgets []int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		var payload struct {
+			MaxTokens int `json:"max_tokens"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&payload)
+		budgets = append(budgets, payload.MaxTokens)
+		w.Header().Set("Content-Type", "application/json")
+		if calls == 1 {
+			io.WriteString(w, `{"model":"test-model","choices":[{"message":{"content":"{\"result\":\"PASS\",\"reasons\":[\"x\"}"},"finish_reason":"length"}],"usage":{}}`)
+			return
+		}
+		io.WriteString(w, `{"model":"test-model","choices":[{"message":{"content":"{\"result\":\"PASS\",\"risk_level\":\"low\",\"score\":0.1,\"summary\":\"ok\"}"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}`)
+	}))
+	defer server.Close()
+
+	provider := model.AIProvider{
+		Name:       "测试模型",
+		Kind:       model.ProviderOpenAI,
+		BaseURL:    server.URL + "/v1",
+		Model:      "test-model",
+		ConfigJSON: model.JSONBytes(model.ProviderConfig{MaxTokens: 1600, Temperature: 0.1}),
+		Status:     model.ProviderActive,
+	}
+	adapter := &OpenAIAdapter{Client: server.Client()}
+	verdict, err := adapter.Review(context.Background(), Request{
+		Provider: provider,
+		APIKey:   "test-key",
+		Audit:    model.Audit{ReviewPrompt: "检查档案完整性"},
+		Input:    model.TaskInput{BizKey: "biz-1", Media: []model.MediaItem{{Type: "text", Content: "档案正文"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 {
+		t.Fatalf("expected one retry, got %d calls", calls)
+	}
+	if len(budgets) != 2 || budgets[0] != 1600 || budgets[1] != 3200 {
+		t.Fatalf("unexpected token budgets: %v", budgets)
+	}
+	if verdict.Result != model.ResultPass {
+		t.Fatalf("unexpected verdict: %+v", verdict)
 	}
 }
 
