@@ -17,6 +17,7 @@ import (
 	"smartdoc-vision/backend/internal/catalog"
 	"smartdoc-vision/backend/internal/config"
 	"smartdoc-vision/backend/internal/engine"
+	"smartdoc-vision/backend/internal/logging"
 	"smartdoc-vision/backend/internal/media"
 	"smartdoc-vision/backend/internal/model"
 	"smartdoc-vision/backend/internal/security"
@@ -88,7 +89,7 @@ func (s *Server) Router() *gin.Engine {
 		gin.SetMode(gin.ReleaseMode)
 	}
 	r := gin.New()
-	r.Use(gin.Logger(), gin.Recovery(), traceMiddleware(), metricsMiddleware(), bodyLimitMiddleware(40<<20))
+	r.Use(traceMiddleware(), logging.RequestLogger(), logging.Recovery(), metricsMiddleware(), bodyLimitMiddleware(40<<20))
 	corsCfg := cors.Config{
 		AllowOrigins:     s.cfg.CORSOrigins,
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},

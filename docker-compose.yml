@@ -77,6 +77,8 @@ services:
     volumes:
       # Uploaded files must survive container recreation; do not remove this.
       - app-data:/app/data
+      # Request and error logs live under /app/logs by default.
+      - logs-data:/app/logs
     depends_on:
       mysql:
         condition: service_healthy
@@ -103,3 +105,4 @@ volumes:
   mysql-data:
   redis-data:
   app-data:
+  logs-data:

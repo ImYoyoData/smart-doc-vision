@@ -741,6 +741,7 @@ smart-doc-vision/
 │   │   ├── api/               # Gin 路由与 Handler
 │   │   ├── catalog/           # 规则模板、默认配置
 │   │   ├── engine/            # 异步审核引擎、回调
+│   │   ├── logging/           # zerolog 请求/错误日志、轮转压缩
 │   │   ├── media/             # 图片下载、SSRF 防护、尺寸归一化
 │   │   ├── model/             # 数据模型
 │   │   ├── rules/             # 规则引擎
@@ -763,6 +764,16 @@ smart-doc-vision/
 ├── .env.example
 └── Makefile
 ```
+
+## 运行日志
+
+服务启动时会在运行目录创建 `logs/`：
+
+- `logs/info/info.log`：HTTP 请求日志，记录方法、路径、状态码、耗时、来源 IP、响应大小和 `trace_id`；
+- `logs/error/error.log`：错误与运行诊断日志，包含 5xx 请求、panic 堆栈、后台任务失败以及标准库 `log` 输出；
+- 单个日志超过 100MB 或跨天时自动轮转，归档文件使用 zstd 最高压缩级别写入 `<名称>.log.zst`；
+- 每个目录最多保留最新 30 份归档，更早的自动删除；
+- 归档在后台异步压缩，不阻塞请求；Docker 部署默认挂在 `logs-data` 数据卷（`/app/logs`）。
 
 ## 开放 API
 

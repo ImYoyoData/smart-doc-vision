@@ -11,6 +11,7 @@ import (
 
 	"smartdoc-vision/backend/internal/config"
 	"smartdoc-vision/backend/internal/install"
+	"smartdoc-vision/backend/internal/logging"
 	appversion "smartdoc-vision/backend/internal/version"
 )
 
@@ -70,7 +71,7 @@ func (s *InstallerServer) Router() *gin.Engine {
 		gin.SetMode(gin.ReleaseMode)
 	}
 	r := gin.New()
-	r.Use(gin.Logger(), gin.Recovery(), traceMiddleware(), bodyLimitMiddleware(8<<20))
+	r.Use(traceMiddleware(), logging.RequestLogger(), logging.Recovery(), bodyLimitMiddleware(8<<20))
 	corsCfg := cors.Config{
 		AllowOrigins:     s.cfg.CORSOrigins,
 		AllowMethods:     []string{"GET", "POST", "OPTIONS"},

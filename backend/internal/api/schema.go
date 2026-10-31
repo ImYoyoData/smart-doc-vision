@@ -13,6 +13,7 @@ import (
 	"gorm.io/gorm"
 
 	"smartdoc-vision/backend/internal/config"
+	"smartdoc-vision/backend/internal/logging"
 	"smartdoc-vision/backend/internal/model"
 	appschema "smartdoc-vision/backend/internal/schema"
 	"smartdoc-vision/backend/internal/security"
@@ -83,7 +84,7 @@ func (s *SchemaServer) Router() *gin.Engine {
 		gin.SetMode(gin.ReleaseMode)
 	}
 	r := gin.New()
-	r.Use(gin.Logger(), gin.Recovery(), traceMiddleware(), bodyLimitMiddleware(8<<20))
+	r.Use(traceMiddleware(), logging.RequestLogger(), logging.Recovery(), bodyLimitMiddleware(8<<20))
 	corsCfg := cors.Config{
 		AllowOrigins:     cfg.CORSOrigins,
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},

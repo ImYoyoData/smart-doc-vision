@@ -19,6 +19,7 @@ import (
 	"smartdoc-vision/backend/internal/config"
 	"smartdoc-vision/backend/internal/engine"
 	"smartdoc-vision/backend/internal/install"
+	"smartdoc-vision/backend/internal/logging"
 	"smartdoc-vision/backend/internal/media"
 	"smartdoc-vision/backend/internal/metrics"
 	appschema "smartdoc-vision/backend/internal/schema"
@@ -59,6 +60,10 @@ type appRuntime struct {
 }
 
 func main() {
+	if err := logging.Setup(); err != nil {
+		log.Printf("logging: file logs disabled: %v", err)
+	}
+	defer logging.Close()
 	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
 	cfg := config.Load()
 	if backup, err := config.MigrateLegacyEnvFile(cfg); err != nil {
