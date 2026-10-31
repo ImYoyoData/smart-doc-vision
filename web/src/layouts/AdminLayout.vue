@@ -1,13 +1,22 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, h, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { NButton, NDropdown, NPopover, useMessage } from 'naive-ui'
+import {
+  NButton,
+  NDropdown,
+  NIcon,
+  NMenu,
+  NPopover,
+  useMessage,
+  type MenuOption,
+} from 'naive-ui'
 import dayjs from 'dayjs'
 import {
   AddOutline,
   ArrowUpCircleOutline,
   BarChartOutline,
   CheckmarkDoneOutline,
+  ChevronBackOutline,
   ChevronDownOutline,
   ChevronForwardOutline,
   CloudOutline,
@@ -56,6 +65,12 @@ const review = useReviewStore()
 const theme = useThemeStore()
 const update = useUpdateStore()
 const sidebarOpen = ref(false)
+const SIDEBAR_COLLAPSED_KEY = 'sdv:sidebar-collapsed'
+const sidebarCollapsed = ref(localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1')
+const isMobile = ref(window.matchMedia('(max-width: 960px)').matches)
+let mobileMedia: MediaQueryList | null = null
+const menuCollapsed = computed(() => sidebarCollapsed.value && !isMobile.value)
+const activeMenuKey = computed(() => (route.name ? String(route.name) : ''))
 const githubURL = 'https://github.com/ImYoyoData/smart-doc-vision'
 const version = ref('1.0.0')
 const metaLoading = ref(false)
@@ -114,6 +129,55 @@ const visibleSections = computed(() =>
     .map((section) => ({ ...section, items: section.items.filter((item) => auth.canMenu(item.name)) }))
     .filter((section) => section.items.length > 0),
 )
+const menuOptions = computed<MenuOption[]>(() =>
+  visibleSections.value.map((section) => ({
+    type: 'group',
+    key: `group:${section.label}`,
+    label: section.label,
+    children: section.items.map((item) => ({
+      key: item.name,
+      props: { title: item.label, 'aria-label': item.label },
+      label: () => h('span', { class: 'nav-label' }, [
+        h('span', { class: 'nav-label-text' }, item.label),
+        item.name === 'reviews' && review.pending > 0
+          ? h('span', { class: 'nav-badge' }, review.pending > 99 ? '99+' : String(review.pending))
+          : null,
+      ]),
+      icon: () => h(NIcon, { size: 18 }, { default: () => h(item.icon) }),
+    })),
+  })),
+)
+const menuThemeOverrides = {
+  itemHeight: '38px',
+  fontSize: '13px',
+  itemColorHover: 'var(--surface-hover)',
+  itemColorActive: 'var(--brand-soft)',
+  itemColorActiveHover: 'var(--brand-soft)',
+  itemColorActiveCollapsed: 'var(--brand-soft)',
+  itemTextColor: 'var(--muted)',
+  itemTextColorHover: 'var(--ink)',
+  itemTextColorActive: 'var(--brand-strong)',
+  itemTextColorActiveHover: 'var(--brand-strong)',
+  itemIconColor: 'var(--muted)',
+  itemIconColorHover: 'var(--ink)',
+  itemIconColorActive: 'var(--brand)',
+  itemIconColorActiveHover: 'var(--brand)',
+  itemIconColorCollapsed: 'var(--muted)',
+  groupTextColor: 'var(--muted-light)',
+}
+
+function toggleSidebar() {
+  sidebarCollapsed.value = !sidebarCollapsed.value
+  localStorage.setItem(SIDEBAR_COLLAPSED_KEY, sidebarCollapsed.value ? '1' : '0')
+}
+
+function handleMenuSelect(key: string | number) {
+  navigate(String(key))
+}
+
+function handleMobileChange(event: MediaQueryListEvent) {
+  isMobile.value = event.matches
+}
 const pageTitle = computed(() => String(route.meta.title || '仪表盘'))
 const pageSection = computed(() => String(route.meta.section || '工作台'))
 const today = dayjs().format('YYYY.MM.DD')
@@ -278,11 +342,18 @@ onMounted(() => {
   bootstrap()
   void loadMessages(true)
   window.addEventListener('sdv:messages-updated', handleMessagesUpdated)
+  mobileMedia = window.matchMedia('(max-width: 960px)')
+  isMobile.value = mobileMedia.matches
+  mobileMedia.addEventListener('change', handleMobileChange)
   reviewTimer = setInterval(() => review.refresh(workspace.currentProjectId), 30000)
   messageTimer = setInterval(() => loadMessages(true), 30000)
 })
 onBeforeUnmount(() => {
   window.removeEventListener('sdv:messages-updated', handleMessagesUpdated)
+  if (mobileMedia) {
+    mobileMedia.removeEventListener('change', handleMobileChange)
+    mobileMedia = null
+  }
   if (reviewTimer) clearInterval(reviewTimer)
   if (messageTimer) clearInterval(messageTimer)
 })
@@ -290,9 +361,9 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
 </script>
 
 <template>
-  <div class="app-shell">
+  <div class="app-shell" :class="{ 'sidebar-collapsed': menuCollapsed }">
     <div v-if="sidebarOpen" class="sidebar-overlay" @click="sidebarOpen = false"></div>
-    <aside class="sidebar" :class="{ open: sidebarOpen }">
+    <aside class="sidebar" :class="{ open: sidebarOpen, collapsed: menuCollapsed }">
       <div class="sidebar-brand" @click="navigate('dashboard')">
         <BrandMark :size="38" />
         <div class="brand-copy">
@@ -321,23 +392,18 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
         </n-dropdown>
       </div>
 
-      <nav class="nav">
-        <div v-for="section in visibleSections" :key="section.label" class="nav-section">
-          <div class="nav-section-title">{{ section.label }}</div>
-          <button
-            v-for="item in section.items"
-            :key="item.name"
-            type="button"
-            class="nav-item"
-            :class="{ active: route.name === item.name }"
-            @click="navigate(item.name)"
-          >
-            <component :is="item.icon" class="nav-icon" />
-            <span>{{ item.label }}</span>
-            <span v-if="item.name === 'reviews' && review.pending > 0" class="nav-badge">{{ review.pending > 99 ? '99+' : review.pending }}</span>
-          </button>
-        </div>
-      </nav>
+      <div class="nav">
+        <n-menu
+          :value="activeMenuKey"
+          :options="menuOptions"
+          :collapsed="menuCollapsed"
+          :collapsed-width="68"
+          :collapsed-icon-size="18"
+          :indent="0"
+          :theme-overrides="menuThemeOverrides"
+          @update:value="handleMenuSelect"
+        />
+      </div>
 
       <div class="sidebar-footer">
         <div class="footer-line">
@@ -389,6 +455,16 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
         <div class="topbar-left">
           <button class="mobile-menu icon-btn" type="button" @click="sidebarOpen = true">
             <MenuOutline />
+          </button>
+          <button
+            class="desktop-sidebar-toggle icon-btn"
+            type="button"
+            :title="menuCollapsed ? '展开菜单' : '收起菜单'"
+            :aria-label="menuCollapsed ? '展开菜单' : '收起菜单'"
+            @click="toggleSidebar"
+          >
+            <ChevronForwardOutline v-if="menuCollapsed" />
+            <ChevronBackOutline v-else />
           </button>
           <div class="crumbs">
             <span>{{ pageSection }}</span>
@@ -514,6 +590,48 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
   flex-direction: column;
   border-right: 1px solid var(--border);
   background: #fff;
+  transition: width 0.22s ease;
+}
+
+.app-shell.sidebar-collapsed .sidebar {
+  width: 68px;
+}
+
+.app-shell.sidebar-collapsed .main-shell {
+  padding-left: 68px;
+}
+
+.app-shell.sidebar-collapsed .sidebar-brand {
+  justify-content: center;
+  padding: 0;
+}
+
+.app-shell.sidebar-collapsed .brand-copy,
+.app-shell.sidebar-collapsed .project-switch-wrap,
+.app-shell.sidebar-collapsed .update-hint,
+.app-shell.sidebar-collapsed .footer-meta,
+.app-shell.sidebar-collapsed .footer-line > span:not(.live-dot) {
+  display: none;
+}
+
+.app-shell.sidebar-collapsed .sidebar-footer {
+  padding: 14px 0;
+}
+
+.app-shell.sidebar-collapsed .footer-line {
+  justify-content: center;
+}
+
+.app-shell.sidebar-collapsed .nav {
+  padding: 2px 6px 12px;
+}
+
+.app-shell.sidebar-collapsed .nav :deep(.n-menu-item-group-title) {
+  display: none;
+}
+
+.app-shell.sidebar-collapsed .nav :deep(.n-menu-item-group) {
+  margin-bottom: 8px;
 }
 
 .sidebar-brand {
@@ -643,79 +761,57 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
 
 .nav {
   flex: 1;
+  min-height: 0;
   padding: 2px 12px 12px;
   overflow-y: auto;
 }
 
-.nav-section {
-  margin-bottom: 18px;
+.nav :deep(.n-menu) {
+  width: 100%;
 }
 
-.nav-section-title {
+.nav :deep(.n-menu-item-content) {
+  border-radius: 10px;
+}
+
+.nav :deep(.n-menu-item-content::before) {
+  border-radius: 10px;
+}
+
+.nav :deep(.n-menu-item-content-header) {
+  font-weight: 500;
+}
+
+.nav :deep(.n-menu-item-content--selected .n-menu-item-content-header) {
+  font-weight: 600;
+}
+
+.nav :deep(.n-menu-item-group-title) {
+  margin-top: 8px;
   padding: 0 11px 7px;
-  color: #a3aec0;
+  color: var(--muted-light);
   font-size: 9.5px;
   font-weight: 650;
   letter-spacing: 0.13em;
   text-transform: uppercase;
 }
 
-.nav-item {
-  position: relative;
+.nav :deep(.n-menu-item-group:first-child .n-menu-item-group-title) {
+  margin-top: 0;
+}
+
+.nav :deep(.nav-label) {
   display: flex;
   width: 100%;
   align-items: center;
-  gap: 10px;
-  height: 38px;
-  margin: 2px 0;
-  padding: 0 11px;
-  border: 0;
-  border-radius: 10px;
-  background: transparent;
-  color: #59677c;
-  font-size: 13px;
-  font-weight: 500;
-  cursor: pointer;
-  text-align: left;
-  transition: all 0.16s ease;
+  gap: 8px;
 }
 
-.nav-item:hover {
-  background: #f5f8fe;
-  color: var(--ink);
+.nav :deep(.nav-label-text) {
+  flex: 1;
 }
 
-.nav-item.active {
-  background: var(--brand-soft);
-  color: var(--brand-strong);
-  font-weight: 600;
-}
-
-.nav-item.active::before {
-  content: '';
-  position: absolute;
-  left: -12px;
-  width: 3px;
-  height: 18px;
-  border-radius: 0 3px 3px 0;
-  background: var(--brand);
-}
-
-.nav-icon {
-  width: 17px;
-  height: 17px;
-  opacity: 0.88;
-}
-
-.nav-dot {
-  width: 5px;
-  height: 5px;
-  margin-left: auto;
-  border-radius: 50%;
-  background: var(--brand);
-}
-
-.nav-badge {
+.nav :deep(.nav-badge) {
   min-width: 19px;
   height: 19px;
   margin-left: auto;
@@ -1087,6 +1183,7 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
   min-height: 100vh;
   flex-direction: column;
   padding-left: 238px;
+  transition: padding-left 0.22s ease;
 }
 
 .topbar {
@@ -1245,6 +1342,10 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
   display: none;
 }
 
+.desktop-sidebar-toggle {
+  display: inline-flex;
+}
+
 .sidebar-overlay {
   display: none;
 }
@@ -1293,6 +1394,10 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
 
   .mobile-menu {
     display: inline-flex;
+  }
+
+  .desktop-sidebar-toggle {
+    display: none;
   }
 
   .topbar {
