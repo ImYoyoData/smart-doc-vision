@@ -22,6 +22,7 @@ import StatusTag from '@/components/StatusTag.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import TaskSubmitModal from '@/components/TaskSubmitModal.vue'
 import { analyticsApi, auditApi, providerApi, taskApi } from '@/api'
+import { formatCompactNumber } from '@/utils/number'
 import type { AnalyticsData, Audit, Provider, Task } from '@/api/types'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { useAuthStore } from '@/stores/auth'
@@ -58,12 +59,6 @@ const reviewAndReject = computed(() => (overview.value?.review || 0) + (overview
 function formatDuration(ms?: number | null) {
   if (!ms) return '—'
   return ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`
-}
-
-function formatNumber(n?: number | null) {
-  if (n === null || n === undefined) return '—'
-  if (n >= 10000) return `${(n / 10000).toFixed(1)}w`
-  return n.toLocaleString('zh-CN')
 }
 
 function sourceLabel(source?: string) {
@@ -195,7 +190,7 @@ onMounted(async () => {
     <section class="hero">
       <div class="hero-main">
         <div class="hero-kicker"><span></span>TODAY</div>
-        <h2>今日已处理 <strong>{{ formatNumber(todayTotal) }}</strong> 份图档</h2>
+        <h2>今日已处理 <strong>{{ formatCompactNumber(todayTotal) }}</strong> 份图档</h2>
         <p>支持多文本 + 多图片审核，所有触发来源统一任务状态、人工复核和结果回调。</p>
       </div>
       <div class="hero-stats">
@@ -215,7 +210,7 @@ onMounted(async () => {
     </section>
 
     <div class="metric-grid">
-      <MetricCard label="今日任务" :value="formatNumber(todayTotal)" hint="今日提交并受理" tone="blue" :loading="loading">
+      <MetricCard label="今日任务" :value="formatCompactNumber(todayTotal)" hint="今日提交并受理" tone="blue" :loading="loading">
         <template #icon><ScanOutline /></template>
       </MetricCard>
       <MetricCard label="今日通过率" :value="overview ? overview.pass_rate.toFixed(1) : '—'" suffix="%" :hint="`通过 ${overview?.pass ?? 0} 条`" tone="green" :loading="loading">
@@ -224,7 +219,7 @@ onMounted(async () => {
       <MetricCard label="不通过 / 待议" :value="reviewAndReject" :hint="overview ? `驳回 ${overview.reject} · 待议 ${overview.review}` : ''" tone="amber" :loading="loading">
         <template #icon><WarningOutline /></template>
       </MetricCard>
-      <MetricCard label="待人工复核" :value="formatNumber(overview?.pending)" hint="点击进入复核工作台" tone="red" :loading="loading" @click="goReview">
+      <MetricCard label="待人工复核" :value="formatCompactNumber(overview?.pending)" hint="点击进入复核工作台" tone="red" :loading="loading" @click="goReview">
         <template #icon><TimeOutline /></template>
       </MetricCard>
     </div>

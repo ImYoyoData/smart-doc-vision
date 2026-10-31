@@ -16,6 +16,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import MetricCard from '@/components/MetricCard.vue'
 import EChart from '@/components/EChart.vue'
 import EmptyState from '@/components/EmptyState.vue'
+import { formatCompactNumber } from '@/utils/number'
 import { monitorApi } from '@/api'
 import type { MonitorData } from '@/api/types'
 
@@ -63,11 +64,6 @@ function formatUptime(seconds?: number) {
   if (days > 0) return `${days} 天 ${hours} 小时`
   if (hours > 0) return `${hours} 小时 ${minutes} 分`
   return `${minutes} 分 ${seconds % 60} 秒`
-}
-
-function formatNumber(value?: number) {
-  if (value === null || value === undefined) return '—'
-  return value.toLocaleString('zh-CN')
 }
 
 function axisTime(value: string) {
@@ -330,8 +326,8 @@ onBeforeUnmount(() => {
       </MetricCard>
       <MetricCard
         label="累计请求"
-        :value="formatNumber(current?.requests_total)"
-        :hint="current ? `错误响应 ${formatNumber(current.errors_total)} 次` : '加载中'"
+        :value="formatCompactNumber(current?.requests_total)"
+        :hint="current ? `错误响应 ${formatCompactNumber(current.errors_total)} 次` : '加载中'"
         tone="blue"
         :loading="!current"
       >
@@ -392,7 +388,7 @@ onBeforeUnmount(() => {
         </div>
         <div class="panel-body task-strip">
           <span v-for="entry in taskEntries" :key="entry.key" class="task-chip">
-            {{ entry.label }} <b>{{ formatNumber(entry.value) }}</b>
+            {{ entry.label }} <b>{{ formatCompactNumber(entry.value) }}</b>
           </span>
         </div>
         <div v-if="queue.length" class="queue-list">
@@ -450,7 +446,7 @@ onBeforeUnmount(() => {
               <strong>Redis {{ data ? (data.dependencies.redis ? '正常' : '不可用') : '—' }}</strong>
               <span class="dep-meta">
                 连接 {{ data?.redis_pool.total_conns ?? 0 }} 个 · 空闲 {{ data?.redis_pool.idle_conns ?? 0 }}
-                · 命中 {{ formatNumber(data?.redis_pool.hits) }} · 未命中 {{ formatNumber(data?.redis_pool.misses) }}
+                · 命中 {{ formatCompactNumber(data?.redis_pool.hits) }} · 未命中 {{ formatCompactNumber(data?.redis_pool.misses) }}
               </span>
             </div>
           </div>
