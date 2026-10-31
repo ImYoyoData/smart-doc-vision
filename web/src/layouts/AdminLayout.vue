@@ -470,6 +470,16 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
           </span>
         </div>
       </div>
+      <button
+        class="sidebar-trigger"
+        type="button"
+        :title="menuCollapsed ? '展开菜单' : '收起菜单'"
+        :aria-label="menuCollapsed ? '展开菜单' : '收起菜单'"
+        @click="toggleSidebar"
+      >
+        <ChevronForwardOutline v-if="menuCollapsed" />
+        <ChevronBackOutline v-else />
+      </button>
     </aside>
 
     <div class="main-shell">
@@ -477,16 +487,6 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
         <div class="topbar-left">
           <button class="mobile-menu icon-btn" type="button" @click="sidebarOpen = true">
             <MenuOutline />
-          </button>
-          <button
-            class="desktop-sidebar-toggle icon-btn"
-            type="button"
-            :title="menuCollapsed ? '展开菜单' : '收起菜单'"
-            :aria-label="menuCollapsed ? '展开菜单' : '收起菜单'"
-            @click="toggleSidebar"
-          >
-            <ChevronForwardOutline v-if="menuCollapsed" />
-            <ChevronBackOutline v-else />
           </button>
           <div class="crumbs">
             <span>{{ pageSection }}</span>
@@ -654,6 +654,41 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
 
 .app-shell.sidebar-collapsed .nav :deep(.n-menu-item-group) {
   margin-bottom: 8px;
+}
+
+/* 与 Naive UI LayoutSider 的 show-trigger 一致：贴在侧栏右边缘的圆形按钮 */
+.sidebar-trigger {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  z-index: 45;
+  display: flex;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--card);
+  color: var(--muted);
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+  transform: translate(50%, -50%);
+  transition:
+    color 0.16s ease,
+    border-color 0.16s ease,
+    background-color 0.16s ease;
+}
+
+.sidebar-trigger:hover {
+  border-color: var(--brand);
+  background: var(--brand-soft);
+  color: var(--brand-strong);
+}
+
+.sidebar-trigger :deep(svg) {
+  width: 14px;
+  height: 14px;
 }
 
 .sidebar-brand {
@@ -1364,10 +1399,6 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
   display: none;
 }
 
-.desktop-sidebar-toggle {
-  display: inline-flex;
-}
-
 .sidebar-overlay {
   display: none;
 }
@@ -1418,7 +1449,7 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
     display: inline-flex;
   }
 
-  .desktop-sidebar-toggle {
+  .sidebar-trigger {
     display: none;
   }
 
