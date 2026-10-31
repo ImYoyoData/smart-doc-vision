@@ -402,6 +402,12 @@ func (s *Server) restoreAudit(c *gin.Context) {
 		badRequest(c, "审核未在回收站中")
 		return
 	}
+	var parentProject model.Project
+	if err := s.db.First(&parentProject, audit.ProjectID).Error; err == nil && parentProject.DeletedAt != nil {
+		fail(c, http.StatusConflict, "PROJECT_IN_RECYCLE",
+			"所属项目仍在回收站中，请先恢复项目后再恢复该审核配置", nil)
+		return
+	}
 	if !s.requireProjectAccess(c, audit.ProjectID) {
 		return
 	}

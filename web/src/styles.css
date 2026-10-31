@@ -636,6 +636,129 @@ textarea {
   gap: 8px;
 }
 
+.sdv-data-table .recycle-name {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  text-align: left;
+}
+
+.sdv-data-table .item-icon {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: var(--brand-soft);
+  color: var(--brand);
+  flex: none;
+}
+
+.sdv-data-table .item-icon.audit {
+  background: var(--purple-soft);
+  color: var(--purple);
+}
+
+.sdv-data-table .item-icon svg {
+  width: 15px;
+  height: 15px;
+}
+
+.sdv-data-table .type-chip {
+  display: inline-flex;
+  padding: 2px 7px;
+  border-radius: 5px;
+  background: var(--brand-soft);
+  color: var(--brand-strong);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.sdv-data-table .type-chip.audit {
+  background: var(--purple-soft);
+  color: #6d28d9;
+}
+
+.sdv-data-table .date {
+  color: var(--muted-light);
+  font-size: 9.5px;
+}
+
+.sdv-data-table .remaining {
+  color: var(--green);
+  font-size: 10px;
+  font-weight: 550;
+}
+
+.sdv-data-table .remaining.warning {
+  color: #b45309;
+}
+
+.sdv-data-table .remaining.danger {
+  color: var(--red);
+}
+
+.sdv-data-table .relation {
+  color: var(--muted);
+  font-size: 10.5px;
+}
+
+.sdv-data-table .recycle-children {
+  padding: 4px 16px 12px;
+  background: var(--surface-soft);
+}
+
+.sdv-data-table .recycle-children-head {
+  padding: 8px 0 6px;
+  color: var(--muted-light);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+}
+
+.sdv-data-table .recycle-child-row {
+  display: grid;
+  min-width: 860px;
+  grid-template-columns: minmax(220px, 2fr) 110px 170px 110px 100px 120px;
+  gap: 12px;
+  align-items: center;
+  padding: 7px 0;
+  border-top: 1px dashed var(--border);
+  color: var(--text);
+  font-size: 11px;
+}
+
+.sdv-data-table .recycle-child-name {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  text-align: left;
+}
+
+.sdv-data-table .child-locked {
+  justify-self: center;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--amber-soft);
+  color: #b45309;
+  font-size: 9.5px;
+  white-space: nowrap;
+}
+
+.sdv-data-table .purge-btn {
+  color: var(--red);
+}
+
+.recycle-policy-foot {
+  margin: 12px 0 0;
+  color: var(--muted-light);
+  font-size: 11px;
+  text-align: center;
+}
+
 .table-empty {
   padding: 52px 20px;
   text-align: center;

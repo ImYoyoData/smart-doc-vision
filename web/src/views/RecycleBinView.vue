@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
-import { NButton, NInput, NModal, NPagination, NSelect, useDialog, useMessage } from 'naive-ui'
+import { computed, h, onMounted, ref, watch } from 'vue'
+import { NButton, NDataTable, NInput, NModal, NSelect, useDialog, useMessage, type DataTableColumns } from 'naive-ui'
 import {
   ArchiveOutline,
   FolderOpenOutline,
@@ -44,36 +44,165 @@ const confirmBusy = ref(false)
 const confirmCaptcha = ref<{ id: string; x: number } | null>(null)
 const batchResults = ref<RecycleBatchResult[] | null>(null)
 
-const pageKeys = computed(() => new Set(items.value.map((i) => `${i.type}:${i.id}`)))
 const selectedOnPage = computed(() => items.value.filter((i) => selectedKeys.value.has(`${i.type}:${i.id}`)))
-const allOnPageSelected = computed(
-  () => items.value.length > 0 && items.value.every((i) => selectedKeys.value.has(`${i.type}:${i.id}`)),
-)
+const checkedRowKeys = computed(() => [...selectedKeys.value])
 
 function itemKey(item: RecycleItem) {
   return `${item.type}:${item.id}`
 }
 
-function toggleItem(item: RecycleItem) {
-  const key = itemKey(item)
-  if (selectedKeys.value.has(key)) selectedKeys.value.delete(key)
-  else selectedKeys.value.add(key)
-  selectedKeys.value = new Set(selectedKeys.value)
-}
-
-function togglePage() {
-  const next = new Set(selectedKeys.value)
-  if (allOnPageSelected.value) {
-    for (const key of pageKeys.value) next.delete(key)
-  } else {
-    for (const key of pageKeys.value) next.add(key)
-  }
-  selectedKeys.value = next
+function onCheckedRowKeysChange(keys: Array<string | number>) {
+  selectedKeys.value = new Set(keys.map((key) => String(key)))
 }
 
 function clearSelection() {
   selectedKeys.value = new Set()
 }
+
+function formatDeletedAt(value?: string) {
+  return value ? value.replace('T', ' ').slice(0, 19) : '—'
+}
+
+const recyclePagination = computed(() => ({
+  page: page.value,
+  pageSize: pageSize.value,
+  itemCount: total.value,
+  pageSizes: [20, 50, 100],
+  showSizePicker: true,
+  showQuickJumper: true,
+  onChange: (value: number) => {
+    page.value = value
+  },
+  onUpdatePageSize: (value: number) => {
+    pageSize.value = value
+  },
+}))
+
+function recycleTypeLabel(type: string) {
+  return type === 'PROJECT' ? '项目' : '审核配置'
+}
+
+function renderProjectAudits(row: RecycleItem) {
+  const audits = row.audits || []
+  return h('div', { class: 'recycle-children' }, [
+    h('div', { class: 'recycle-children-head' }, `项目内审核配置（${audits.length}）`),
+    ...audits.map((child) => h('div', { key: itemKey(child), class: 'recycle-child-row' }, [
+      h('div', { class: 'recycle-child-name' }, [
+        h('span', { class: 'item-icon audit' }, h(ShieldCheckmarkOutline)),
+        h('div', [
+          h('div', { class: 'cell-title' }, child.name),
+          h('div', { class: 'cell-sub mono' }, child.code),
+        ]),
+      ]),
+      h('span', { class: 'type-chip audit' }, recycleTypeLabel(child.type)),
+      h('span', { class: 'date mono' }, formatDeletedAt(child.deleted_at)),
+      h('span', { class: `remaining ${remainingClass(child.remaining_days)}` },
+        child.remaining_days > 0 ? `${child.remaining_days} 天` : '已过期'),
+      h('span', { class: 'relation' }, `${child.task_count} 个任务`),
+      h('span', { class: 'child-locked' }, '需先恢复项目'),
+    ])),
+  ])
+}
+
+const recycleColumns = computed<DataTableColumns<RecycleItem>>(() => [
+  {
+    type: 'expand',
+    width: 44,
+    align: 'center',
+    fixed: 'left',
+    expandable: (row) => (row.audits?.length || 0) > 0,
+    renderExpand: renderProjectAudits,
+  },
+  {
+    type: 'selection',
+    width: 44,
+    align: 'center',
+    fixed: 'left',
+  },
+  {
+    title: '名称',
+    key: 'name',
+    width: 260,
+    align: 'center',
+    resizable: true,
+    render: (row) => h('div', { class: 'recycle-name' }, [
+      h('span', { class: ['item-icon', { audit: row.type === 'AUDIT' }] },
+        h(row.type === 'PROJECT' ? FolderOpenOutline : ShieldCheckmarkOutline)),
+      h('div', [
+        h('div', { class: 'cell-title' }, row.name),
+        h('div', { class: 'cell-sub mono' }, row.code),
+      ]),
+    ]),
+  },
+  {
+    title: '类型',
+    key: 'type',
+    width: 110,
+    align: 'center',
+    resizable: true,
+    render: (row) => h('span', { class: ['type-chip', { audit: row.type === 'AUDIT' }] }, recycleTypeLabel(row.type)),
+  },
+  {
+    title: '所属项目',
+    key: 'project_name',
+    width: 170,
+    align: 'center',
+    resizable: true,
+    render: (row) => h('span', { class: 'ink-soft' }, row.type === 'PROJECT' ? '—' : row.project_name),
+  },
+  {
+    title: '删除时间',
+    key: 'deleted_at',
+    width: 170,
+    align: 'center',
+    resizable: true,
+    render: (row) => h('span', { class: 'date mono' }, formatDeletedAt(row.deleted_at)),
+  },
+  {
+    title: '剩余保留',
+    key: 'remaining_days',
+    width: 110,
+    align: 'center',
+    resizable: true,
+    render: (row) => h('span', { class: `remaining ${remainingClass(row.remaining_days)}` },
+      row.remaining_days > 0 ? `${row.remaining_days} 天` : '已过期'),
+  },
+  {
+    title: '关联',
+    key: 'task_count',
+    width: 100,
+    align: 'center',
+    resizable: true,
+    render: (row) => h('span', { class: 'relation' }, `${row.task_count} 个任务`),
+  },
+  {
+    title: '操作',
+    key: 'actions',
+    width: 190,
+    align: 'center',
+    fixed: 'right',
+    resizable: false,
+    render: (row) => h('div', { class: 'row-actions' }, [
+      h(NButton, {
+        size: 'tiny',
+        type: 'primary',
+        secondary: true,
+        disabled: !row.can_restore,
+        loading: restoringId.value === itemKey(row),
+        onClick: () => restore(row),
+      }, { icon: () => h(RefreshOutline), default: () => '恢复' }),
+      canPurge.value
+        ? h(NButton, {
+            size: 'tiny',
+            quaternary: true,
+            class: 'purge-btn',
+            loading: purgingId.value === itemKey(row),
+            onClick: () => purge(row),
+          }, { icon: () => h(TrashOutline), default: () => '永久删除' })
+        : null,
+    ]),
+  },
+])
 
 const confirmTitle = computed(() => {
   if (confirmMode.value === 'restore') return `恢复 ${selectedKeys.value.size} 个对象`
@@ -198,6 +327,8 @@ function restore(item: RecycleItem) {
           await auditApi.restore(item.id)
         }
         message.success('恢复成功')
+        selectedKeys.value.delete(itemKey(item))
+        selectedKeys.value = new Set(selectedKeys.value)
         await Promise.all([load(), workspace.loadProjects(true)])
       } catch (error) {
         message.error(error instanceof Error ? error.message : '恢复失败', { duration: 6000 })
@@ -220,6 +351,8 @@ function purge(item: RecycleItem) {
       try {
         await recycleApi.purge(item.type, item.id)
         message.success('已永久删除')
+        selectedKeys.value.delete(itemKey(item))
+        selectedKeys.value = new Set(selectedKeys.value)
         await Promise.all([load(), workspace.loadProjects(true)])
       } catch (error) {
         message.error(error instanceof Error ? error.message : '永久删除失败', { duration: 6000 })
@@ -300,10 +433,6 @@ onMounted(load)
       </div>
 
       <div v-if="total > 0" class="batch-bar">
-        <label class="select-all">
-          <input type="checkbox" :checked="allOnPageSelected" @change="togglePage" />
-          本页全选
-        </label>
         <span class="selected-info">
           已选 <b>{{ selectedKeys.size }}</b> 个
           <template v-if="selectedOnPage.length">（本页 {{ selectedOnPage.length }} 个）</template>
@@ -334,80 +463,21 @@ onMounted(load)
       </div>
 
       <div v-if="items.length" class="data-table-wrap">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th class="check-col"></th>
-              <th>名称</th>
-              <th>类型</th>
-              <th>所属项目</th>
-              <th>删除时间</th>
-              <th>剩余保留</th>
-              <th>关联</th>
-              <th class="action-col" style="text-align: right">操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="item in items" :key="`${item.type}:${item.id}`" :class="{ selected: selectedKeys.has(`${item.type}:${item.id}`) }">
-              <td class="check-col">
-                <input
-                  type="checkbox"
-                  :checked="selectedKeys.has(`${item.type}:${item.id}`)"
-                  @change="toggleItem(item)"
-                />
-              </td>
-              <td>
-                <div class="item-name">
-                  <span class="item-icon" :class="{ audit: item.type === 'AUDIT' }">
-                    <FolderOpenOutline v-if="item.type === 'PROJECT'" />
-                    <ShieldCheckmarkOutline v-else />
-                  </span>
-                  <div>
-                    <div class="cell-title">{{ item.name }}</div>
-                    <div class="cell-sub mono">{{ item.code }}</div>
-                  </div>
-                </div>
-              </td>
-              <td>
-                <span class="type-chip" :class="{ audit: item.type === 'AUDIT' }">
-                  {{ item.type === 'PROJECT' ? '项目' : '审核配置' }}
-                </span>
-              </td>
-              <td><span class="ink-soft">{{ item.project_name }}</span></td>
-              <td><span class="date mono">{{ item.deleted_at?.replace('T', ' ').slice(0, 19) }}</span></td>
-              <td>
-                <span class="remaining" :class="remainingClass(item.remaining_days)">
-                  {{ item.remaining_days > 0 ? `${item.remaining_days} 天` : '已过期' }}
-                </span>
-              </td>
-              <td>
-                <span class="relation">{{ item.task_count }} 个任务</span>
-              </td>
-              <td class="action-col" style="text-align: right">
-                <n-button
-                  size="small"
-                  type="primary"
-                  secondary
-                  :loading="restoringId === `${item.type}:${item.id}`"
-                  :disabled="!item.can_restore"
-                  @click="restore(item)"
-                >
-                  恢复
-                </n-button>
-                <n-button
-                  v-if="canPurge"
-                  size="small"
-                  quaternary
-                  class="purge-btn"
-                  :loading="purgingId === `${item.type}:${item.id}`"
-                  @click="purge(item)"
-                >
-                  永久删除
-                </n-button>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+        <n-data-table
+          :columns="recycleColumns"
+          :data="items"
+          :row-key="itemKey"
+          :checked-row-keys="checkedRowKeys"
+          :pagination="recyclePagination"
+          :scroll-x="1200"
+          max-height="calc(100vh - 360px)"
+          remote
+          striped
+          size="small"
+          :bordered="false"
+          class="sdv-data-table"
+          @update:checked-row-keys="onCheckedRowKeysChange"
+        />
       </div>
 
       <EmptyState
@@ -428,16 +498,7 @@ onMounted(load)
         <template #icon><TrashOutline /></template>
       </EmptyState>
 
-      <div class="pagination-row sticky-pagination">
-        <span>保留期内可恢复 · 到期对象由后台每 6 小时自动永久清理</span>
-        <n-pagination
-          v-model:page="page"
-          v-model:page-size="pageSize"
-          :page-sizes="[20, 50, 100]"
-          show-size-picker
-          :item-count="total"
-        />
-      </div>
+      <p class="recycle-policy-foot">保留期内可恢复 · 到期对象由后台每 6 小时自动永久清理</p>
     </section>
 
     <n-modal :show="confirmShow" :mask-closable="false" :close-on-esc="false" display-directive="if">

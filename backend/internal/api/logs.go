@@ -122,19 +122,20 @@ func (s *Server) listAuditLogs(c *gin.Context) {
 }
 
 type recycleItem struct {
-	Type          string    `json:"type"`
-	ObjectType    string    `json:"object_type"`
-	ID            uint64    `json:"id"`
-	Name          string    `json:"name"`
-	Code          string    `json:"code"`
-	ProjectID     uint64    `json:"project_id"`
-	ProjectName   string    `json:"project_name"`
-	Status        string    `json:"status"`
-	DeletedAt     time.Time `json:"deleted_at"`
-	ExpireAt      time.Time `json:"expire_at"`
-	RemainingDays int       `json:"remaining_days"`
-	TaskCount     int64     `json:"task_count"`
-	CanRestore    bool      `json:"can_restore"`
+	Type          string        `json:"type"`
+	ObjectType    string        `json:"object_type"`
+	ID            uint64        `json:"id"`
+	Name          string        `json:"name"`
+	Code          string        `json:"code"`
+	ProjectID     uint64        `json:"project_id"`
+	ProjectName   string        `json:"project_name"`
+	Status        string        `json:"status"`
+	DeletedAt     time.Time     `json:"deleted_at"`
+	ExpireAt      time.Time     `json:"expire_at"`
+	RemainingDays int           `json:"remaining_days"`
+	TaskCount     int64         `json:"task_count"`
+	CanRestore    bool          `json:"can_restore"`
+	Audits        []recycleItem `json:"audits,omitempty"`
 }
 
 func (s *Server) purgeRecycleItem(c *gin.Context) {
@@ -187,7 +188,6 @@ func (s *Server) listRecycleBin(c *gin.Context) {
 		forbidden(c, "当前角色无权访问回收站")
 		return
 	}
-	items := make([]recycleItem, 0)
 	objType := strings.ToUpper(strings.TrimSpace(c.Query("object_type")))
 	keyword := strings.TrimSpace(c.Query("keyword"))
 	projectFilter := uint64(0)
@@ -198,73 +198,101 @@ func (s *Server) listRecycleBin(c *gin.Context) {
 	}
 	now := time.Now()
 
-	if objType == "" || objType == "ALL" || objType == "PROJECT" {
-		q := s.db.Where("deleted_at IS NOT NULL")
-		if keyword != "" {
-			like := "%" + keyword + "%"
-			q = q.Where("(name LIKE ? OR code LIKE ?)", like, like)
-		}
-		if projectFilter != 0 {
-			q = q.Where("id = ?", projectFilter)
-		}
-		var projects []model.Project
-		_ = q.Order("deleted_at desc").Find(&projects).Error
-		for _, p := range projects {
-			expire := p.DeletedAt.AddDate(0, 0, p.RetentionDays)
-			days := int(time.Until(expire).Hours() / 24)
-			if days < 0 {
-				days = 0
-			}
-			var taskCount int64
-			_ = s.db.Model(&model.Task{}).Where("project_id = ?", p.ID).Count(&taskCount).Error
-			if !isSuperAdmin(user) && !s.hasProjectAccess(user, p.ID) {
+	var deletedProjects []model.Project
+	_ = s.db.Where("deleted_at IS NOT NULL").Order("deleted_at desc").Find(&deletedProjects).Error
+	var deletedAudits []model.Audit
+	_ = s.db.Where("deleted_at IS NOT NULL").Order("deleted_at desc").Find(&deletedAudits).Error
+	var allProjects []model.Project
+	_ = s.db.Find(&allProjects).Error
+	projectsByID := make(map[uint64]model.Project, len(allProjects))
+	for _, project := range allProjects {
+		projectsByID[project.ID] = project
+	}
+	auditsByProject := make(map[uint64][]model.Audit)
+	for _, audit := range deletedAudits {
+		auditsByProject[audit.ProjectID] = append(auditsByProject[audit.ProjectID], audit)
+	}
+
+	items := make([]recycleItem, 0)
+	includeProjects := objType == "" || objType == "ALL" || objType == "PROJECT"
+	includeAudits := objType == "" || objType == "ALL" || objType == "AUDIT"
+
+	if includeProjects {
+		for _, project := range deletedProjects {
+			if projectFilter != 0 && project.ID != projectFilter {
 				continue
 			}
+			if !isSuperAdmin(user) && !s.hasProjectAccess(user, project.ID) {
+				continue
+			}
+			projectMatched := recycleMatches(project.Name, project.Code, keyword)
+			children := make([]recycleItem, 0)
+			for _, audit := range auditsByProject[project.ID] {
+				// A keyword that matches the project name shows all of its
+				// audits; otherwise only audits matching the keyword are kept.
+				if keyword != "" && !projectMatched && !recycleMatches(audit.Name, audit.Code, keyword) {
+					continue
+				}
+				expireAt, remaining := recycleWindow(*audit.DeletedAt, project.RetentionDays, now)
+				var taskCount int64
+				_ = s.db.Model(&model.Task{}).Where("audit_id = ?", audit.ID).Count(&taskCount).Error
+				children = append(children, recycleItem{
+					Type: "AUDIT", ObjectType: "AUDIT", ID: audit.ID, Name: audit.Name, Code: audit.Code,
+					ProjectID: audit.ProjectID, ProjectName: project.Name, Status: audit.Status,
+					DeletedAt: *audit.DeletedAt, ExpireAt: expireAt, RemainingDays: remaining,
+					TaskCount: taskCount, CanRestore: false,
+				})
+			}
+			if keyword != "" && !projectMatched && len(children) == 0 {
+				continue
+			}
+			expireAt, remaining := recycleWindow(*project.DeletedAt, project.RetentionDays, now)
+			var taskCount int64
+			_ = s.db.Model(&model.Task{}).Where("project_id = ?", project.ID).Count(&taskCount).Error
 			items = append(items, recycleItem{
-				Type: "PROJECT", ObjectType: "PROJECT", ID: p.ID, Name: p.Name, Code: p.Code,
-				ProjectID: p.ID, ProjectName: p.Name, Status: p.Status,
-				DeletedAt: *p.DeletedAt, ExpireAt: expire, RemainingDays: days,
-				TaskCount: taskCount, CanRestore: days > 0,
+				Type: "PROJECT", ObjectType: "PROJECT", ID: project.ID, Name: project.Name, Code: project.Code,
+				ProjectID: project.ID, ProjectName: project.Name, Status: project.Status,
+				DeletedAt: *project.DeletedAt, ExpireAt: expireAt, RemainingDays: remaining,
+				TaskCount: taskCount, CanRestore: remaining > 0 && isSuperAdmin(user),
+				Audits: children,
 			})
 		}
 	}
-	if objType == "" || objType == "ALL" || objType == "AUDIT" {
-		q := s.db.Model(&model.Audit{}).Where("deleted_at IS NOT NULL")
-		if keyword != "" {
-			like := "%" + keyword + "%"
-			q = q.Where("(name LIKE ? OR code LIKE ?)", like, like)
-		}
-		if projectFilter != 0 {
-			q = q.Where("project_id = ?", projectFilter)
-		}
-		var audits []model.Audit
-		_ = q.Order("deleted_at desc").Find(&audits).Error
-		for _, a := range audits {
-			var project model.Project
-			_ = s.db.First(&project, a.ProjectID).Error
-			retention := project.RetentionDays
-			if retention <= 0 {
-				retention = 30
-			}
-			expire := a.DeletedAt.AddDate(0, 0, retention)
-			days := int(time.Until(expire).Hours() / 24)
-			if days < 0 {
-				days = 0
-			}
-			if !isSuperAdmin(user) && !s.hasProjectAccess(user, a.ProjectID) {
+
+	if includeAudits {
+		for _, audit := range deletedAudits {
+			parent, parentExists := projectsByID[audit.ProjectID]
+			// Audits deleted together with a project are only shown under that
+			// project, never as a flat row, so they cannot be restored alone.
+			if parentExists && parent.DeletedAt != nil {
 				continue
 			}
+			if projectFilter != 0 && audit.ProjectID != projectFilter {
+				continue
+			}
+			if !recycleMatches(audit.Name, audit.Code, keyword) {
+				continue
+			}
+			if !isSuperAdmin(user) && !s.hasProjectAccess(user, audit.ProjectID) {
+				continue
+			}
+			retention := 30
+			if parentExists && parent.RetentionDays > 0 {
+				retention = parent.RetentionDays
+			}
+			expireAt, remaining := recycleWindow(*audit.DeletedAt, retention, now)
 			var taskCount int64
-			_ = s.db.Model(&model.Task{}).Where("audit_id = ?", a.ID).Count(&taskCount).Error
+			_ = s.db.Model(&model.Task{}).Where("audit_id = ?", audit.ID).Count(&taskCount).Error
 			items = append(items, recycleItem{
-				Type: "AUDIT", ObjectType: "AUDIT", ID: a.ID, Name: a.Name, Code: a.Code,
-				ProjectID: a.ProjectID, ProjectName: project.Name, Status: a.Status,
-				DeletedAt: *a.DeletedAt, ExpireAt: expire, RemainingDays: days,
-				TaskCount: taskCount, CanRestore: days > 0,
+				Type: "AUDIT", ObjectType: "AUDIT", ID: audit.ID, Name: audit.Name, Code: audit.Code,
+				ProjectID: audit.ProjectID, ProjectName: parent.Name, Status: audit.Status,
+				DeletedAt: *audit.DeletedAt, ExpireAt: expireAt, RemainingDays: remaining,
+				TaskCount: taskCount, CanRestore: remaining > 0,
 			})
 		}
 	}
-	sort.Slice(items, func(i, j int) bool { return items[i].DeletedAt.After(items[j].DeletedAt) })
+
+	sort.SliceStable(items, func(i, j int) bool { return items[i].DeletedAt.After(items[j].DeletedAt) })
 	page, pageSize := pagination(c)
 	total := len(items)
 	start := (page - 1) * pageSize
@@ -280,6 +308,26 @@ func (s *Server) listRecycleBin(c *gin.Context) {
 		"has_more":     end < total,
 		"current_time": now,
 	})
+}
+
+func recycleWindow(deletedAt time.Time, retentionDays int, now time.Time) (time.Time, int) {
+	if retentionDays <= 0 {
+		retentionDays = 30
+	}
+	expireAt := deletedAt.AddDate(0, 0, retentionDays)
+	remaining := int(expireAt.Sub(now).Hours() / 24)
+	if remaining < 0 {
+		remaining = 0
+	}
+	return expireAt, remaining
+}
+
+func recycleMatches(name, code, keyword string) bool {
+	keyword = strings.ToLower(strings.TrimSpace(keyword))
+	if keyword == "" {
+		return true
+	}
+	return strings.Contains(strings.ToLower(name), keyword) || strings.Contains(strings.ToLower(code), keyword)
 }
 
 type recycleItemRef struct {
@@ -381,6 +429,11 @@ func (s *Server) batchRestoreRecycle(c *gin.Context) {
 		}
 		if !isSuperAdmin(user) && !s.hasProjectAccess(user, audit.ProjectID) {
 			results = append(results, recycleBatchResult{Type: "AUDIT", ID: item.ID, Name: audit.Name, Status: "skipped", Reason: "无该项目数据权限"})
+			continue
+		}
+		var parentProject model.Project
+		if err := s.db.First(&parentProject, audit.ProjectID).Error; err == nil && parentProject.DeletedAt != nil {
+			results = append(results, recycleBatchResult{Type: "AUDIT", ID: item.ID, Name: audit.Name, Status: "skipped", Reason: "所属项目仍在回收站中，请先恢复项目"})
 			continue
 		}
 		var conflictCount int64

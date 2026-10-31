@@ -813,6 +813,7 @@ export interface RecycleItem {
   remaining_days: number
   task_count: number
   can_restore: boolean
+  audits?: RecycleItem[]
 }
 
 export interface AuditAssistantMessage {
