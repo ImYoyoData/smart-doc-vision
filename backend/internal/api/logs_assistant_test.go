@@ -1,6 +1,11 @@
 package api
 
-import "testing"
+import (
+	"errors"
+	"testing"
+
+	"smartdoc-vision/backend/internal/ai"
+)
 
 func TestLogsAssistantTools(t *testing.T) {
 	names := map[string]bool{}
@@ -37,5 +42,17 @@ func TestAuditActionLabel(t *testing.T) {
 	}
 	if auditActionLabel("CUSTOM_ACTION") != "CUSTOM_ACTION" {
 		t.Fatal("unknown action should keep its code")
+	}
+}
+
+func TestEstimateMessagesTokens(t *testing.T) {
+	if got := estimateMessagesTokens([]ai.ChatMessage{{Role: "user", Content: "abc"}}); got < 3 {
+		t.Fatalf("estimate too small: %d", got)
+	}
+	if isContextLimitError(nil) {
+		t.Fatal("nil error must not be a context error")
+	}
+	if !isContextLimitError(errors.New("maximum context length exceeded")) {
+		t.Fatal("context limit error was not recognized")
 	}
 }

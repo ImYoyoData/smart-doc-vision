@@ -30,7 +30,11 @@ export const useSiteStore = defineStore('site', () => {
 
   const displayName = computed(() => name.value || DEFAULT_NAME)
 
-  async function load() {
+  async function load(force = false) {
+    if (force) {
+      checked.value = false
+      pending = null
+    }
     if (checked.value) return
     if (pending) return pending
     pending = (async () => {

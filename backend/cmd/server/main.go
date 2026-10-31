@@ -15,6 +15,7 @@ import (
 	"gorm.io/gorm"
 
 	"smartdoc-vision/backend/internal/api"
+	"smartdoc-vision/backend/internal/branding"
 	"smartdoc-vision/backend/internal/config"
 	"smartdoc-vision/backend/internal/engine"
 	"smartdoc-vision/backend/internal/install"
@@ -60,6 +61,9 @@ type appRuntime struct {
 func main() {
 	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
 	cfg := config.Load()
+	if err := branding.Load(&cfg); err != nil {
+		log.Printf("branding: %v", err)
+	}
 	if cfg.ConfigFile != "" {
 		log.Printf("config: using %s", cfg.ConfigFile)
 	}

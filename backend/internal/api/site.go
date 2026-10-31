@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"smartdoc-vision/backend/internal/branding"
 	"smartdoc-vision/backend/internal/config"
 	appversion "smartdoc-vision/backend/internal/version"
 )
@@ -26,7 +27,8 @@ var siteLogoExtensions = map[string]bool{
 }
 
 func siteInfoPayload(cfg config.Config) gin.H {
-	logo := strings.TrimSpace(cfg.SiteLogo)
+	settings := branding.Get(cfg)
+	logo := strings.TrimSpace(settings.Logo)
 	switch {
 	case isRemoteSiteLogo(logo):
 		// SITE_LOGO may point at an object URL or an inline data URL.
@@ -38,8 +40,8 @@ func siteInfoPayload(cfg config.Config) gin.H {
 		}
 	}
 	return gin.H{
-		"name":    cfg.SiteName,
-		"name_en": cfg.SiteNameEn,
+		"name":    settings.Name,
+		"name_en": settings.NameEn,
 		"logo":    logo,
 		"version": appversion.Version,
 	}
@@ -72,7 +74,7 @@ func siteLogoFile(value string) (string, bool) {
 }
 
 func serveSiteLogo(cfg config.Config, c *gin.Context) {
-	path, ok := siteLogoFile(cfg.SiteLogo)
+	path, ok := siteLogoFile(branding.Get(cfg).Logo)
 	if !ok {
 		c.Status(http.StatusNotFound)
 		return

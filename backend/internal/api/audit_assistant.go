@@ -380,9 +380,17 @@ func (s *Server) assistantProvider(projectID, preferred uint64) (*model.AIProvid
 		return nil, err
 	}
 	for i := range providers {
-		if strings.EqualFold(providers[i].Kind, model.ProviderOpenAI) || strings.EqualFold(providers[i].Kind, model.ProviderAnthropic) {
-			return &providers[i], nil
+		if !strings.EqualFold(providers[i].Kind, model.ProviderOpenAI) && !strings.EqualFold(providers[i].Kind, model.ProviderAnthropic) {
+			continue
 		}
+		// QA/mock providers are useful for deterministic tests but cannot run a
+		// real tool-using assistant. Prefer the first real generic provider when
+		// the client leaves the model on automatic.
+		identity := strings.ToLower(providers[i].Name + " " + providers[i].Model)
+		if strings.Contains(identity, "mock") || strings.Contains(identity, "qa100") {
+			continue
+		}
+		return &providers[i], nil
 	}
 	return nil, fmt.Errorf("当前项目没有可用的通用大模型（OpenAI 兼容或 Anthropic 协议），请先完成模型接入")
 }

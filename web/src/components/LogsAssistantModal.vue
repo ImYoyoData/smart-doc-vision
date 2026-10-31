@@ -1,14 +1,16 @@
 <script setup lang="ts">
-import { computed, nextTick, ref } from 'vue'
-import { NButton, NInput, NModal, NSpin, NTag } from 'naive-ui'
+import { computed, nextTick, ref, watch } from 'vue'
+import { NButton, NInput, NModal, NSelect, NSpin, NTag } from 'naive-ui'
 import {
   CloseOutline,
   SearchOutline,
   SparklesOutline,
 } from '@vicons/ionicons5'
+import { marked } from 'marked'
+import DOMPurify from 'dompurify'
 import VoiceInputButton from '@/components/VoiceInputButton.vue'
-import { logApi } from '@/api'
-import type { LogsAssistantFilter } from '@/api/types'
+import { logApi, providerApi } from '@/api'
+import type { LogsAssistantFilter, Provider } from '@/api/types'
 
 type ChatRole = 'user' | 'assistant'
 
@@ -41,6 +43,49 @@ const input = ref('')
 const loading = ref(false)
 const errorText = ref('')
 const listRef = ref<HTMLElement | null>(null)
+const providers = ref<Provider[]>([])
+const providerId = ref<number | null>(0)
+const loadingProviders = ref(false)
+const reasoning = ref('')
+const contextTokens = ref(0)
+const contextWindow = ref(128000)
+const compressed = ref(false)
+
+const providerOptions = computed(() => [
+  { label: '自动选择（按模型优先级）', value: 0 },
+  ...providers.value.map((provider) => ({
+    label: `${provider.name} · ${provider.model}`,
+    value: provider.id,
+  })),
+])
+
+const reasoningOptions = [
+  { label: '自动', value: '' },
+  { label: '低', value: 'low' },
+  { label: '中', value: 'medium' },
+  { label: '高', value: 'high' },
+]
+
+const contextPercent = computed(() => {
+  if (!contextWindow.value) return 0
+  return Math.min(100, Math.round((contextTokens.value / contextWindow.value) * 1000) / 10)
+})
+
+const contextTone = computed(() => {
+  if (contextPercent.value >= 85) return 'danger'
+  if (contextPercent.value >= 60) return 'warn'
+  return 'ok'
+})
+
+const contextRingOffset = computed(() => {
+  const circumference = 2 * Math.PI * 15
+  return circumference * (1 - Math.min(1, contextTokens.value / contextWindow.value))
+})
+
+function formatTokens(value?: number) {
+  if (!value || value <= 0) return '0'
+  return value.toLocaleString('en-US')
+}
 
 const suggestions = [
   '最近 7 天登录失败的是谁，失败了多少次？',
@@ -48,6 +93,38 @@ const suggestions = [
   '查一下 admin 今天的全部操作',
   '有没有任务失败或者开放 API 提交失败的日志？',
 ]
+
+function renderMarkdown(content: string) {
+  const html = marked.parse(content || '', { breaks: true, gfm: true })
+  return DOMPurify.sanitize(typeof html === 'string' ? html : '')
+}
+
+async function loadProviders() {
+  if (loadingProviders.value || !props.projectId) return
+  loadingProviders.value = true
+  try {
+    const data = await providerApi.list({ project_id: props.projectId, page: 1, page_size: 100 })
+    providers.value = (data.items || []).filter(
+      (provider) =>
+        provider.status === 'ACTIVE' &&
+        (provider.kind === 'OPENAI_COMPATIBLE' || provider.kind === 'ANTHROPIC'),
+    )
+    if (providerId.value && !providers.value.some((provider) => provider.id === providerId.value)) {
+      providerId.value = 0
+    }
+  } catch {
+    providers.value = []
+  } finally {
+    loadingProviders.value = false
+  }
+}
+
+watch(
+  () => props.show,
+  (value) => {
+    if (value) void loadProviders()
+  },
+)
 
 function scrollToBottom() {
   void nextTick(() => {
@@ -65,6 +142,9 @@ function clearChat() {
   if (loading.value) return
   messages.value = []
   errorText.value = ''
+  contextTokens.value = 0
+  contextWindow.value = 128000
+  compressed.value = false
 }
 
 function appendInput(text: string) {
@@ -115,9 +195,14 @@ async function send(forced?: string) {
   try {
     const data = await logApi.assistant({
       project_id: props.projectId || 0,
+      provider_id: providerId.value || 0,
+      reasoning: reasoning.value,
       messages: [...history, { role: 'user', content: prompt }],
       filters: props.filters,
     })
+    contextTokens.value = data.context_tokens || 0
+    contextWindow.value = data.context_window || 128000
+    compressed.value = data.compressed
     messages.value.push({
       role: 'assistant',
       content: data.reply,
@@ -164,7 +249,8 @@ async function send(forced?: string) {
         <div v-for="(item, index) in messages" :key="index" class="logs-ai-msg" :class="item.role">
           <span v-if="item.role === 'assistant'" class="logs-ai-avatar"><SparklesOutline /></span>
           <div class="logs-ai-bubble">
-            <p class="logs-ai-text">{{ item.content }}</p>
+            <div v-if="item.role === 'assistant'" class="logs-ai-markdown" v-html="renderMarkdown(item.content)"></div>
+            <p v-else class="logs-ai-text">{{ item.content }}</p>
             <div v-if="item.role === 'assistant' && (item.tools?.length || item.total !== undefined)" class="logs-ai-meta">
               <n-tag v-if="item.total !== undefined" size="small" :bordered="false">匹配 {{ item.total }} 条</n-tag>
               <n-tag v-for="tool in item.tools || []" :key="tool" size="small" :bordered="false">
@@ -201,16 +287,64 @@ async function send(forced?: string) {
             :disabled="loading"
             @keyup.enter.exact.prevent="send()"
           />
-          <div class="logs-ai-composer-actions">
-            <VoiceInputButton :disabled="loading" @transcript="appendInput" />
-            <n-button type="primary" :loading="loading" :disabled="!input.trim()" @click="send()">
-              发送
-            </n-button>
+          <div class="logs-ai-composer-bar">
+            <div class="logs-ai-model-row">
+              <span class="logs-ai-model-label">模型</span>
+              <n-select
+                v-model:value="providerId"
+                :options="providerOptions"
+                :loading="loadingProviders"
+                :placeholder="providerOptions.length ? '选择模型' : '当前项目暂无通用模型'"
+                size="small"
+                :disabled="loading || !providerOptions.length"
+                placement="top-start"
+                class="logs-ai-model-select"
+              />
+              <span class="logs-ai-model-label">思考</span>
+              <n-select
+                v-model:value="reasoning"
+                :options="reasoningOptions"
+                size="small"
+                :disabled="loading"
+                placement="top-start"
+                class="logs-ai-reasoning-select"
+              />
+              <VoiceInputButton :disabled="loading" @transcript="appendInput" />
+            </div>
+            <div class="logs-ai-actions">
+              <button
+                type="button"
+                class="logs-ai-context"
+                :class="contextTone"
+                :title="`上下文 ${formatTokens(contextTokens)} / ${formatTokens(contextWindow)} tokens；接近上限时自动压缩`"
+                aria-label="查看上下文用量"
+              >
+                <svg viewBox="0 0 36 36" class="logs-ai-context-ring" aria-hidden="true">
+                  <circle class="ring-track" cx="18" cy="18" r="15" />
+                  <circle
+                    class="ring-fill"
+                    cx="18"
+                    cy="18"
+                    r="15"
+                    stroke-dasharray="94.25"
+                    :stroke-dashoffset="contextRingOffset"
+                  />
+                </svg>
+                <span>{{ contextPercent }}%</span>
+              </button>
+              <span v-if="compressed" class="logs-ai-compressed">已自动压缩</span>
+              <button v-if="messages.length" type="button" class="logs-ai-clear" :disabled="loading" @click="clearChat">
+                清空
+              </button>
+              <n-button type="primary" size="small" :loading="loading" :disabled="!input.trim()" @click="send()">
+                发送
+              </n-button>
+            </div>
           </div>
         </div>
         <div class="logs-ai-foot-meta">
-          <span>只读查询 · 支持 Enter 发送 · 语音输入依赖浏览器 Web Speech API</span>
-          <button v-if="messages.length" type="button" :disabled="loading" @click="clearChat">清空对话</button>
+          <span>只读查询 · Enter 发送 · 上下文 {{ formatTokens(contextTokens) }} / {{ formatTokens(contextWindow) }} tokens</span>
+          <span>语音输入依赖浏览器 Web Speech API</span>
         </div>
       </footer>
     </div>
@@ -427,6 +561,96 @@ async function send(forced?: string) {
   word-break: break-word;
 }
 
+.logs-ai-markdown {
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.75;
+  word-break: break-word;
+}
+
+.logs-ai-markdown :deep(p) {
+  margin: 0 0 8px;
+}
+
+.logs-ai-markdown :deep(p:last-child) {
+  margin-bottom: 0;
+}
+
+.logs-ai-markdown :deep(ul),
+.logs-ai-markdown :deep(ol) {
+  margin: 6px 0 8px;
+  padding-left: 18px;
+}
+
+.logs-ai-markdown :deep(li) {
+  margin: 2px 0;
+}
+
+.logs-ai-markdown :deep(strong) {
+  color: var(--ink);
+  font-weight: 650;
+}
+
+.logs-ai-markdown :deep(code) {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--surface-strong);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 10.5px;
+}
+
+.logs-ai-markdown :deep(pre) {
+  max-width: 100%;
+  margin: 8px 0;
+  overflow-x: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-strong);
+}
+
+.logs-ai-markdown :deep(pre code) {
+  padding: 0;
+  background: transparent;
+  white-space: pre;
+}
+
+.logs-ai-markdown :deep(blockquote) {
+  margin: 8px 0;
+  padding: 6px 10px;
+  border-left: 3px solid var(--brand-border);
+  background: var(--brand-softer);
+  color: var(--muted);
+}
+
+.logs-ai-markdown :deep(a) {
+  color: var(--brand);
+  text-decoration: underline;
+}
+
+.logs-ai-markdown :deep(table) {
+  display: block;
+  max-width: 100%;
+  margin: 8px 0;
+  overflow-x: auto;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.logs-ai-markdown :deep(th),
+.logs-ai-markdown :deep(td) {
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  text-align: left;
+}
+
+.logs-ai-markdown :deep(th) {
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-weight: 600;
+}
+
 .logs-ai-meta {
   display: flex;
   flex-wrap: wrap;
@@ -473,19 +697,125 @@ async function send(forced?: string) {
 
 .logs-ai-composer {
   display: flex;
-  align-items: flex-end;
-  gap: 9px;
+  flex-direction: column;
+  gap: 8px;
 }
 
-.logs-ai-composer > :first-child {
+.logs-ai-composer-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.logs-ai-model-row {
+  display: flex;
+  flex: 1 1 430px;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.logs-ai-model-label {
+  color: var(--muted);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.logs-ai-model-select {
+  max-width: 280px;
   flex: 1;
 }
 
-.logs-ai-composer-actions {
+.logs-ai-reasoning-select {
+  width: 92px;
+  flex: none;
+}
+
+.logs-ai-actions {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 7px;
   flex: none;
+}
+
+.logs-ai-context {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 7px 3px 5px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 9px;
+  cursor: pointer;
+}
+
+.logs-ai-context:hover {
+  border-color: var(--brand-border);
+  color: var(--brand);
+}
+
+.logs-ai-context-ring {
+  width: 18px;
+  height: 18px;
+  transform: rotate(-90deg);
+}
+
+.logs-ai-context-ring .ring-track {
+  fill: none;
+  stroke: var(--border);
+  stroke-width: 3;
+}
+
+.logs-ai-context-ring .ring-fill {
+  fill: none;
+  stroke: var(--brand);
+  stroke-width: 3;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.3s ease;
+}
+
+.logs-ai-context.warn .ring-fill {
+  stroke: var(--amber);
+}
+
+.logs-ai-context.danger {
+  color: var(--red);
+}
+
+.logs-ai-context.danger .ring-fill {
+  stroke: var(--red);
+}
+
+.logs-ai-compressed {
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--amber-soft);
+  color: var(--amber-ink);
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+.logs-ai-clear {
+  padding: 3px 6px;
+  border: 0;
+  background: transparent;
+  color: var(--muted-light);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.logs-ai-clear:hover {
+  color: var(--brand);
+}
+
+.logs-ai-clear:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
 }
 
 .logs-ai-foot-meta {
@@ -524,12 +854,21 @@ async function send(forced?: string) {
     padding-right: 16px;
   }
 
-  .logs-ai-composer {
+  .logs-ai-composer-bar {
     align-items: stretch;
     flex-direction: column;
   }
 
-  .logs-ai-composer-actions {
+  .logs-ai-model-row {
+    flex-basis: auto;
+    flex-wrap: wrap;
+  }
+
+  .logs-ai-model-select {
+    max-width: none;
+  }
+
+  .logs-ai-actions {
     justify-content: flex-end;
   }
 

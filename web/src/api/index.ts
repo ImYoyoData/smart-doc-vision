@@ -35,6 +35,7 @@ import type {
   RoleDefinition,
   RuleTemplate,
   AuditTreaty,
+  SystemBranding,
   SystemConfigData,
   UpdateCheck,
   Task,
@@ -155,6 +156,9 @@ export const notificationApi = {
 
 export const systemConfigApi = {
   get: () => get<SystemConfigData>('/system/config'),
+  getBranding: () => get<SystemBranding>('/system/branding'),
+  updateBranding: (payload: { name: string; name_en: string; logo: string }) =>
+    put<SystemBranding>('/system/branding', payload),
 }
 
 export const updateApi = {

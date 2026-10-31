@@ -101,6 +101,7 @@ const actionLabels: Record<string, string> = {
   NOTIFICATION_CHANNEL_UPDATE: '更新通知渠道',
   NOTIFICATION_CHANNEL_DELETE: '删除通知渠道',
   NOTIFICATION_CHANNEL_TEST: '测试通知渠道',
+  SITE_BRANDING_UPDATE: '更新站点品牌',
 }
 
 const actionOptions = computed(() =>

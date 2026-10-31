@@ -20,6 +20,7 @@ type logsAssistantRequest struct {
 	ProviderID uint64             `json:"provider_id"`
 	Messages   []assistantMessage `json:"messages"`
 	Filters    *logsAssistantUI   `json:"filters"`
+	Reasoning  string             `json:"reasoning"`
 }
 
 type logsAssistantUI struct {
@@ -33,13 +34,16 @@ type logsAssistantUI struct {
 }
 
 type logsAssistantResult struct {
-	Reply    string                `json:"reply"`
-	Filter   logsAssistantUI       `json:"filter"`
-	Total    int64                 `json:"total"`
-	Tools    []string              `json:"tools"`
-	Model    string                `json:"model"`
-	Usage    assistantUsageSummary `json:"usage"`
-	ToolLogs []string              `json:"tool_logs,omitempty"`
+	Reply         string                `json:"reply"`
+	Filter        logsAssistantUI       `json:"filter"`
+	Total         int64                 `json:"total"`
+	Tools         []string              `json:"tools"`
+	Model         string                `json:"model"`
+	Usage         assistantUsageSummary `json:"usage"`
+	ContextTokens int                   `json:"context_tokens"`
+	ContextWindow int                   `json:"context_window"`
+	Compressed    bool                  `json:"compressed"`
+	ToolLogs      []string              `json:"tool_logs,omitempty"`
 }
 
 type assistantUsageSummary struct {
@@ -110,6 +114,7 @@ var auditActionLabels = map[string]string{
 	"ROLE_DELETE":                 "删除角色",
 	"USER_CREATE":                 "创建账号",
 	"USER_UPDATE":                 "更新账号",
+	"SITE_BRANDING_UPDATE":        "更新站点品牌",
 	"OPENAPI_SUBMIT":              "开放 API 提交",
 	"NOTIFICATION_CHANNEL_CREATE": "创建通知渠道",
 	"NOTIFICATION_CHANNEL_UPDATE": "更新通知渠道",
@@ -228,8 +233,8 @@ func (s *Server) logsAssistant(c *gin.Context) {
 		badRequest(c, "请输入查询需求")
 		return
 	}
-	if len(req.Messages) > 24 {
-		req.Messages = req.Messages[len(req.Messages)-24:]
+	if len(req.Messages) > 100 {
+		req.Messages = req.Messages[len(req.Messages)-100:]
 	}
 	provider, err := s.assistantProvider(req.ProjectID, req.ProviderID)
 	if err != nil {
@@ -268,6 +273,13 @@ func (s *Server) logsAssistant(c *gin.Context) {
 	}
 	system += "\n日志范围：当前账号有权查看的全部项目；登录与账号操作属于全局日志。"
 
+	providerConfig := model.ProviderConfig{}
+	_ = model.DecodeJSON(provider.ConfigJSON, &providerConfig)
+	contextWindow := providerConfig.ContextWindow
+	if contextWindow <= 0 {
+		contextWindow = 128000
+	}
+
 	state := &logsToolState{user: user}
 	tools := logsAssistantTools()
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 120*time.Second)
@@ -275,14 +287,41 @@ func (s *Server) logsAssistant(c *gin.Context) {
 	var final *ai.ChatResult
 	usage := assistantUsageSummary{}
 	modelName := provider.Model
+	compressed := false
+	contextTokens := 0
+	if estimateMessagesTokens(messages) > contextWindow*3/4 {
+		if summary, compressUsage, err := s.compressLogsContext(ctx, provider, key, messages); err == nil {
+			messages = append([]ai.ChatMessage{{Role: "assistant", Content: "【历史对话摘要】\n" + summary}}, lastMessages(messages, 4)...)
+			compressed = true
+			usage.Requests += compressUsage.Requests
+			usage.InputTokens += compressUsage.InputTokens
+			usage.OutputTokens += compressUsage.OutputTokens
+			usage.TotalTokens += compressUsage.TotalTokens
+		} else {
+			messages = lastMessages(messages, 8)
+			compressed = true
+		}
+	}
 	for turn := 0; turn < 6; turn++ {
 		started := time.Now()
 		result, chatErr := ai.Chat(ctx, ai.ChatRequest{
 			Provider: *provider, APIKey: key, System: system,
 			Messages: messages, Tools: tools, MaxTokens: 4096, Temperature: 0.2,
+			Reasoning: req.Reasoning,
 		})
 		if chatErr != nil {
 			s.recordProviderUsage(*provider, model.UsageSourceLogsAssistant, 0, nil, time.Since(started), chatErr)
+			if isContextLimitError(chatErr) && !compressed {
+				if summary, compressUsage, err := s.compressLogsContext(ctx, provider, key, messages); err == nil {
+					messages = append([]ai.ChatMessage{{Role: "assistant", Content: "【历史对话摘要】\n" + summary}}, lastMessages(messages, 4)...)
+					compressed = true
+					usage.Requests += compressUsage.Requests
+					usage.InputTokens += compressUsage.InputTokens
+					usage.OutputTokens += compressUsage.OutputTokens
+					usage.TotalTokens += compressUsage.TotalTokens
+					continue
+				}
+			}
 			if isToolUnsupportedError(chatErr) {
 				fail(c, http.StatusUnprocessableEntity, "ASSISTANT_TOOLS_UNSUPPORTED",
 					"当前模型不支持工具调用，请到「模型接入」启用支持 function calling 的通用大模型", nil)
@@ -292,6 +331,7 @@ func (s *Server) logsAssistant(c *gin.Context) {
 			return
 		}
 		modelName = result.Model
+		contextTokens = result.Usage.InputTokens + result.Usage.OutputTokens
 		s.recordProviderUsage(*provider, model.UsageSourceLogsAssistant, 0, result, time.Since(started), nil)
 		usage.Requests++
 		usage.InputTokens += result.Usage.InputTokens
@@ -328,10 +368,68 @@ func (s *Server) logsAssistant(c *gin.Context) {
 		Start:      state.lastFilter.Start,
 		End:        state.lastFilter.End,
 	}
+	if contextTokens == 0 {
+		contextTokens = estimateMessagesTokens(messages)
+	}
 	ok(c, logsAssistantResult{
 		Reply: reply, Filter: filter, Total: state.lastTotal,
 		Tools: state.toolLogs, Model: modelName, Usage: usage,
+		ContextTokens: contextTokens, ContextWindow: contextWindow, Compressed: compressed,
 	})
+}
+
+func estimateMessagesTokens(messages []ai.ChatMessage) int {
+	total := 0
+	for _, message := range messages {
+		total += len([]rune(message.Content)) + 4
+	}
+	return total
+}
+
+func lastMessages(messages []ai.ChatMessage, count int) []ai.ChatMessage {
+	if count <= 0 || len(messages) <= count {
+		return messages
+	}
+	return messages[len(messages)-count:]
+}
+
+func (s *Server) compressLogsContext(ctx context.Context, provider *model.AIProvider, key string, messages []ai.ChatMessage) (string, assistantUsageSummary, error) {
+	parts := make([]string, 0, len(messages))
+	for _, message := range messages {
+		parts = append(parts, message.Role+": "+truncateText(message.Content, 4000))
+	}
+	prompt := "请把以下审计日志助手的对话压缩成简洁摘要，保留用户目标、已确认结论、筛选条件、尚未解决的问题和重要数据；不要编造内容。" + "\n\n" + strings.Join(parts, "\n")
+	started := time.Now()
+	result, err := ai.Chat(ctx, ai.ChatRequest{
+		Provider: *provider, APIKey: key,
+		System:    "你是对话上下文压缩助手。只输出摘要正文。",
+		Messages:  []ai.ChatMessage{{Role: "user", Content: truncateText(prompt, 24000)}},
+		MaxTokens: 1000, Temperature: 0.2,
+	})
+	usage := assistantUsageSummary{}
+	if err != nil {
+		s.recordProviderUsage(*provider, model.UsageSourceLogsAssistant, 0, nil, time.Since(started), err)
+		return "", usage, err
+	}
+	s.recordProviderUsage(*provider, model.UsageSourceLogsAssistant, 0, result, time.Since(started), nil)
+	usage = assistantUsageSummary{
+		Requests: 1, InputTokens: result.Usage.InputTokens,
+		OutputTokens: result.Usage.OutputTokens, TotalTokens: result.Usage.TotalTokens,
+	}
+	return strings.TrimSpace(result.Content), usage, nil
+}
+
+func isContextLimitError(err error) bool {
+	if err == nil {
+		return false
+	}
+	lower := strings.ToLower(err.Error())
+	if !strings.Contains(lower, "context") && !strings.Contains(lower, "token") && !strings.Contains(lower, "上下文") {
+		return false
+	}
+	return strings.Contains(lower, "length") || strings.Contains(lower, "too long") ||
+		strings.Contains(lower, "too many") || strings.Contains(lower, "maximum") ||
+		strings.Contains(lower, "exceed") || strings.Contains(lower, "limit")
 }
 
 func (s *Server) executeLogsTool(ctx context.Context, state *logsToolState, call ai.ToolCall) string {

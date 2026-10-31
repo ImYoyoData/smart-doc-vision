@@ -235,6 +235,8 @@ func (s *Server) Router() *gin.Engine {
 			auth.GET("/meta/system", s.systemInfo)
 			auth.GET("/system/monitor", s.systemMonitor)
 			auth.GET("/system/config", s.systemConfig)
+			auth.GET("/system/branding", s.getSystemBranding)
+			auth.PUT("/system/branding", s.updateSystemBranding)
 			auth.GET("/system/schema/status", s.schemaStatus)
 			auth.GET("/system/update", s.systemUpdate)
 			auth.PUT("/system/update/auto-check", s.updateAutoCheck)
@@ -309,8 +311,8 @@ func failOrOk(c *gin.Context, status int, data gin.H) {
 
 func (s *Server) systemInfo(c *gin.Context) {
 	ok(c, gin.H{
-		"name":         s.cfg.SiteName,
-		"name_en":      s.cfg.SiteNameEn,
+		"name":         siteInfoPayload(s.cfg)["name"],
+		"name_en":      siteInfoPayload(s.cfg)["name_en"],
 		"logo":         siteInfoPayload(s.cfg)["logo"],
 		"version":      appversion.Version,
 		"redis_db":     s.cfg.RedisDB,

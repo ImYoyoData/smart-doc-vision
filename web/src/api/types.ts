@@ -375,6 +375,12 @@ export interface SystemConfigGroup {
   fields: SystemConfigField[]
 }
 
+export interface SystemBranding {
+  name: string
+  name_en: string
+  logo: string
+}
+
 export interface SystemConfigData {
   version: string
   env_file: string
@@ -787,6 +793,9 @@ export interface LogsAssistantResult {
     output_tokens: number
     total_tokens: number
   }
+  context_tokens: number
+  context_window: number
+  compressed: boolean
   tool_logs?: string[]
 }
 

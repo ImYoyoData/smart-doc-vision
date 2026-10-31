@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 
+	"smartdoc-vision/backend/internal/branding"
 	"smartdoc-vision/backend/internal/catalog"
 	"smartdoc-vision/backend/internal/config"
 	"smartdoc-vision/backend/internal/model"
@@ -46,7 +47,8 @@ func NotifyReviewPending(db *gorm.DB, cipher *security.Cipher, cfg config.Config
 			TaskID:    task.ID,
 		})
 	}
-	return CreateMessages(db, cipher, task.ProjectID, messages, title, body, cfg.SiteName, cfg.SiteURL)
+	settings := branding.Get(cfg)
+	return CreateMessages(db, cipher, task.ProjectID, messages, title, body, settings.Name, cfg.SiteURL)
 }
 
 // CreateMessages is the shared entry point for every in-app message type. It

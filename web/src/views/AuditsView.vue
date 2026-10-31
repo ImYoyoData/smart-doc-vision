@@ -5985,6 +5985,15 @@ onMounted(async () => {
   box-shadow: 0 6px 16px -8px rgba(43, 108, 246, 0.45);
 }
 
+.assistant-header-icon :deep(.n-icon) {
+  display: inline-flex;
+  width: 21px;
+  height: 21px;
+  align-items: center;
+  justify-content: center;
+  font-size: 21px;
+}
+
 .assistant-header-icon :deep(svg) {
   width: 21px;
   height: 21px;
@@ -6056,6 +6065,15 @@ onMounted(async () => {
   background: var(--brand-soft);
   color: var(--brand);
   font-size: 0;
+}
+
+.assistant-avatar :deep(.n-icon) {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
 }
 
 .assistant-avatar :deep(svg) {

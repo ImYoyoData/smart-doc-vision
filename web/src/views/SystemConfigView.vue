@@ -1,29 +1,43 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { NButton, useMessage } from 'naive-ui'
+import { computed, onMounted, reactive, ref } from 'vue'
+import { NButton, NInput, useMessage } from 'naive-ui'
 import {
   CloudDownloadOutline,
+  ChevronDownOutline,
   CloudUploadOutline,
   LinkOutline,
   LockClosedOutline,
+  ColorPaletteOutline,
   RefreshOutline,
+  SaveOutline,
   ServerOutline,
   SettingsOutline,
   ShieldCheckmarkOutline,
   SparklesOutline,
 } from '@vicons/ionicons5'
+import BrandMark from '@/components/BrandMark.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import { systemConfigApi } from '@/api'
 import type { SystemConfigData, SystemConfigGroup } from '@/api/types'
 import { useAuthStore } from '@/stores/auth'
+import { useSiteStore } from '@/stores/site'
 import { useUpdateStore } from '@/stores/update'
 
 const message = useMessage()
 const auth = useAuthStore()
+const site = useSiteStore()
 const update = useUpdateStore()
 const loading = ref(false)
 const data = ref<SystemConfigData | null>(null)
 const errorText = ref('')
+const branding = reactive({ name: '', name_en: '', logo: '' })
+const brandingLoading = ref(false)
+const brandingSaving = ref(false)
+const brandingError = ref('')
+const brandingExpanded = ref(false)
+const logoInput = ref<HTMLInputElement | null>(null)
+const logoPreview = ref('')
+const logoDragging = ref(false)
 
 const groupIcons: Record<string, unknown> = {
   runtime: SettingsOutline,
@@ -44,6 +58,134 @@ function groupIcon(group: SystemConfigGroup) {
   return groupIcons[group.key] || SettingsOutline
 }
 
+async function loadBranding() {
+  if (!auth.can('system:config')) return
+  brandingLoading.value = true
+  brandingError.value = ''
+  try {
+    const data = await systemConfigApi.getBranding()
+    branding.name = data.name || ''
+    branding.name_en = data.name_en || ''
+    branding.logo = data.logo || ''
+    logoPreview.value = site.logo || (data.logo.startsWith('data:') || /^https?:\/\//i.test(data.logo) ? data.logo : '')
+  } catch (error) {
+    brandingError.value = error instanceof Error ? error.message : '加载站点品牌失败'
+  } finally {
+    brandingLoading.value = false
+  }
+}
+
+async function saveBranding() {
+  if (!auth.can('system:config') || brandingSaving.value) return
+  brandingSaving.value = true
+  brandingError.value = ''
+  try {
+    const saved = await systemConfigApi.updateBranding({
+      name: branding.name.trim(),
+      name_en: branding.name_en.trim(),
+      logo: branding.logo.trim(),
+    })
+    branding.name = saved.name
+    branding.name_en = saved.name_en
+    branding.logo = saved.logo
+    await site.load(true)
+    logoPreview.value = site.logo
+    message.success('站点品牌已更新，立即生效')
+  } catch (error) {
+    brandingError.value = error instanceof Error ? error.message : '保存站点品牌失败'
+  } finally {
+    brandingSaving.value = false
+  }
+}
+
+function focusLogoDrop(event: MouseEvent) {
+  ;(event.currentTarget as HTMLElement).focus()
+}
+
+function pickLogo() {
+  if (!brandingLoading.value && !brandingSaving.value) logoInput.value?.click()
+}
+
+function clearLogo() {
+  branding.logo = ''
+  logoPreview.value = ''
+}
+
+function loadLogoImage(source: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const image = new Image()
+    image.onload = () => resolve(image)
+    image.onerror = () => reject(new Error('无法读取该图片，请更换 PNG、JPG、WebP 或 SVG'))
+    image.src = source
+  })
+}
+
+async function processLogo(file: Blob, name = 'logo') {
+  if (file.size > 8 * 1024 * 1024) {
+    brandingError.value = 'Logo 文件不能超过 8MB'
+    return
+  }
+  const isSvg = file.type === 'image/svg+xml' || /\.svg$/i.test(name)
+  if (!file.type.startsWith('image/') && !isSvg) {
+    brandingError.value = '请选择 PNG、JPG、WebP 或 SVG 图片'
+    return
+  }
+  const objectURL = URL.createObjectURL(file)
+  try {
+    const image = await loadLogoImage(objectURL)
+    const size = 256
+    const width = image.naturalWidth || 512
+    const height = image.naturalHeight || 512
+    const scale = Math.max(size / width, size / height)
+    const drawWidth = width * scale
+    const drawHeight = height * scale
+    const canvas = document.createElement('canvas')
+    canvas.width = size
+    canvas.height = size
+    const context = canvas.getContext('2d')
+    if (!context) throw new Error('浏览器不支持图片裁剪')
+    context.clearRect(0, 0, size, size)
+    context.drawImage(image, (size - drawWidth) / 2, (size - drawHeight) / 2, drawWidth, drawHeight)
+    let dataURL = canvas.toDataURL('image/webp', 0.86)
+    if (!dataURL.startsWith('data:image/webp')) dataURL = canvas.toDataURL('image/png')
+    branding.logo = dataURL
+    logoPreview.value = dataURL
+    brandingError.value = ''
+  } catch (error) {
+    brandingError.value = error instanceof Error ? error.message : 'Logo 处理失败'
+  } finally {
+    URL.revokeObjectURL(objectURL)
+  }
+}
+
+function onLogoFileChange(event: Event) {
+  const file = (event.target as HTMLInputElement).files?.[0]
+  if (file) void processLogo(file, file.name)
+  ;(event.target as HTMLInputElement).value = ''
+}
+
+function onLogoDrop(event: DragEvent) {
+  logoDragging.value = false
+  const file = event.dataTransfer?.files?.[0]
+  if (file) void processLogo(file, file.name)
+}
+
+function onLogoPaste(event: ClipboardEvent) {
+  const items = Array.from(event.clipboardData?.items || [])
+  const fileItem = items.find((item) => item.kind === 'file' && item.type.startsWith('image/'))
+  if (fileItem) {
+    const file = fileItem.getAsFile()
+    if (file) {
+      void processLogo(file, file.name)
+      return
+    }
+  }
+  const text = event.clipboardData?.getData('text/plain') || ''
+  if (/<svg[\s>]/i.test(text)) {
+    void processLogo(new Blob([text], { type: 'image/svg+xml' }), 'pasted-logo.svg')
+  }
+}
+
 async function load() {
   loading.value = true
   errorText.value = ''
@@ -57,7 +199,10 @@ async function load() {
   }
 }
 
-onMounted(load)
+onMounted(() => {
+  void load()
+  void loadBranding()
+})
 </script>
 
 <template>
@@ -119,6 +264,79 @@ onMounted(load)
           <strong class="mono">{{ runtimeValue('WORKER_COUNT') }}</strong>
         </div>
       </div>
+
+      <section v-if="auth.can('system:config')" class="branding-editor">
+        <div class="branding-head" role="button" tabindex="0" @click="brandingExpanded = !brandingExpanded" @keydown.enter.prevent="brandingExpanded = !brandingExpanded">
+          <span class="config-icon"><ColorPaletteOutline /></span>
+          <div class="branding-heading">
+            <h3>站点品牌</h3>
+            <p>在线修改网站名称和 Logo，保存后立即生效；配置保存在 <code>data/branding.json</code>，无需重启。</p>
+            <div class="branding-current">
+              <BrandMark :size="30" />
+              <strong>{{ site.displayName }}</strong>
+              <span>{{ site.nameEn }}</span>
+              <small>{{ site.logo ? '自定义 Logo' : '内置图标' }}</small>
+            </div>
+          </div>
+          <span class="branding-badge">ONLINE</span>
+          <button class="branding-toggle" type="button" :title="brandingExpanded ? '收起' : '展开编辑'" @click.stop="brandingExpanded = !brandingExpanded">
+            <ChevronDownOutline :class="{ rotated: brandingExpanded }" />
+          </button>
+        </div>
+        <div v-if="brandingExpanded" class="branding-body">
+        <div class="branding-form">
+          <label>
+            <span>网站名称</span>
+            <n-input v-model:value="branding.name" maxlength="64" placeholder="例如 智审图档" :disabled="brandingLoading" />
+          </label>
+          <label>
+            <span>英文名称</span>
+            <n-input v-model:value="branding.name_en" maxlength="64" placeholder="例如 SmartDoc Vision" :disabled="brandingLoading" />
+          </label>
+          <label class="branding-logo-field">
+            <span>Logo</span>
+            <div
+              class="logo-drop"
+              :class="{ dragging: logoDragging, 'has-logo': logoPreview }"
+              tabindex="0"
+              @click="focusLogoDrop"
+              @dragover.prevent="logoDragging = true"
+              @dragleave.prevent="logoDragging = false"
+              @drop.prevent="onLogoDrop"
+              @paste.prevent="onLogoPaste"
+            >
+              <img v-if="logoPreview" :src="logoPreview" alt="站点 Logo 预览" />
+              <div v-else class="logo-placeholder">
+                <CloudUploadOutline />
+                <strong>上传、拖入或粘贴 Logo</strong>
+                <span>PNG / JPG / WebP / SVG · 自动居中裁剪 1:1 · 压缩到 256×256</span>
+                <button type="button" class="logo-choose" @click.stop="pickLogo">选择图片</button>
+              </div>
+              <template v-if="logoPreview">
+                <button type="button" class="logo-clear" title="移除 Logo" @click.stop="clearLogo">移除</button>
+                <button type="button" class="logo-replace" @click.stop="pickLogo">更换</button>
+              </template>
+            </div>
+            <input ref="logoInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml" hidden @change="onLogoFileChange" />
+          </label>
+        </div>
+        <div class="branding-preview">
+          <BrandMark :size="46" />
+          <div>
+            <strong>{{ branding.name || '未填写' }}</strong>
+            <span>{{ branding.name_en || '未填写英文名称' }}</span>
+          </div>
+          <small>名称留空使用平台默认名称；Logo 留空使用内置图标。上传或粘贴后会自动裁剪为 1:1 并压缩。修改后请刷新其他已打开页面。</small>
+        </div>
+        <div v-if="brandingError" class="branding-error">{{ brandingError }}</div>
+        <div class="branding-actions">
+          <n-button type="primary" :loading="brandingSaving" :disabled="brandingLoading" @click="saveBranding">
+            <template #icon><SaveOutline /></template>
+            保存品牌设置
+          </n-button>
+        </div>
+        </div>
+      </section>
 
       <div class="config-grid">
         <section v-for="group in data.groups" :key="group.key" class="config-card">
@@ -270,6 +488,297 @@ onMounted(load)
   font-size: 13px;
 }
 
+.branding-editor {
+  margin-bottom: 16px;
+  padding: 16px 18px;
+  border: 1px solid var(--brand-border);
+  border-radius: 14px;
+  background: linear-gradient(130deg, var(--brand-softer), var(--card));
+}
+
+.branding-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+}
+
+.branding-head {
+  cursor: pointer;
+}
+
+.branding-heading {
+  min-width: 0;
+  flex: 1;
+}
+
+.branding-current {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 7px;
+  color: var(--muted-light);
+  font-size: 9px;
+}
+
+.branding-current strong {
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.branding-current span {
+  color: var(--muted);
+}
+
+.branding-current small {
+  color: var(--brand);
+  font-size: 8.5px;
+}
+
+.branding-toggle {
+  display: flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--muted);
+  cursor: pointer;
+  flex: none;
+}
+
+.branding-toggle:hover {
+  border-color: var(--brand-border);
+  color: var(--brand);
+}
+
+.branding-toggle :deep(svg) {
+  width: 15px;
+  height: 15px;
+  transition: transform 0.18s ease;
+}
+
+.branding-toggle :deep(svg.rotated) {
+  transform: rotate(180deg);
+}
+
+.branding-body {
+  animation: branding-expand 0.18s ease;
+}
+
+@keyframes branding-expand {
+  from { opacity: 0; transform: translateY(-3px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.branding-head h3 {
+  margin: 0 0 3px;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.branding-head p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10.5px;
+  line-height: 1.6;
+}
+
+.branding-head code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--surface-strong);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 9.5px;
+}
+
+.branding-badge {
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--brand-soft);
+  color: var(--brand-strong);
+  font-family: var(--mono);
+  font-size: 8px;
+  font-weight: 650;
+  flex: none;
+}
+
+.logo-drop {
+  position: relative;
+  display: flex;
+  min-height: 132px;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 14px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 12px;
+  background: var(--surface-soft);
+  cursor: pointer;
+  transition: border-color 0.16s ease, background 0.16s ease;
+}
+
+.logo-drop:hover,
+.logo-drop.dragging {
+  border-color: var(--brand-border);
+  background: var(--brand-softer);
+}
+
+.logo-drop img {
+  display: block;
+  width: 96px;
+  height: 96px;
+  border-radius: 18px;
+  object-fit: cover;
+  box-shadow: var(--shadow-sm);
+}
+
+.logo-placeholder {
+  display: flex;
+  align-items: center;
+  flex-direction: column;
+  gap: 5px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.logo-placeholder :deep(svg) {
+  width: 24px;
+  height: 24px;
+  color: var(--brand);
+}
+
+.logo-placeholder strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.logo-placeholder span {
+  color: var(--muted-light);
+  font-size: 9.5px;
+  line-height: 1.5;
+}
+
+.logo-choose {
+  margin-top: 3px;
+  padding: 4px 9px;
+  border: 1px solid var(--brand-border);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--brand-strong);
+  font-size: 9.5px;
+  cursor: pointer;
+}
+
+.logo-clear,
+.logo-replace {
+  position: absolute;
+  top: 8px;
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--muted);
+  font-size: 9px;
+  cursor: pointer;
+}
+
+.logo-clear {
+  right: 8px;
+}
+
+.logo-replace {
+  right: 48px;
+}
+
+.logo-clear:hover {
+  border-color: var(--red-border);
+  color: var(--red);
+}
+
+.logo-replace:hover {
+  border-color: var(--brand-border);
+  color: var(--brand);
+}
+
+.branding-form {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 15px;
+}
+
+.branding-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.branding-form label > span {
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: 550;
+}
+
+.branding-logo-field {
+  grid-column: 1 / -1;
+}
+
+.branding-preview {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 13px;
+  padding-top: 13px;
+  border-top: 1px solid var(--border);
+}
+
+.branding-preview > div {
+  min-width: 0;
+  flex: 1;
+}
+
+.branding-preview strong {
+  display: block;
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.branding-preview span {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted-light);
+  font-size: 9px;
+}
+
+.branding-preview small {
+  max-width: 330px;
+  color: var(--muted-light);
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.branding-error {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--red-border);
+  border-radius: 8px;
+  background: var(--red-soft);
+  color: var(--red);
+  font-size: 10.5px;
+}
+
+.branding-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
 .config-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
@@ -416,7 +925,7 @@ onMounted(load)
 }
 
 @media (max-width: 720px) {
-  .config-grid {
+.config-grid {
     grid-template-columns: 1fr;
   }
 
