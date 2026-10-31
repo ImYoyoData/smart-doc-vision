@@ -56,6 +56,22 @@ const confirmModal = ref(false)
 const databaseAck = ref(false)
 
 const stepTitles = ['介绍与协议', '数据库', 'Redis', '文件存储', '管理员', '检测并安装']
+const stepDescriptions = [
+  '阅读并同意使用协议',
+  'MySQL 或 PostgreSQL',
+  '队列与缓存',
+  '本地目录或对象存储',
+  '创建首个账号',
+  '检测环境并写入配置',
+]
+
+function onStepChange(current: number) {
+  if (checking.value || installing.value) return
+  const target = current - 1
+  if (target < 0 || target > activeStep.value) return
+  stepError.value = ''
+  activeStep.value = target
+}
 
 const form = reactive({
   database: {
@@ -467,8 +483,19 @@ onMounted(initialize)
       </template>
 
       <template v-else>
-        <n-steps :current="activeStep + 1" size="small" class="install-steps">
-          <n-step v-for="title in stepTitles" :key="title" :title="title" />
+        <n-steps
+          :current="activeStep + 1"
+          size="small"
+          class="install-steps"
+          @update:current="onStepChange"
+        >
+          <n-step
+            v-for="(title, index) in stepTitles"
+            :key="title"
+            :title="title"
+            :description="stepDescriptions[index]"
+            :disabled="index > activeStep || checking || installing"
+          />
         </n-steps>
 
         <section class="install-card">
@@ -982,6 +1009,12 @@ onMounted(initialize)
   background: var(--card);
 }
 
+.install-steps :deep(.n-step-description) {
+  margin-top: 3px;
+  color: var(--muted-light);
+  font-size: 10px;
+}
+
 .install-card {
   padding: 24px;
   border: 1px solid var(--border);
@@ -1466,6 +1499,10 @@ onMounted(initialize)
 
   .install-steps {
     overflow-x: auto;
+  }
+
+  .install-steps :deep(.n-step-description) {
+    display: none;
   }
 }
 </style>
