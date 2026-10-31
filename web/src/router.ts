@@ -5,12 +5,6 @@ import { useSchemaStore } from '@/stores/schema'
 
 const routes: RouteRecordRaw[] = [
   {
-    path: '/install',
-    name: 'install',
-    component: () => import('@/views/InstallView.vue'),
-    meta: { public: true, title: '安装系统' },
-  },
-  {
     path: '/schema-upgrade',
     name: 'schema-upgrade',
     component: () => import('@/views/SchemaUpgradeView.vue'),
@@ -25,13 +19,16 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/',
     component: () => import('@/layouts/AdminLayout.vue'),
-    redirect: '/dashboard',
     children: [
       {
-        path: 'dashboard',
+        path: '',
         name: 'dashboard',
         component: () => import('@/views/DashboardView.vue'),
         meta: { title: '仪表盘', section: '工作台', menu: 'dashboard' },
+      },
+      {
+        path: 'dashboard',
+        redirect: '/',
       },
       {
         path: 'tasks',
@@ -152,15 +149,12 @@ router.beforeEach(async (to) => {
     await install.load()
   }
   if (install.isInstallerState()) {
-    if (to.name !== 'install') return { name: 'install' }
-    document.title = `${String(to.meta.title || '')} · 智审图档`
+    if (to.path !== '/') return { path: '/' }
+    document.title = '安装系统 · 智审图档'
     return true
   }
   const auth = useAuthStore()
   auth.hydrate()
-  if (to.name === 'install') {
-    return auth.isAuthenticated ? { path: '/dashboard' } : { path: '/login' }
-  }
   if (!to.meta.public && !auth.isAuthenticated) {
     return { path: '/login', query: { redirect: to.fullPath } }
   }

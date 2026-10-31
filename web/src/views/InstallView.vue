@@ -444,7 +444,6 @@ onMounted(initialize)
 
             <div class="system-grid">
               <div class="system-item"><span>操作系统</span><strong>{{ status?.system.os }} / {{ status?.system.arch }}</strong></div>
-              <div class="system-item"><span>Go 运行时</span><strong>{{ status?.system.go_version }}</strong></div>
               <div class="system-item"><span>运行目录</span><strong class="mono">{{ status?.system.working_dir }}</strong></div>
               <div class="system-item"><span>默认本地存储</span><strong class="mono">{{ status?.system.local_storage_dir }}</strong></div>
               <div class="system-item"><span>配置文件</span><strong class="mono">{{ status?.system.env_file }}</strong></div>

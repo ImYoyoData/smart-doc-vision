@@ -58,7 +58,6 @@ export interface InstallSystemInfo {
   version: string
   os: string
   arch: string
-  go_version: string
   working_dir: string
   env_file: string
   default_env_path: string

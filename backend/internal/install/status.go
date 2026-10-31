@@ -19,7 +19,6 @@ type SystemInfo struct {
 	Version         string `json:"version"`
 	OS              string `json:"os"`
 	Arch            string `json:"arch"`
-	GoVersion       string `json:"go_version"`
 	WorkingDir      string `json:"working_dir"`
 	EnvFile         string `json:"env_file"`
 	DefaultEnvPath  string `json:"default_env_path"`
@@ -66,7 +65,6 @@ func BuildStatus(cfg config.Config, state State) Status {
 			Version:         appversion.Version,
 			OS:              runtime.GOOS,
 			Arch:            runtime.GOARCH,
-			GoVersion:       runtime.Version(),
 			WorkingDir:      wd,
 			EnvFile:         envFile,
 			DefaultEnvPath:  config.DefaultEnvPath(),
