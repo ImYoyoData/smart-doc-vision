@@ -24,6 +24,7 @@ import {
 } from '@vicons/ionicons5'
 import PageHeader from '@/components/PageHeader.vue'
 import PageSkeleton from '@/components/PageSkeleton.vue'
+import { useInitialLoad } from '@/composables/useInitialLoad'
 import StatusTag from '@/components/StatusTag.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import { auditApi, userApi } from '@/api'
@@ -37,6 +38,7 @@ const auth = useAuthStore()
 const message = useMessage()
 const dialog = useDialog()
 const loading = ref(false)
+const { showSkeleton } = useInitialLoad(loading)
 const saving = ref(false)
 const users = ref<User[]>([])
 const audits = ref<Audit[]>([])
@@ -407,7 +409,7 @@ onMounted(load)
         </n-button>
       </template>
     </PageHeader>
-    <PageSkeleton v-if="loading && !users.length" variant="table" />
+    <PageSkeleton v-if="showSkeleton" variant="table" />
 
     <div class="security-banner">
       <ShieldCheckmarkOutline />

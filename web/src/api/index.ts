@@ -43,6 +43,7 @@ import type {
   TriggerSource,
   TriggerUpdate,
   User,
+  WatermarkSettings,
 } from './types'
 
 export const authApi = {
@@ -159,6 +160,8 @@ export const systemConfigApi = {
   getBranding: () => get<SystemBranding>('/system/branding'),
   updateBranding: (payload: { name: string; name_en: string; logo: string }) =>
     put<SystemBranding>('/system/branding', payload),
+  getWatermark: () => get<WatermarkSettings>('/system/watermark'),
+  updateWatermark: (payload: WatermarkSettings) => put<WatermarkSettings>('/system/watermark', payload),
 }
 
 export const updateApi = {

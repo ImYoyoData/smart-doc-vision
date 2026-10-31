@@ -375,10 +375,31 @@ export interface SystemConfigGroup {
   fields: SystemConfigField[]
 }
 
+export interface WatermarkSettings {
+  enabled: boolean
+  show_username: boolean
+  show_display_name: boolean
+  show_email: boolean
+  font_size: number
+  opacity: number
+  density: number
+}
+
+export const DEFAULT_WATERMARK: WatermarkSettings = {
+  enabled: true,
+  show_username: true,
+  show_display_name: false,
+  show_email: true,
+  font_size: 12,
+  opacity: 9,
+  density: 6,
+}
+
 export interface SystemBranding {
   name: string
   name_en: string
   logo: string
+  watermark?: WatermarkSettings
 }
 
 export interface SystemConfigData {

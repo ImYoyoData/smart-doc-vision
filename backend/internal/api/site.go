@@ -40,10 +40,11 @@ func siteInfoPayload(cfg config.Config) gin.H {
 		}
 	}
 	return gin.H{
-		"name":    settings.Name,
-		"name_en": settings.NameEn,
-		"logo":    logo,
-		"version": appversion.Version,
+		"name":      settings.Name,
+		"name_en":   settings.NameEn,
+		"logo":      logo,
+		"watermark": settings.Watermark,
+		"version":   appversion.Version,
 	}
 }
 

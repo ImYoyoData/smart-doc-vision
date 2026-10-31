@@ -21,6 +21,7 @@ import {
 } from '@vicons/ionicons5'
 import PageHeader from '@/components/PageHeader.vue'
 import PageSkeleton from '@/components/PageSkeleton.vue'
+import { useInitialLoad } from '@/composables/useInitialLoad'
 import StatusTag from '@/components/StatusTag.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import LogsAssistantModal from '@/components/LogsAssistantModal.vue'
@@ -33,6 +34,7 @@ const workspace = useWorkspaceStore()
 const message = useMessage()
 const logs = ref<AuditLog[]>([])
 const loading = ref(false)
+const { showSkeleton } = useInitialLoad(loading)
 const total = ref(0)
 const page = ref(1)
 const pageSize = ref(20)
@@ -332,7 +334,7 @@ onMounted(load)
         </n-button>
       </template>
     </PageHeader>
-    <PageSkeleton v-if="loading && !logs.length" variant="table" />
+    <PageSkeleton v-if="showSkeleton" variant="table" />
 
     <div class="retention-banner">
       <ShieldCheckmarkOutline />

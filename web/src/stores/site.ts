@@ -1,10 +1,12 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
+import { DEFAULT_WATERMARK, type WatermarkSettings } from '@/api/types'
 
 type SiteResponse = {
   name?: string
   name_en?: string
   logo?: string
+  watermark?: WatermarkSettings
 }
 
 const DEFAULT_NAME = '智审图档'
@@ -25,6 +27,7 @@ export const useSiteStore = defineStore('site', () => {
   const name = ref(DEFAULT_NAME)
   const nameEn = ref(DEFAULT_NAME_EN)
   const logo = ref('')
+  const watermark = ref<WatermarkSettings>({ ...DEFAULT_WATERMARK })
   const checked = ref(false)
   let pending: Promise<void> | null = null
 
@@ -49,6 +52,7 @@ export const useSiteStore = defineStore('site', () => {
           if (data?.name?.trim()) name.value = data.name.trim()
           if (data?.name_en?.trim()) nameEn.value = data.name_en.trim()
           logo.value = (data?.logo || '').trim()
+          if (data?.watermark) watermark.value = { ...DEFAULT_WATERMARK, ...data.watermark }
           applyFavicon(logo.value)
         }
       } catch {
@@ -61,5 +65,5 @@ export const useSiteStore = defineStore('site', () => {
     return pending
   }
 
-  return { name, nameEn, logo, checked, displayName, load }
+  return { name, nameEn, logo, watermark, checked, displayName, load }
 })

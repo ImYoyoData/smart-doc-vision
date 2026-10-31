@@ -21,6 +21,7 @@ import {
 import dayjs from 'dayjs'
 import PageHeader from '@/components/PageHeader.vue'
 import PageSkeleton from '@/components/PageSkeleton.vue'
+import { useInitialLoad } from '@/composables/useInitialLoad'
 import EmptyState from '@/components/EmptyState.vue'
 import MessageDetailModal from '@/components/MessageDetailModal.vue'
 import { messageApi, notificationPreferenceApi } from '@/api'
@@ -35,6 +36,7 @@ const items = ref<InAppMessage[]>([])
 const total = ref(0)
 const unread = ref(0)
 const loading = ref(false)
+const { showSkeleton } = useInitialLoad(loading)
 const page = ref(1)
 const pageSize = 20
 const keyword = ref('')
@@ -229,7 +231,7 @@ onMounted(load)
         <span class="message-count">共 {{ total }} 条 · 全局未读 {{ unread }}</span>
       </div>
 
-      <div v-if="loading && !items.length" class="message-page-loading"><PageSkeleton variant="table" :rows="6" /></div>
+      <div v-if="showSkeleton" class="message-page-loading"><PageSkeleton variant="table" :rows="6" /></div>
       <div v-else-if="items.length" class="message-table">
         <button
           v-for="item in items"

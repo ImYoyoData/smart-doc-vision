@@ -51,6 +51,7 @@ import {
 import AiContextUsage from '@/components/AiContextUsage.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import PageSkeleton from '@/components/PageSkeleton.vue'
+import { useInitialLoad } from '@/composables/useInitialLoad'
 import StatusTag from '@/components/StatusTag.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import TaskSubmitModal from '@/components/TaskSubmitModal.vue'
@@ -74,6 +75,7 @@ const router = useRouter()
 const message = useMessage()
 const dialog = useDialog()
 const loading = ref(false)
+const { showSkeleton } = useInitialLoad(loading)
 const saving = ref(false)
 const audits = ref<Audit[]>([])
 const providers = ref<Provider[]>([])
@@ -2287,7 +2289,7 @@ onMounted(async () => {
         </n-button>
       </template>
     </PageHeader>
-    <PageSkeleton v-if="loading && !audits.length" variant="cards" />
+    <PageSkeleton v-if="showSkeleton" variant="cards" />
 
     <div class="audit-summary">
       <div>

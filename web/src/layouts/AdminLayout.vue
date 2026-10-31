@@ -56,6 +56,7 @@ import { useUpdateStore } from '@/stores/update'
 import { messageApi, metaApi } from '@/api'
 import type { InAppMessage } from '@/api/types'
 import { useReviewStore } from '@/stores/review'
+import { useWatermarkPreviewStore } from '@/stores/watermarkPreview'
 
 const route = useRoute()
 const router = useRouter()
@@ -64,6 +65,7 @@ const auth = useAuthStore()
 const workspace = useWorkspaceStore()
 const site = useSiteStore()
 const review = useReviewStore()
+const watermarkPreview = useWatermarkPreviewStore()
 const theme = useThemeStore()
 const update = useUpdateStore()
 const sidebarOpen = ref(false)
@@ -73,17 +75,26 @@ const isMobile = ref(window.matchMedia('(max-width: 960px)').matches)
 let mobileMedia: MediaQueryList | null = null
 const menuCollapsed = computed(() => sidebarCollapsed.value && !isMobile.value)
 const activeMenuKey = computed(() => (route.name ? String(route.name) : ''))
+const effectiveWatermark = computed(() => watermarkPreview.settings ?? site.watermark)
 const watermarkLines = computed(() => {
-  const username = auth.user?.username || auth.displayName || ''
-  const email = auth.user?.email?.trim() || ''
-  return [username, email].filter(Boolean)
+  const config = effectiveWatermark.value
+  const lines: string[] = []
+  if (config.show_display_name) {
+    const displayName = auth.user?.display_name?.trim() || auth.user?.username || ''
+    if (displayName) lines.push(displayName)
+  }
+  if (config.show_username && auth.user?.username) lines.push(auth.user.username)
+  if (config.show_email && auth.user?.email) lines.push(auth.user.email.trim())
+  return [...new Set(lines.map((line) => line.trim()).filter(Boolean))]
 })
+const watermarkEnabled = computed(() => effectiveWatermark.value.enabled && watermarkLines.value.length > 0)
 const watermarkContent = computed(() => watermarkLines.value.join('\n'))
 const watermarkLayout = computed(() => {
+  const config = effectiveWatermark.value
+  const fontSize = Math.min(24, Math.max(10, Number(config.font_size) || 12))
+  const lineHeight = Math.round(fontSize * 1.5)
   const lines = watermarkLines.value.length ? watermarkLines.value : ['']
-  const fontSize = 12
-  const lineHeight = 18
-  const measured = measureWatermarkWidth(lines, fontSize)
+  const measured = measureWatermarkWidth(lines, fontSize, lineHeight)
   const textWidth = Math.max(140, measured)
   const textHeight = lines.length * lineHeight
   const xOffset = 10
@@ -95,18 +106,21 @@ const watermarkLayout = computed(() => {
   const yOffset = Math.ceil((Math.abs(sin) * (xOffset + textWidth)) / cos) + 6
   const width = Math.ceil(cos * (xOffset + textWidth) - sin * (yOffset + textHeight)) + 8
   const height = Math.ceil(sin * xOffset + cos * (yOffset + textHeight)) + 8
-  return { width, height, xOffset, yOffset }
+  const density = Math.min(10, Math.max(1, Number(config.density) || 6))
+  const gap = Math.max(4, 22 - density * 2)
+  return { width, height, xOffset, yOffset, fontSize, lineHeight, gap }
 })
-const watermarkColor = computed(() =>
-  theme.isDark ? 'rgba(255, 255, 255, 0.10)' : 'rgba(15, 23, 42, 0.09)',
-)
+const watermarkColor = computed(() => {
+  const opacity = Math.min(30, Math.max(3, Number(effectiveWatermark.value.opacity) || 9)) / 100
+  return theme.isDark ? `rgba(255, 255, 255, ${opacity})` : `rgba(15, 23, 42, ${opacity})`
+})
 
-function measureWatermarkWidth(lines: string[], fontSize: number): number {
+function measureWatermarkWidth(lines: string[], fontSize: number, lineHeight: number): number {
   const fallback = Math.max(...lines.map((line) => line.length)) * fontSize
   if (typeof document === 'undefined') return fallback
   const context = document.createElement('canvas').getContext('2d')
   if (!context) return fallback
-  context.font = `500 ${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif`
+  context.font = `500 ${fontSize}px/${lineHeight}px -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif`
   return Math.ceil(Math.max(...lines.map((line) => context.measureText(line).width)))
 }
 const githubURL = 'https://github.com/ImYoyoData/smart-doc-vision'
@@ -416,17 +430,18 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
 <template>
   <div class="app-shell" :class="{ 'sidebar-collapsed': menuCollapsed }">
     <n-watermark
+      v-if="watermarkEnabled"
       fullscreen
       :content="watermarkContent"
-      :font-size="12"
-      :line-height="18"
+      :font-size="watermarkLayout.fontSize"
+      :line-height="watermarkLayout.lineHeight"
       :font-weight="500"
       :font-color="watermarkColor"
       :rotate="-18"
       :width="watermarkLayout.width"
       :height="watermarkLayout.height"
-      :x-gap="10"
-      :y-gap="10"
+      :x-gap="watermarkLayout.gap"
+      :y-gap="watermarkLayout.gap"
       :x-offset="watermarkLayout.xOffset"
       :y-offset="watermarkLayout.yOffset"
       :z-index="9000"

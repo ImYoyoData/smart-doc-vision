@@ -13,6 +13,7 @@ import {
 } from '@vicons/ionicons5'
 import PageHeader from '@/components/PageHeader.vue'
 import PageSkeleton from '@/components/PageSkeleton.vue'
+import { useInitialLoad } from '@/composables/useInitialLoad'
 import MetricCard from '@/components/MetricCard.vue'
 import EChart from '@/components/EChart.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -30,6 +31,7 @@ const message = useMessage()
 const data = ref<AnalyticsData | null>(null)
 const audits = ref<Audit[]>([])
 const loading = ref(false)
+const { showSkeleton } = useInitialLoad(loading)
 const initialProject = Number(route.query.project_id || 0) || workspace.currentProjectId || 0
 const projectFilter = ref(initialProject)
 const auditFilter = ref(Number(route.query.audit_id || 0) || 0)
@@ -348,7 +350,7 @@ onMounted(async () => {
         </n-button>
       </template>
     </PageHeader>
-    <PageSkeleton v-if="loading && !data" variant="dashboard" />
+    <PageSkeleton v-if="showSkeleton" variant="dashboard" />
 
     <section class="filter-panel">
       <div class="filter-group">

@@ -30,6 +30,7 @@ import {
 } from '@vicons/ionicons5'
 import PageHeader from '@/components/PageHeader.vue'
 import PageSkeleton from '@/components/PageSkeleton.vue'
+import { useInitialLoad } from '@/composables/useInitialLoad'
 import StatusTag from '@/components/StatusTag.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import ProjectSecretsModal from '@/components/ProjectSecretsModal.vue'
@@ -46,6 +47,7 @@ const dialog = useDialog()
 const route = useRoute()
 const router = useRouter()
 const loading = ref(false)
+const { showSkeleton } = useInitialLoad(loading)
 const saving = ref(false)
 const modalShow = ref(false)
 const editing = ref<Project | null>(null)
@@ -303,7 +305,7 @@ onMounted(async () => {
         </n-button>
       </template>
     </PageHeader>
-    <PageSkeleton v-if="loading && !workspace.projects.length" variant="cards" />
+    <PageSkeleton v-if="showSkeleton" variant="cards" />
 
     <div class="project-summary">
       <div class="summary-item">

@@ -12,6 +12,7 @@ import {
 } from '@vicons/ionicons5'
 import PageHeader from '@/components/PageHeader.vue'
 import PageSkeleton from '@/components/PageSkeleton.vue'
+import { useInitialLoad } from '@/composables/useInitialLoad'
 import StatusTag from '@/components/StatusTag.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import SliderCaptcha from '@/components/SliderCaptcha.vue'
@@ -31,6 +32,7 @@ const pageSize = ref(20)
 const objectType = ref<string | null>(null)
 const keyword = ref('')
 const loading = ref(false)
+const { showSkeleton } = useInitialLoad(loading)
 const loadError = ref('')
 const restoringId = ref<string | null>(null)
 const purgingId = ref<string | null>(null)
@@ -395,7 +397,7 @@ onMounted(load)
         </n-button>
       </template>
     </PageHeader>
-    <PageSkeleton v-if="loading && !items.length" variant="table" />
+    <PageSkeleton v-if="showSkeleton" variant="table" />
 
     <div class="recycle-notice">
       <div class="notice-icon"><ArchiveOutline /></div>

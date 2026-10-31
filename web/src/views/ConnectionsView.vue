@@ -22,6 +22,7 @@ import {
 } from '@vicons/ionicons5'
 import PageHeader from '@/components/PageHeader.vue'
 import PageSkeleton from '@/components/PageSkeleton.vue'
+import { useInitialLoad } from '@/composables/useInitialLoad'
 import EmptyState from '@/components/EmptyState.vue'
 import { redisConnectionApi } from '@/api'
 import type { RedisConnection } from '@/api/types'
@@ -31,6 +32,7 @@ const workspace = useWorkspaceStore()
 const message = useMessage()
 const dialog = useDialog()
 const loading = ref(false)
+const { showSkeleton } = useInitialLoad(loading)
 const saving = ref(false)
 const testingId = ref<number | null>(null)
 const connections = ref<RedisConnection[]>([])
@@ -237,7 +239,7 @@ onMounted(() => {
       />
     </div>
 
-    <div v-else-if="loading && !connections.length" class="panel">
+    <div v-else-if="showSkeleton" class="panel">
       <PageSkeleton variant="cards" :cards="4" />
     </div>
 

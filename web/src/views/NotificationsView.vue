@@ -26,6 +26,7 @@ import {
 } from '@vicons/ionicons5'
 import PageHeader from '@/components/PageHeader.vue'
 import PageSkeleton from '@/components/PageSkeleton.vue'
+import { useInitialLoad } from '@/composables/useInitialLoad'
 import EmptyState from '@/components/EmptyState.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { notificationApi } from '@/api'
@@ -41,6 +42,7 @@ const dialog = useDialog()
 
 const channels = ref<NotificationChannel[]>([])
 const loading = ref(false)
+const { showSkeleton } = useInitialLoad(loading)
 const modalShow = ref(false)
 const typePickerShow = ref(false)
 const editing = ref<NotificationChannel | null>(null)
@@ -359,7 +361,7 @@ onMounted(load)
         </n-button>
       </template>
     </PageHeader>
-    <PageSkeleton v-if="loading && !channels.length" variant="cards" />
+    <PageSkeleton v-if="showSkeleton" variant="cards" />
 
     <div class="channel-banner">
       <span class="banner-icon"><MailOutline /></span>

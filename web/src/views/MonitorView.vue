@@ -14,6 +14,7 @@ import {
 } from '@vicons/ionicons5'
 import PageHeader from '@/components/PageHeader.vue'
 import PageSkeleton from '@/components/PageSkeleton.vue'
+import { useInitialLoad } from '@/composables/useInitialLoad'
 import MetricCard from '@/components/MetricCard.vue'
 import EChart from '@/components/EChart.vue'
 import EmptyState from '@/components/EmptyState.vue'
@@ -24,6 +25,7 @@ import type { MonitorData } from '@/api/types'
 const message = useMessage()
 const data = ref<MonitorData | null>(null)
 const loading = ref(false)
+const { showSkeleton } = useInitialLoad(loading)
 const range = ref('1h')
 const lastUpdated = ref('')
 
@@ -286,7 +288,7 @@ onBeforeUnmount(() => {
         </n-button>
       </template>
     </PageHeader>
-    <PageSkeleton v-if="loading && !data" variant="dashboard" />
+    <PageSkeleton v-if="showSkeleton" variant="dashboard" />
 
     <section class="monitor-metrics">
       <MetricCard

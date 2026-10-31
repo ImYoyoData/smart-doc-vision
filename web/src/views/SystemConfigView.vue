@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
-import { NButton, NInput, useMessage } from 'naive-ui'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { NButton, NInput, NSlider, NSwitch, useMessage } from 'naive-ui'
 import {
   CloudDownloadOutline,
   ChevronDownOutline,
@@ -8,6 +8,7 @@ import {
   LinkOutline,
   LockClosedOutline,
   ColorPaletteOutline,
+  EyeOutline,
   RefreshOutline,
   SaveOutline,
   ServerOutline,
@@ -18,17 +19,21 @@ import {
 import BrandMark from '@/components/BrandMark.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import PageSkeleton from '@/components/PageSkeleton.vue'
+import { useInitialLoad } from '@/composables/useInitialLoad'
 import { systemConfigApi } from '@/api'
-import type { SystemConfigData, SystemConfigGroup } from '@/api/types'
+import { DEFAULT_WATERMARK, type SystemConfigData, type SystemConfigGroup, type WatermarkSettings } from '@/api/types'
 import { useAuthStore } from '@/stores/auth'
 import { useSiteStore } from '@/stores/site'
 import { useUpdateStore } from '@/stores/update'
+import { useWatermarkPreviewStore } from '@/stores/watermarkPreview'
 
 const message = useMessage()
 const auth = useAuthStore()
 const site = useSiteStore()
 const update = useUpdateStore()
+const watermarkPreview = useWatermarkPreviewStore()
 const loading = ref(false)
+const { showSkeleton } = useInitialLoad(loading)
 const data = ref<SystemConfigData | null>(null)
 const errorText = ref('')
 const branding = reactive({ name: '', name_en: '', logo: '' })
@@ -36,6 +41,21 @@ const brandingLoading = ref(false)
 const brandingSaving = ref(false)
 const brandingError = ref('')
 const brandingExpanded = ref(false)
+const watermarkExpanded = ref(false)
+const watermarkSaving = ref(false)
+const watermarkError = ref('')
+const watermarkForm = reactive<WatermarkSettings>({ ...DEFAULT_WATERMARK })
+watch(
+  [watermarkForm, watermarkExpanded],
+  () => {
+    if (watermarkExpanded.value && auth.can('system:config')) {
+      watermarkPreview.update({ ...watermarkForm })
+    } else {
+      watermarkPreview.clear()
+    }
+  },
+  { deep: true },
+)
 const logoInput = ref<HTMLInputElement | null>(null)
 const logoPreview = ref('')
 const logoDragging = ref(false)
@@ -68,6 +88,7 @@ async function loadBranding() {
     branding.name = data.name || ''
     branding.name_en = data.name_en || ''
     branding.logo = data.logo || ''
+    if (data.watermark) Object.assign(watermarkForm, { ...DEFAULT_WATERMARK, ...data.watermark })
     logoPreview.value = site.logo || (data.logo.startsWith('data:') || /^https?:\/\//i.test(data.logo) ? data.logo : '')
   } catch (error) {
     brandingError.value = error instanceof Error ? error.message : '加载站点品牌失败'
@@ -96,6 +117,23 @@ async function saveBranding() {
     brandingError.value = error instanceof Error ? error.message : '保存站点品牌失败'
   } finally {
     brandingSaving.value = false
+  }
+}
+
+async function saveWatermark() {
+  if (!auth.can('system:config') || watermarkSaving.value) return
+  watermarkSaving.value = true
+  watermarkError.value = ''
+  try {
+    const saved = await systemConfigApi.updateWatermark({ ...watermarkForm })
+    Object.assign(watermarkForm, { ...DEFAULT_WATERMARK, ...saved })
+    watermarkPreview.clear()
+    await site.load(true)
+    message.success('水印设置已更新，立即生效')
+  } catch (error) {
+    watermarkError.value = error instanceof Error ? error.message : '保存水印设置失败'
+  } finally {
+    watermarkSaving.value = false
   }
 }
 
@@ -244,7 +282,7 @@ onMounted(() => {
       <span class="banner-badge">READ ONLY</span>
     </div>
 
-    <div v-if="loading && !data" class="config-loading"><PageSkeleton variant="form" /></div>
+    <div v-if="showSkeleton" class="config-loading"><PageSkeleton variant="form" /></div>
     <div v-else-if="errorText" class="config-empty">{{ errorText }}</div>
     <template v-else-if="data">
       <div class="config-summary">
@@ -336,6 +374,63 @@ onMounted(() => {
             保存品牌设置
           </n-button>
         </div>
+        </div>
+      </section>
+
+      <section v-if="auth.can('system:config')" class="watermark-editor">
+        <div class="branding-head" role="button" tabindex="0" @click="watermarkExpanded = !watermarkExpanded" @keydown.enter.prevent="watermarkExpanded = !watermarkExpanded">
+          <span class="config-icon"><EyeOutline /></span>
+          <div class="branding-heading">
+            <h3>水印设置</h3>
+            <p>控制后台全屏水印的开关、显示内容、大小、明显度和密度；保存后立即生效。</p>
+            <div class="branding-current">
+              <strong>{{ watermarkForm.enabled ? '已启用' : '已关闭' }}</strong>
+              <span>字号 {{ watermarkForm.font_size }}px · 透明度 {{ watermarkForm.opacity }}% · 密度 {{ watermarkForm.density }}</span>
+            </div>
+          </div>
+          <span class="branding-badge" :class="{ off: !watermarkForm.enabled }">{{ watermarkForm.enabled ? 'ONLINE' : 'OFF' }}</span>
+          <button class="branding-toggle" type="button" :title="watermarkExpanded ? '收起' : '展开设置'" @click.stop="watermarkExpanded = !watermarkExpanded">
+            <ChevronDownOutline :class="{ rotated: watermarkExpanded }" />
+          </button>
+        </div>
+        <div v-if="watermarkExpanded" class="branding-body">
+          <div class="watermark-form">
+            <div class="watermark-switch">
+              <span>启用全屏水印</span>
+              <n-switch v-model:value="watermarkForm.enabled" />
+            </div>
+            <div class="watermark-switch">
+              <span>显示登录账号</span>
+              <n-switch v-model:value="watermarkForm.show_username" :disabled="!watermarkForm.enabled" />
+            </div>
+            <div class="watermark-switch">
+              <span>显示姓名</span>
+              <n-switch v-model:value="watermarkForm.show_display_name" :disabled="!watermarkForm.enabled" />
+            </div>
+            <div class="watermark-switch">
+              <span>显示邮箱</span>
+              <n-switch v-model:value="watermarkForm.show_email" :disabled="!watermarkForm.enabled" />
+            </div>
+            <div class="watermark-slider">
+              <span>字号 <b>{{ watermarkForm.font_size }}px</b></span>
+              <n-slider v-model:value="watermarkForm.font_size" :min="10" :max="24" :step="1" :disabled="!watermarkForm.enabled" />
+            </div>
+            <div class="watermark-slider">
+              <span>明显度 <b>{{ watermarkForm.opacity }}%</b></span>
+              <n-slider v-model:value="watermarkForm.opacity" :min="3" :max="30" :step="1" :disabled="!watermarkForm.enabled" />
+            </div>
+            <div class="watermark-slider">
+              <span>密度 <b>{{ watermarkForm.density }}</b>（越大越密）</span>
+              <n-slider v-model:value="watermarkForm.density" :min="1" :max="10" :step="1" :disabled="!watermarkForm.enabled" />
+            </div>
+          </div>
+          <div v-if="watermarkError" class="branding-error">{{ watermarkError }}</div>
+          <div class="branding-actions">
+            <n-button type="primary" :loading="watermarkSaving" :disabled="brandingLoading" @click="saveWatermark">
+              <template #icon><SaveOutline /></template>
+              保存水印设置
+            </n-button>
+          </div>
         </div>
       </section>
 
@@ -489,7 +584,8 @@ onMounted(() => {
   font-size: 13px;
 }
 
-.branding-editor {
+.branding-editor,
+.watermark-editor {
   margin-bottom: 16px;
   padding: 16px 18px;
   border: 1px solid var(--brand-border);
@@ -501,6 +597,51 @@ onMounted(() => {
   display: flex;
   align-items: flex-start;
   gap: 11px;
+}
+
+.watermark-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 18px;
+  margin-top: 14px;
+}
+
+.watermark-switch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.watermark-slider {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.watermark-slider b {
+  color: var(--ink);
+}
+
+.branding-badge.off {
+  background: var(--surface-soft);
+  color: var(--muted);
+}
+
+@media (max-width: 720px) {
+  .watermark-form {
+    grid-template-columns: 1fr;
+  }
 }
 
 .branding-head {

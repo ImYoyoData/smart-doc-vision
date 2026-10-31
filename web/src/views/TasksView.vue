@@ -30,6 +30,7 @@ import {
 } from '@vicons/ionicons5'
 import PageHeader from '@/components/PageHeader.vue'
 import PageSkeleton from '@/components/PageSkeleton.vue'
+import { useInitialLoad } from '@/composables/useInitialLoad'
 import StatusTag from '@/components/StatusTag.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import TaskSubmitModal from '@/components/TaskSubmitModal.vue'
@@ -50,6 +51,7 @@ const auth = useAuthStore()
 const tasks = ref<Task[]>([])
 const audits = ref<Audit[]>([])
 const loading = ref(false)
+const { showSkeleton } = useInitialLoad(loading)
 const total = ref(0)
 const page = ref(1)
 const pageSize = ref(20)
@@ -686,7 +688,7 @@ onBeforeUnmount(() => {
         <template #icon><FlashOutline /></template>
       </EmptyState>
 
-      <PageSkeleton v-else variant="table" :rows="6" />
+      <PageSkeleton v-else-if="showSkeleton" variant="table" :rows="6" />
     </section>
 
     <TaskSubmitModal

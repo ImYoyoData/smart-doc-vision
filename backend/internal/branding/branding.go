@@ -17,9 +17,34 @@ const defaultFilePath = "data/branding.json"
 // the defaults; this file lets a super administrator update branding without
 // restarting the process.
 type Settings struct {
-	Name   string `json:"name"`
-	NameEn string `json:"name_en"`
-	Logo   string `json:"logo"`
+	Name      string             `json:"name"`
+	NameEn    string             `json:"name_en"`
+	Logo      string             `json:"logo"`
+	Watermark *WatermarkSettings `json:"watermark,omitempty"`
+}
+
+// WatermarkSettings controls the full-screen watermark shown on admin pages.
+// Values are clamped by normalizeWatermark so a malformed request cannot make
+// the watermark unreadable or block the whole viewport.
+type WatermarkSettings struct {
+	Enabled         bool `json:"enabled"`
+	ShowUsername    bool `json:"show_username"`
+	ShowDisplayName bool `json:"show_display_name"`
+	ShowEmail       bool `json:"show_email"`
+	FontSize        int  `json:"font_size"`
+	Opacity         int  `json:"opacity"`
+	Density         int  `json:"density"`
+}
+
+func DefaultWatermark() WatermarkSettings {
+	return WatermarkSettings{
+		Enabled:      true,
+		ShowUsername: true,
+		ShowEmail:    true,
+		FontSize:     12,
+		Opacity:      9,
+		Density:      6,
+	}
 }
 
 var (
@@ -64,9 +89,21 @@ func Get(cfg config.Config) Settings {
 	mu.RLock()
 	defer mu.RUnlock()
 	if current != nil {
-		return *current
+		settings := *current
+		settings.Watermark = cloneWatermark(settings.Watermark)
+		return settings
 	}
-	return Settings{Name: cfg.SiteName, NameEn: cfg.SiteNameEn, Logo: cfg.SiteLogo}
+	settings := Settings{Name: cfg.SiteName, NameEn: cfg.SiteNameEn, Logo: cfg.SiteLogo}
+	settings.Watermark = cloneWatermark(nil)
+	return settings
+}
+
+// SaveWatermark updates only the watermark block while keeping the current
+// site name and logo untouched.
+func SaveWatermark(cfg *config.Config, input WatermarkSettings) (Settings, error) {
+	settings := Get(*cfg)
+	settings.Watermark = &input
+	return Save(cfg, settings)
 }
 
 // Save validates, persists, and applies the new branding immediately.
@@ -133,7 +170,40 @@ func normalize(settings Settings) (Settings, error) {
 	if len(settings.Logo) > 2*1024*1024 {
 		return Settings{}, fmt.Errorf("Logo 地址过长")
 	}
+	settings.Watermark = normalizeWatermark(settings.Watermark)
 	return settings, nil
+}
+
+func cloneWatermark(input *WatermarkSettings) *WatermarkSettings {
+	watermark := DefaultWatermark()
+	if input != nil {
+		watermark = *input
+	}
+	return &watermark
+}
+
+func normalizeWatermark(input *WatermarkSettings) *WatermarkSettings {
+	watermark := DefaultWatermark()
+	if input != nil {
+		watermark = *input
+	}
+	watermark.FontSize = clampInt(watermark.FontSize, 10, 24, 12)
+	watermark.Opacity = clampInt(watermark.Opacity, 3, 30, 9)
+	watermark.Density = clampInt(watermark.Density, 1, 10, 6)
+	return &watermark
+}
+
+func clampInt(value, min, max, fallback int) int {
+	if value == 0 {
+		return fallback
+	}
+	if value < min {
+		return min
+	}
+	if value > max {
+		return max
+	}
+	return value
 }
 
 func apply(cfg *config.Config, settings Settings) {

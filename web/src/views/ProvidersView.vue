@@ -28,6 +28,7 @@ import {
 } from '@vicons/ionicons5'
 import PageHeader from '@/components/PageHeader.vue'
 import PageSkeleton from '@/components/PageSkeleton.vue'
+import { useInitialLoad } from '@/composables/useInitialLoad'
 import StatusTag from '@/components/StatusTag.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import { providerApi } from '@/api'
@@ -38,6 +39,7 @@ const workspace = useWorkspaceStore()
 const message = useMessage()
 const dialog = useDialog()
 const loading = ref(false)
+const { showSkeleton } = useInitialLoad(loading)
 const saving = ref(false)
 const testingId = ref<number | null>(null)
 const testingAll = ref(false)
@@ -692,7 +694,7 @@ onMounted(load)
         </n-button>
       </template>
     </PageHeader>
-    <PageSkeleton v-if="loading && !providers.length" variant="cards" />
+    <PageSkeleton v-if="showSkeleton" variant="cards" />
 
     <div v-if="!workspace.currentProjectId" class="panel">
       <EmptyState title="请选择项目" description="模型接入按项目隔离，先在左上角选择一个项目。" action="前往项目空间" @action="$router.push({ name: 'projects' })" />

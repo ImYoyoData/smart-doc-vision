@@ -238,6 +238,8 @@ func (s *Server) Router() *gin.Engine {
 			auth.GET("/system/config", s.systemConfig)
 			auth.GET("/system/branding", s.getSystemBranding)
 			auth.PUT("/system/branding", s.updateSystemBranding)
+			auth.GET("/system/watermark", s.getSystemWatermark)
+			auth.PUT("/system/watermark", s.updateSystemWatermark)
 			auth.GET("/system/schema/status", s.schemaStatus)
 			auth.GET("/system/update", s.systemUpdate)
 			auth.PUT("/system/update/auto-check", s.updateAutoCheck)
