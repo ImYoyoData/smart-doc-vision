@@ -233,7 +233,8 @@ const redisMessage = `redis-cli -h 127.0.0.1 -p 6379 -n <DB> XADD sdv:smartdoc-d
 
 # DB 由审核触发源选择，必须与「数据连接」中的 Redis 连接指向同一实例
 # Stream 由平台消费，消费组默认为 sdv-cg-<audit_id>
-# request_id 建议在消息顶层和 data 中同时填写；平台通过 audit.accepted / deduplicated / completed / submit_failed HTTP 回调通知，不写业务 Redis 结果流
+# request_id 建议在消息顶层和 data 中同时填写（项目内唯一）；平台通过消息级 callback_url 发送 audit.accepted / deduplicated / submit_failed
+# 审核配置级回调仍只发送最终 audit.completed，不写业务 Redis 结果流
 # 消息必须是 data 字段（也兼容 payload），值为 TaskInput JSON
 # 处理失败的消息会写入 <stream>:dlq`
 
@@ -411,7 +412,7 @@ if not hmac.compare_digest(expected, actual):
           <table class="doc-table">
             <thead><tr><th>参数</th><th>必填</th><th>说明</th></tr></thead>
             <tbody>
-              <tr><td><code>request_id</code></td><td>强烈建议</td><td>调用方生成的唯一提交 ID；平台按它幂等。相同 request_id + 相同内容返回原任务，内容不同返回 409 REQUEST_ID_CONFLICT。回调、结果帧和查询均返回该值。</td></tr>
+              <tr><td><code>request_id</code></td><td>强烈建议</td><td>调用方生成的项目内唯一提交 ID；平台按它幂等。相同 request_id + 相同内容返回原任务，内容不同返回 409 REQUEST_ID_CONFLICT。回调、结果帧和查询均返回该值。</td></tr>
               <tr><td><code>biz_key</code></td><td>建议</td><td>业务分组键；未填写 request_id 时，相同业务键 + 相同媒体内容在去重窗口内只生成一个任务。</td></tr>
               <tr><td><code>media</code></td><td>是</td><td>媒体数组，至少一项。type 支持 text / image。text 使用 content，image 使用 url。</td></tr>
               <tr><td><code>ext</code></td><td>否</td><td>业务扩展对象，规则可通过 <code>ext.*</code> 访问，回调会原样带回。</td></tr>
@@ -509,7 +510,7 @@ if not hmac.compare_digest(expected, actual):
           <code-block :code="callbackPayload" title="Callback Payload" />
           <h3>验签</h3>
           <code-block :code="callbackVerify" title="Verify Signature" language="python" />
-          <p class="doc-note">回调失败会按 1s / 2s / 4s 重试 3 次。事件包括 audit.accepted / deduplicated / completed / submit_failed；Header 会带 X-SmartDoc-Request-Id 和幂等键，业务方应按 request_id 优先、task_no 兜底去重。</p>
+          <p class="doc-note">回调失败会按 1s / 2s / 4s 重试 3 次。事件包括 audit.accepted / deduplicated / completed / submit_failed；其中 accepted / deduplicated / submit_failed 仅在 Redis 消息提供 callback_url 时发送，审核配置级回调仍只发 completed。Header 会带 X-SmartDoc-Request-Id 和幂等键，业务方应按 request_id 优先、task_no 兜底去重。</p>
         </section>
 
         <section id="help-mysql" class="doc-section">

@@ -181,7 +181,7 @@ func Load() Config {
 	}
 
 	cfg := Config{
-		AppEnv:                  pickString("APP_ENV", nil, dotenvValues, "development"),
+		AppEnv:                  pickString("APP_ENV", nil, dotenvValues, "production"),
 		ServerPort:              strconv.Itoa(serverPort),
 		MySQLDSN:                ensureMySQLCharset(mysqlDSN),
 		RedisAddr:               redisAddr,
@@ -480,7 +480,7 @@ func writeDefaultEnv(path string) error {
 	content := fmt.Sprintf(`# SmartDoc Vision configuration
 # Generated automatically on first run. Edit before production.
 # Precedence: OS environment > .env > config.yml (legacy fallback) > built-in defaults.
-APP_ENV=development
+APP_ENV=production
 SERVER_PORT=8080
 # Admin UI: http://127.0.0.1:8080/admin
 

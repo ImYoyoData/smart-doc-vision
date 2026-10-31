@@ -38,13 +38,10 @@ func (m *Manager) sendEvent(ctx context.Context, projectID, auditID uint64, inpu
 	if err := m.db.First(&audit, auditID).Error; err != nil {
 		return nil
 	}
+	// Trigger-level events are opt-in through the message callback_url. Do not
+	// fall back to the audit callback: existing consumers configured for
+	// audit.completed must not suddenly receive accepted/deduplicated events.
 	targetURL := strings.TrimSpace(input.CallbackURL)
-	if targetURL == "" {
-		if !audit.CallbackEnabled || strings.TrimSpace(audit.CallbackURL) == "" {
-			return nil
-		}
-		targetURL = strings.TrimSpace(audit.CallbackURL)
-	}
 	if targetURL == "" {
 		return nil
 	}

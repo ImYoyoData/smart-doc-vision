@@ -679,7 +679,7 @@ watch(
             <CodeBlock :code="guide.redis.xadd_command" title="XADD Command" />
             <div class="guide-note">
               <HelpCircleOutline />
-              <span>request_id 是业务方生成的唯一提交 ID，建议在消息顶层和 data 中同时填写。平台通过 HTTP 回调发送 audit.accepted / deduplicated / completed / submit_failed，并原样带回 request_id；不会写业务 Redis 结果流。消息格式、消费组和 PEL 说明请查阅对接文档。</span>
+              <span>request_id 是业务方生成的唯一提交 ID（项目内唯一），建议在消息顶层和 data 中同时填写。平台通过消息级 callback_url 发送 audit.accepted / deduplicated / submit_failed，并原样带回 request_id；审核配置级回调仍只负责最终 completed，避免旧消费者收到额外事件。平台不会写业务 Redis 结果流。消息格式、消费组和 PEL 说明请查阅对接文档。</span>
               <n-button text type="primary" @click="openDocs('redis')">request_id 与回调说明</n-button>
             </div>
           </div>

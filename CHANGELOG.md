@@ -1,5 +1,40 @@
 # Changelog
 
+## 1.8.0 - 2026-10-31
+
+### 文件存储
+
+- 上传图片和文件不再写入 MySQL，新增本地文件存储与 S3 兼容对象存储（阿里云 OSS、腾讯云 COS、七牛云 Kodo、AWS S3、MinIO、自定义 S3）。
+- 任务图片在去重/配额检查后写入存储，`tasks.input` 只保留对象 key、类型和大小；审核引擎按 key 读取，任务详情返回签名/预签名地址。
+- 「系统配置」新增「文件存储」分组；Docker 增加 `app-data:/app/data` 数据卷和存储目录说明。
+
+### 首次安装向导
+
+- 无配置首次启动不连接 MySQL/Redis，直接打开 `/admin/` 安装向导；安装页与主站共用 `/admin/`，不再暴露 `/admin/install`。
+- 向导包含协议滚动确认、MySQL、Redis、存储、超级管理员、环境检测与安装；安装后原地启动服务，刷新即进入登录页。
+- 安装生成 `.env` 与 `.install.txt`；安装标记存在时即使 `.env` 丢失也不会重装；模板 `.env` 会备份后替换。
+- 编译发布与安装向导默认 `APP_ENV=production`；本地开发需显式设置 `development`。
+
+### 数据库结构检测与升级门禁
+
+- 新增 `schema` 检测：对比模型与数据库的表、字段、索引差异，记录 `schema_versions` 版本。
+- 安装时目标库已有业务表会提示「校验并修复」或「清空并重新安装」，两者均需二次确认；修复不删除模型之外的对象。
+- 运行时发现结构不一致会暂停业务接口，仅超级管理员可登录；升级页展示将新建/调整/保留的内容，确认后原地修复并恢复。
+- 核心用户表缺失或没有可用超级管理员时禁止在线修复，提示恢复数据库或重新安装。
+
+### request_id 与触发方式
+
+- 新增项目内唯一 `request_id`：相同 request_id + 相同内容幂等返回原任务；内容不同返回 `409 REQUEST_ID_CONFLICT`；未填写时保留原有 `biz_key` 内容去重。
+- 开放 API 提交/响应/回调/WebSocket ACK/result/任务列表详情均支持 request_id；新增按 request_id 查询任务接口。
+- Redis Stream 支持消息顶层与 data 内 request_id/callback_url；新增 `audit.accepted`、`audit.deduplicated`、`audit.submit_failed` HTTP/WS 通知（仅在消息提供 callback_url 时发送），审核配置级回调仍只发 `audit.completed`，不写业务 Redis 结果流。
+- 结果动作模板新增 `${request_id}`、`${source_ref}`、`${input_json}`、`${ext_json}`；脚本上下文增加 request_id。
+- 同步更新接入指南、统一 Skill、AI 提示词、任务提交/详情/列表、规则字段、帮助页、README 与 INTEGRATION 文档。
+
+### 测试与质量
+
+- 完成 100 轮真实全链路测试：53 轮安装/修复/清空/门禁/边界 UI+数据库流程，47 轮 request_id 提交/重复/冲突/查询 HTTP 全链路。
+- 发布前通过后端 `go vet ./...`、`go test ./...` 与前端 `npx vue-tsc --noEmit`、`npm run build`。
+
 ## 1.7.0 - 2026-10-31
 
 ### 审核条约

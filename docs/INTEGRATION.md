@@ -85,7 +85,7 @@ DELETE /api/admin/v1/projects/{pid}/credentials/{cid}
 
 | 字段 | 必填 | 说明 |
 |---|---|---|
-| request_id | 强烈建议 | 调用方生成的唯一提交 ID。填写后平台按它幂等：相同 request_id + 相同内容返回原任务；内容不同返回 409 REQUEST_ID_CONFLICT。回调和按 request_id 查询都会原样返回。 |
+| request_id | 强烈建议 | 调用方生成的项目内唯一提交 ID。填写后平台按它幂等：相同 request_id + 相同内容返回原任务；内容不同返回 409 REQUEST_ID_CONFLICT。回调和按 request_id 查询都会原样返回。 |
 | biz_key | 建议 | 业务分组键。未填写 request_id 时，相同业务键 + 相同媒体 + 相同来源在去重窗口内只创建一次任务。 |
 | media | 是 | 至少一段文本或一张图片。支持**多个 `text` 和多个 `image`**；不支持 video/audio。 |
 | media[].content | text 必填 | 文档文本 / OCR 结果。 |

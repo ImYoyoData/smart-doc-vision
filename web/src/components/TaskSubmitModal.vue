@@ -281,7 +281,7 @@ async function submit() {
         <div class="field">
           <label>请求 ID（request_id）</label>
           <n-input v-model:value="form.requestId" placeholder="例如 audit-20261031-000001，建议每次提交唯一" />
-          <div class="form-hint">可选。填写后以它作为幂等标识，结果回调和按 request_id 查询都使用它。</div>
+          <div class="form-hint">可选，项目内唯一。填写后以它作为幂等标识，结果回调和按 request_id 查询都使用它。</div>
         </div>
 
         <div class="field">

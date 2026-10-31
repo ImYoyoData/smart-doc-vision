@@ -119,7 +119,7 @@ ${scopeLine(methods)}
 ~~~json
 {
   "biz_key": "业务分组键，可选",
-  "request_id": "调用方生成的唯一提交 ID，强烈建议填写",
+  "request_id": "调用方生成的项目内唯一提交 ID，强烈建议填写",
   "media": [
     {"type": "text", "name": "page-1.txt", "content": "第一页文本或 OCR 结果"},
     {"type": "text", "name": "page-2.txt", "content": "第二页文本或 OCR 结果"},
@@ -130,7 +130,7 @@ ${scopeLine(methods)}
 }
 ~~~
 
-要求：图片 URL 必须是平台可访问的 http/https 地址；文本和图片都可以多条。request_id 是调用方生成的唯一提交 ID：相同 request_id + 相同内容返回原任务并标记 duplicated，相同 request_id + 不同内容返回 REQUEST_ID_CONFLICT。填写 request_id 时平台按它做幂等；未填写时仍按 biz_key + media 的内容去重。
+要求：图片 URL 必须是平台可访问的 http/https 地址；文本和图片都可以多条。request_id 是调用方生成的项目内唯一提交 ID：相同 request_id + 相同内容返回原任务并标记 duplicated，相同 request_id + 不同内容返回 REQUEST_ID_CONFLICT。填写 request_id 时平台按它做幂等；未填写时仍按 biz_key + media 的内容去重。
 ${classificationSection(ctx)}
 
 ## 结果回调
@@ -195,7 +195,7 @@ function redisSection(ctx: IntegrationPromptContext): string {
 XADD ${stream} * request_id 'audit-20261031-000001' callback_url 'https://your-service.example.com/callback' data '{"request_id":"audit-20261031-000001","biz_key":"archive:2026:0001","media":[{"type":"text","name":"page-1.txt","content":"第一页档案文本"},{"type":"image","name":"page-1.jpg","url":"https://your-domain.example.com/page-1.jpg"}],"ext":{"scene":"archive_review"}}'
 ~~~
 4. 消息体必须是 UTF-8 JSON，不支持的字段（video/audio）会导致平台拒收；非法消息会 ACK 后写入 ${stream}:dlq，并在可解析 callback_url 时发送 audit.submit_failed。
-5. Redis 不返回 task_no。平台会在受理、去重、完成、失败时通过 HTTP 回调发送 audit.accepted / audit.deduplicated / audit.completed / audit.submit_failed，事件里同时包含 request_id、task_no、source_ref（Redis message_id）。业务方也可以 GET /open/v1/projects/${ctx.projectCode}/task-by-request-id/{request_id} 查询。平台不写业务 Redis 结果流。
+5. Redis 不返回 task_no。平台会在受理、去重、失败时通过消息级 callback_url 发送 audit.accepted / audit.deduplicated / audit.submit_failed；最终结果仍按审核配置级回调或消息级 callback_url 发送 audit.completed。事件里同时包含 request_id、task_no、source_ref（Redis message_id）。业务方也可以 GET /open/v1/projects/${ctx.projectCode}/task-by-request-id/{request_id} 查询。平台不写业务 Redis 结果流。
 6. 相同 request_id + 相同内容会返回原任务并发送 deduplicated；相同 request_id + 不同内容会发送 submit_failed（REQUEST_ID_CONFLICT）。
 7. 处理连接失败、超时、Redis 重连和重复写入；生产环境建议用连接池，并把消息体构造与 XADD 解耦，方便单测。
 8. 交付：配置读取、TaskInput 序列化、XADD 发送函数、失败重试/日志脱敏、一个真实消息格式测试。`
@@ -266,7 +266,7 @@ export function buildSkillPrompt(ctx: IntegrationPromptContext, methods: Integra
 
 1. 先问用户：“你要接入哪种方式？开放 API / Redis Stream / WebSocket，可多选。是否需要结果回调？”
 2. 如果用户选择开放 API：实现 HMAC 签名提交客户端。
-3. 如果用户选择 Redis：实现消息生产端；不要创建平台消费组。
+3. 如果用户选择 Redis：实现消息生产端；不要创建平台消费组；必须生成并在消息顶层和 data 中携带项目内唯一的 request_id，建议同时提供 callback_url 用于受理/去重/失败通知。
 4. 如果用户选择 WebSocket：实现带签名 URL 的长连接客户端和 ack/result 关联。
 5. 如果用户多选：为每种方式提供独立适配器，并共用 TaskInput 和结果处理层。
 `
