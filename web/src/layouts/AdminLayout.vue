@@ -381,7 +381,7 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
       :height="150"
       :x-gap="24"
       :y-gap="24"
-      :z-index="60"
+      :z-index="9000"
       :selectable="false"
     />
     <div v-if="sidebarOpen" class="sidebar-overlay" @click="sidebarOpen = false"></div>
