@@ -3,6 +3,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import {
   NButton,
+  NImage,
   NInput,
   NSelect,
   NSpin,
@@ -337,10 +338,10 @@ onMounted(async () => {
                   <pre>{{ item.content }}</pre>
                 </div>
                 <div v-if="images.length" class="review-images">
-                  <a v-for="(img, i) in images" :key="`img-${i}`" :href="img.url" target="_blank" rel="noreferrer">
-                    <img :src="img.url" :alt="`图档 ${i + 1}`" loading="lazy" />
+                  <div v-for="(img, i) in images" :key="`img-${i}`" class="review-image-card">
+                    <n-image :src="img.url" :alt="`图档 ${i + 1}`" :img-props="{ loading: 'lazy' }" />
                     <span><ImagesOutline /> 图档 {{ i + 1 }}</span>
-                  </a>
+                  </div>
                 </div>
                 <div v-if="!texts.length && !images.length" class="muted small">任务没有可展示的媒体内容。</div>
 
@@ -811,18 +812,24 @@ onMounted(async () => {
   gap: 8px;
 }
 
-.review-images a {
+.review-images .review-image-card {
   overflow: hidden;
   border: 1px solid #edf1f7;
   border-radius: 10px;
   background: #f8fafc;
 }
 
-.review-images img {
+.review-images :deep(.n-image) {
+  display: block;
+  width: 100%;
+}
+
+.review-images :deep(.n-image img) {
   display: block;
   width: 100%;
   height: 150px;
   object-fit: cover;
+  cursor: zoom-in;
 }
 
 .review-images span {

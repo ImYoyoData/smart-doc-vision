@@ -2,6 +2,7 @@
 import { computed, reactive, ref, watch } from 'vue'
 import {
   NButton,
+  NImage,
   NInput,
   NModal,
   NPopover,
@@ -313,7 +314,7 @@ async function submit() {
           </div>
           <div v-if="localImages.length" class="image-preview-grid">
             <figure v-for="image in localImages" :key="image.id">
-              <img :src="image.dataUrl" :alt="image.name" />
+              <n-image :src="image.dataUrl" :alt="image.name" :img-props="{ loading: 'lazy' }" />
               <figcaption>{{ image.name }}</figcaption>
               <button type="button" title="移除图片" @click="removeLocalImage(image.id)">
                 <CloseOutline />
@@ -577,11 +578,17 @@ async function submit() {
   background: #f8fafc;
 }
 
-.image-preview-grid img {
+.image-preview-grid :deep(.n-image) {
+  display: block;
+  width: 100%;
+}
+
+.image-preview-grid :deep(.n-image img) {
   display: block;
   width: 100%;
   height: 68px;
   object-fit: cover;
+  cursor: zoom-in;
 }
 
 .image-preview-grid figcaption {

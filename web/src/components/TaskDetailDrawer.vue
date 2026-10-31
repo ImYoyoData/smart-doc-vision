@@ -6,6 +6,7 @@ import {
   NCollapseItem,
   NDrawer,
   NDrawerContent,
+  NImage,
   NInput,
   NModal,
   NRadio,
@@ -352,17 +353,14 @@ watch(
               <pre>{{ item.content }}</pre>
             </div>
             <div v-if="images.length" class="image-grid">
-              <a
-                v-for="(img, i) in images"
-                :key="`i-${i}`"
-                :href="img.url"
-                target="_blank"
-                rel="noreferrer"
-                class="image-card"
-              >
-                <img :src="img.url" :alt="img.name || `图档 ${i + 1}`" loading="lazy" />
+              <div v-for="(img, i) in images" :key="`i-${i}`" class="image-card">
+                <n-image
+                  :src="img.url"
+                  :alt="img.name || `图档 ${i + 1}`"
+                  :img-props="{ loading: 'lazy' }"
+                />
                 <span><ImagesOutline /> 图档 {{ i + 1 }}</span>
-              </a>
+              </div>
             </div>
           </section>
 
@@ -985,6 +983,19 @@ watch(
   width: 100%;
   height: 122px;
   object-fit: cover;
+}
+
+.image-card :deep(.n-image) {
+  display: block;
+  width: 100%;
+}
+
+.image-card :deep(.n-image img) {
+  display: block;
+  width: 100%;
+  height: 122px;
+  object-fit: cover;
+  cursor: zoom-in;
 }
 
 .image-card span {
