@@ -478,6 +478,7 @@ onMounted(async () => {
                   <div><span>模型</span><strong class="mono">{{ selectedTask.result_detail?.model || '—' }}</strong></div>
                   <div><span>耗时</span><strong>{{ formatDuration(selectedTask.duration_ms) }}</strong></div>
                   <div><span>业务键</span><strong class="mono">{{ selectedTask.biz_key || '—' }}</strong></div>
+                  <div><span>request_id</span><strong class="mono">{{ selectedTask.request_id || '—' }}</strong></div>
                   <div><span>创建时间</span><strong>{{ selectedTask.created_at?.replace('T', ' ').slice(0, 19) }}</strong></div>
                 </div>
               </aside>
