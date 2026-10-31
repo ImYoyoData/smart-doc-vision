@@ -656,9 +656,9 @@ async function logout() {
   align-items: center;
   justify-content: center;
   padding: 12px;
-  border: 1px solid #e2e8f0;
+  border: 1px solid var(--border);
   border-radius: 13px;
-  background: #fff;
+  background: var(--card);
   box-shadow: var(--shadow-sm);
 }
 

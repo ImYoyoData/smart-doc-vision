@@ -51,14 +51,19 @@ const editorTheme = EditorView.theme({
   },
   '.cm-gutters': {
     border: 'none',
-    backgroundColor: '#f8fafd',
-    color: '#a3adbd',
+    borderRight: '1px solid var(--border, #e3e8f1)',
+    backgroundColor: 'var(--surface-soft, #f8fafd)',
+    color: 'var(--muted-light, #9aa6b8)',
   },
   '.cm-activeLine': {
-    backgroundColor: 'rgba(43, 108, 246, 0.045)',
+    backgroundColor: 'var(--brand-softer, rgba(43, 108, 246, 0.045))',
   },
   '.cm-activeLineGutter': {
-    backgroundColor: 'rgba(43, 108, 246, 0.045)',
+    backgroundColor: 'var(--brand-softer, rgba(43, 108, 246, 0.045))',
+    color: 'var(--brand, #2b6cf6)',
+  },
+  '&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection': {
+    backgroundColor: 'rgba(91, 142, 247, 0.24)',
   },
   '.cm-scroller': {
     overflow: 'auto',
@@ -149,7 +154,7 @@ onBeforeUnmount(() => {
 }
 
 .virtual-text-meta.full {
-  color: #d03050;
+  color: var(--red);
 }
 
 .virtual-text-editor :deep(.cm-editor) {

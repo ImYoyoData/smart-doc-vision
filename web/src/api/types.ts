@@ -765,6 +765,31 @@ export interface AuditLog {
   created_at: string
 }
 
+export interface LogsAssistantFilter {
+  operator?: string
+  actions?: string[]
+  object_type?: string
+  result?: string
+  keyword?: string
+  start?: string
+  end?: string
+}
+
+export interface LogsAssistantResult {
+  reply: string
+  filter: LogsAssistantFilter
+  total: number
+  tools: string[]
+  model: string
+  usage: {
+    requests: number
+    input_tokens: number
+    output_tokens: number
+    total_tokens: number
+  }
+  tool_logs?: string[]
+}
+
 export interface RecycleItem {
   type: string
   object_type: string

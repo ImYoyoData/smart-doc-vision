@@ -38,6 +38,7 @@ type Config struct {
 	SiteName   string
 	SiteNameEn string
 	SiteLogo   string
+	SiteURL    string
 
 	DefaultAIBaseURL        string
 	DefaultAIModel          string
@@ -201,6 +202,7 @@ func Load() Config {
 		SiteName:                fallbackString(pickString("SITE_NAME", nil, dotenvValues, "智审图档"), "智审图档"),
 		SiteNameEn:              fallbackString(pickString("SITE_NAME_EN", nil, dotenvValues, "SmartDoc Vision"), "SmartDoc Vision"),
 		SiteLogo:                pickString("SITE_LOGO", nil, dotenvValues, ""),
+		SiteURL:                 strings.TrimRight(pickString("SITE_URL", nil, dotenvValues, "http://127.0.0.1:"+strconv.Itoa(serverPort)), "/"),
 		DefaultAIBaseURL:        fallbackString(pickString("DEFAULT_AI_BASE_URL", fileCfg.AI.DefaultBaseURL, dotenvValues, "https://api.openai.com/v1"), "https://api.openai.com/v1"),
 		DefaultAIModel:          fallbackString(pickString("DEFAULT_AI_MODEL", fileCfg.AI.DefaultModel, dotenvValues, "gpt-4o-mini"), "gpt-4o-mini"),
 		DefaultAIAPIKey:         pickString("DEFAULT_AI_API_KEY", fileCfg.AI.DefaultAPIKey, dotenvValues, ""),
@@ -517,6 +519,7 @@ ADMIN_PASSWORD=Admin@123456
 SITE_NAME=智审图档
 SITE_NAME_EN=SmartDoc Vision
 SITE_LOGO=
+SITE_URL=http://127.0.0.1:8080
 
 CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 WORKER_COUNT=4

@@ -215,6 +215,7 @@ func (s *Server) Router() *gin.Engine {
 			auth.GET("/dashboard", s.dashboard)
 			auth.GET("/analytics", s.analytics)
 			auth.GET("/audit-logs", s.listAuditLogs)
+			auth.POST("/audit-logs/assistant", s.logsAssistant)
 			auth.GET("/recycle-bin", s.listRecycleBin)
 			auth.DELETE("/recycle-bin/:type/:id", s.purgeRecycleItem)
 			auth.POST("/recycle-bin/batch-restore", s.batchRestoreRecycle)

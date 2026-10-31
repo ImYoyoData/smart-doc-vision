@@ -19,6 +19,12 @@ type EmailConfig struct {
 }
 
 func SendEmail(cfg EmailConfig, to, subject, body string) error {
+	return SendEmailHTML(cfg, to, subject, body, "")
+}
+
+// SendEmailHTML sends a plain-text body with an optional HTML alternative.
+// The text part keeps notifications readable in clients that block HTML.
+func SendEmailHTML(cfg EmailConfig, to, subject, textBody, htmlBody string) error {
 	security := strings.ToLower(strings.TrimSpace(cfg.Security))
 	timeout := time.Duration(cfg.TimeoutSec) * time.Second
 	if timeout <= 0 {
@@ -55,6 +61,9 @@ func SendEmail(cfg EmailConfig, to, subject, body string) error {
 		return err
 	}
 	msg.Subject(subject)
-	msg.SetBodyString(mail.TypeTextPlain, body)
+	msg.SetBodyString(mail.TypeTextPlain, textBody)
+	if strings.TrimSpace(htmlBody) != "" {
+		msg.AddAlternativeString(mail.TypeTextHTML, htmlBody)
+	}
 	return client.DialAndSend(msg)
 }

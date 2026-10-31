@@ -284,7 +284,7 @@ onBeforeUnmount(teardown)
   padding: 12px 14px;
   overflow: auto;
   border-radius: 10px;
-  background: var(--bg-soft, #f8fafc);
+  background: var(--surface-soft);
 }
 
 .voice-text {
@@ -297,7 +297,7 @@ onBeforeUnmount(teardown)
 
 .voice-error {
   margin: 8px 0 0;
-  color: #dc2626;
+  color: var(--red);
   font-size: 12px;
 }
 

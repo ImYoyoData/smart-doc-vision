@@ -209,6 +209,7 @@ function usageSourceLabel(source: string) {
   if (source === 'REVIEW') return '审核任务'
   if (source === 'SCRIPT_ASSISTANT') return '脚本助手'
   if (source === 'AUDIT_ASSISTANT') return '配置助手'
+  if (source === 'LOGS_ASSISTANT') return '日志查询助手'
   if (source === 'TREATY') return '审核条约'
   return source || '—'
 }
@@ -1518,9 +1519,9 @@ onMounted(load)
 
 .priority-hint {
   padding: 8px 10px;
-  border: 1px dashed #dbeafe;
+  border: 1px dashed var(--brand-border);
   border-radius: 8px;
-  background: #f8fbff;
+  background: var(--brand-softer);
   color: var(--muted);
   font-size: 10px;
   line-height: 1.6;
@@ -1531,17 +1532,17 @@ onMounted(load)
   margin-top: 3px;
   padding: 1px 6px;
   border-radius: 99px;
-  background: #eef3fc;
-  color: #4b6a9b;
+  background: var(--brand-soft);
+  color: var(--brand-strong);
   font-size: 8.5px;
 }
 
 .provider-breaker {
   padding: 1px 6px;
-  border: 1px solid #fecaca;
+  border: 1px solid var(--red-border);
   border-radius: 99px;
-  background: #fef2f2;
-  color: #b91c1c;
+  background: var(--red-soft);
+  color: var(--red);
   font-size: 8.5px;
   font-weight: 600;
   white-space: nowrap;
@@ -1554,7 +1555,7 @@ onMounted(load)
   margin: 14px 0 12px;
   padding: 7px 9px;
   border-radius: 8px;
-  background: #f8fafc;
+  background: var(--surface-soft);
   color: var(--muted);
   font-size: 10px;
 }
@@ -1717,8 +1718,8 @@ onMounted(load)
 .usage-modal-error {
   padding: 8px 10px;
   border-radius: 8px;
-  background: #fef2f2;
-  color: #b91c1c;
+  background: var(--red-soft);
+  color: var(--red);
   font-size: 11px;
 }
 
@@ -1794,13 +1795,13 @@ onMounted(load)
 }
 
 .usage-source.script_assistant {
-  background: #f0fdf4;
-  color: #15803d;
+  background: var(--green-soft);
+  color: var(--green);
 }
 
 .usage-source.audit_assistant {
-  background: #f5f1ff;
-  color: #7c3aed;
+  background: var(--purple-soft);
+  color: var(--purple);
 }
 
 .usage-status {
@@ -2284,8 +2285,8 @@ onMounted(load)
   padding: 9px 11px;
   border: 1px solid #fee2e2;
   border-radius: 8px;
-  background: #fef2f2;
-  color: #b91c1c;
+  background: var(--red-soft);
+  color: var(--red);
   font-size: 11px;
 }
 

@@ -454,9 +454,9 @@ onMounted(load)
   gap: 11px;
   margin-bottom: 15px;
   padding: 14px 16px;
-  border: 1px solid #dce7fb;
+  border: 1px solid var(--brand-border);
   border-radius: 12px;
-  background: linear-gradient(120deg, #f8fbff, #fff);
+  background: linear-gradient(120deg, var(--brand-softer), var(--card));
 }
 
 .credential-notice :deep(svg) {
@@ -469,14 +469,14 @@ onMounted(load)
 
 .credential-notice strong {
   display: block;
-  color: #1e4b9e;
+  color: var(--brand-strong);
   font-size: 12px;
   font-weight: 600;
 }
 
 .credential-notice p {
   margin: 3px 0 0;
-  color: #64748b;
+  color: var(--muted);
   font-size: 10.5px;
   line-height: 1.7;
 }
@@ -489,7 +489,7 @@ onMounted(load)
   padding: 12px 18px;
   border: 1px solid var(--border);
   border-radius: 12px;
-  background: #fff;
+  background: var(--card);
   box-shadow: var(--shadow-sm);
 }
 
@@ -525,7 +525,7 @@ onMounted(load)
   padding: 18px;
   border: 1px solid var(--border);
   border-radius: 16px;
-  background: #fff;
+  background: var(--card);
   box-shadow: var(--shadow-sm);
 }
 
@@ -599,8 +599,8 @@ onMounted(load)
   overflow: hidden;
   padding: 6px 9px;
   border-radius: 7px;
-  background: #f8fafc;
-  color: #475569;
+  background: var(--surface-soft);
+  color: var(--text);
   font-family: var(--mono);
   font-size: 9.5px;
   text-overflow: ellipsis;
@@ -614,7 +614,7 @@ onMounted(load)
   gap: 10px;
   margin-top: 14px;
   padding-top: 11px;
-  border-top: 1px dashed #edf1f7;
+  border-top: 1px dashed var(--border);
 }
 
 .scope-head > span {
@@ -636,17 +636,17 @@ onMounted(load)
   align-items: center;
   gap: 5px;
   padding: 3px 7px;
-  border: 1px solid #e5ebf4;
+  border: 1px solid var(--border);
   border-radius: 6px;
-  background: #fbfcfe;
-  color: #475569;
+  background: var(--surface-2);
+  color: var(--text);
   font-size: 9px;
   cursor: pointer;
 }
 
 .scope-chip:hover {
-  border-color: #bcd0f8;
-  background: #f8fbff;
+  border-color: var(--brand-border);
+  background: var(--brand-softer);
 }
 
 .scope-chip > span {
@@ -693,9 +693,9 @@ onMounted(load)
 }
 
 .scope-chip.missing {
-  border-color: #f2dede;
-  background: #fff9f9;
-  color: #b45353;
+  border-color: var(--red-border);
+  background: var(--red-soft);
+  color: var(--red);
   cursor: default;
 }
 
@@ -750,7 +750,7 @@ onMounted(load)
 }
 
 .cred-actions .danger {
-  color: #b0bac8;
+  color: var(--muted-light);
 }
 
 .cred-actions .danger:hover {
@@ -764,16 +764,16 @@ onMounted(load)
   justify-content: center;
   flex-direction: column;
   gap: 5px;
-  border: 1px dashed #d5ddea;
+  border: 1px dashed var(--border-strong);
   border-radius: 16px;
-  background: rgba(255, 255, 255, 0.55);
+  background: var(--surface-soft);
   color: var(--muted);
   cursor: pointer;
 }
 
 .credential-add:hover {
-  border-color: #aac4f8;
-  background: #f9fbff;
+  border-color: var(--brand-border);
+  background: var(--brand-softer);
   color: var(--brand);
 }
 
@@ -784,7 +784,7 @@ onMounted(load)
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  background: #f1f5fb;
+  background: var(--surface-strong);
 }
 
 .credential-add > span :deep(svg) {
@@ -806,7 +806,7 @@ onMounted(load)
 .secret-modal {
   width: min(520px, calc(100vw - 32px));
   border-radius: 17px;
-  background: #fff;
+  background: var(--card);
   box-shadow: 0 30px 80px -20px rgba(15, 23, 42, 0.35);
 }
 
@@ -816,7 +816,7 @@ onMounted(load)
   justify-content: space-between;
   gap: 16px;
   padding: 22px 24px 16px;
-  border-bottom: 1px solid #f0f3f8;
+  border-bottom: 1px solid var(--border);
 }
 
 .modal-kicker {
@@ -880,7 +880,7 @@ onMounted(load)
   padding: 8px 10px;
   border-radius: 8px;
   background: var(--red-soft);
-  color: #b91c1c;
+  color: var(--red);
   font-size: 10px;
 }
 
@@ -889,7 +889,7 @@ onMounted(load)
   justify-content: flex-end;
   gap: 8px;
   padding: 14px 24px;
-  border-top: 1px solid #f0f3f8;
+  border-top: 1px solid var(--border);
 }
 
 .secret-head {
@@ -934,7 +934,7 @@ onMounted(load)
   margin: 0 24px 10px;
   padding: 9px 10px;
   border-radius: 8px;
-  background: #f8fafc;
+  background: var(--surface-soft);
 }
 
 .secret-row > span {
@@ -955,7 +955,7 @@ onMounted(load)
 .secret-row code {
   overflow: hidden;
   flex: 1;
-  color: #334155;
+  color: var(--text);
   font-family: var(--mono);
   font-size: 10px;
   text-overflow: ellipsis;
@@ -968,10 +968,10 @@ onMounted(load)
   gap: 6px;
   margin: 14px 24px;
   padding: 9px 10px;
-  border: 1px solid #f4e1bb;
+  border: 1px solid var(--amber-border);
   border-radius: 8px;
-  background: #fffbf2;
-  color: #a16207;
+  background: var(--amber-soft);
+  color: var(--amber-ink);
   font-size: 9.5px;
   line-height: 1.6;
 }

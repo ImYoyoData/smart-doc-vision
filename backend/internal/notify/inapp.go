@@ -10,6 +10,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"smartdoc-vision/backend/internal/catalog"
+	"smartdoc-vision/backend/internal/config"
 	"smartdoc-vision/backend/internal/model"
 	"smartdoc-vision/backend/internal/security"
 )
@@ -17,7 +18,7 @@ import (
 // NotifyReviewPending creates one inbox message per eligible reviewer when a
 // task enters the internal REVIEW_PENDING queue. An empty audit scope means the
 // user can access every audit inside their project scope.
-func NotifyReviewPending(db *gorm.DB, cipher *security.Cipher, task model.Task, audit model.Audit, summary string) error {
+func NotifyReviewPending(db *gorm.DB, cipher *security.Cipher, cfg config.Config, task model.Task, audit model.Audit, summary string) error {
 	recipients, err := reviewRecipients(db, task)
 	if err != nil {
 		return err
@@ -45,13 +46,13 @@ func NotifyReviewPending(db *gorm.DB, cipher *security.Cipher, task model.Task, 
 			TaskID:    task.ID,
 		})
 	}
-	return CreateMessages(db, cipher, task.ProjectID, messages, title, body)
+	return CreateMessages(db, cipher, task.ProjectID, messages, title, body, cfg.SiteName, cfg.SiteURL)
 }
 
 // CreateMessages is the shared entry point for every in-app message type. It
 // persists new messages and, for users who enabled email notifications, sends
 // the same notification to their email using the project's usable channel.
-func CreateMessages(db *gorm.DB, cipher *security.Cipher, projectID uint64, messages []model.InAppMessage, subject, body string) error {
+func CreateMessages(db *gorm.DB, cipher *security.Cipher, projectID uint64, messages []model.InAppMessage, subject, body, siteName, siteURL string) error {
 	if len(messages) == 0 {
 		return nil
 	}
@@ -62,11 +63,11 @@ func CreateMessages(db *gorm.DB, cipher *security.Cipher, projectID uint64, mess
 	if result.RowsAffected == 0 {
 		return nil
 	}
-	go sendMessageEmails(db, cipher, projectID, messages, subject, body)
+	go sendMessageEmails(db, cipher, projectID, messages, subject, body, siteName, siteURL)
 	return nil
 }
 
-func sendMessageEmails(db *gorm.DB, cipher *security.Cipher, projectID uint64, messages []model.InAppMessage, subject, body string) {
+func sendMessageEmails(db *gorm.DB, cipher *security.Cipher, projectID uint64, messages []model.InAppMessage, subject, body, siteName, siteURL string) {
 	if cipher == nil || projectID == 0 {
 		return
 	}

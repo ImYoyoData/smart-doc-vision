@@ -448,9 +448,9 @@ onMounted(async () => {
   gap: 13px;
   margin-bottom: 15px;
   padding: 14px 18px;
-  border: 1px solid #f3dfb8;
+  border: 1px solid var(--amber-border);
   border-radius: 13px;
-  background: linear-gradient(120deg, #fffbf2, #fffefa);
+  background: linear-gradient(120deg, var(--amber-soft), var(--amber-soft-2));
 }
 
 .review-banner-icon {
@@ -460,8 +460,8 @@ onMounted(async () => {
   align-items: center;
   justify-content: center;
   border-radius: 10px;
-  background: #fef3c7;
-  color: #b45309;
+  background: var(--amber-soft-2);
+  color: var(--amber);
   flex-shrink: 0;
 }
 
@@ -472,7 +472,7 @@ onMounted(async () => {
 
 .review-banner strong {
   display: block;
-  color: #78350f;
+  color: var(--amber-ink);
   font-size: 12.5px;
   font-weight: 650;
 }
@@ -569,24 +569,24 @@ onMounted(async () => {
 }
 
 .queue-item:hover {
-  background: #fafcff;
+  background: var(--brand-softer);
 }
 
 .queue-item.active {
-  border-color: #f2d9a5;
-  background: #fffbf3;
+  border-color: var(--amber-border);
+  background: var(--amber-soft-2);
 }
 
 .queue-accent {
   width: 3px;
   border-radius: 3px;
-  background: #f1d7a2;
+  background: var(--amber-border);
   margin-right: 10px;
   flex-shrink: 0;
 }
 
 .queue-item.active .queue-accent {
-  background: #f59e0b;
+  background: var(--amber);
 }
 
 .queue-main {
@@ -847,14 +847,14 @@ onMounted(async () => {
 
 .review-rule {
   padding: 9px 11px;
-  border: 1px solid #edf1f7;
+  border: 1px solid var(--border);
   border-radius: 9px;
-  background: #fff;
+  background: var(--card);
 }
 
 .review-rule.hit {
-  border-color: #f0dcb3;
-  background: #fffdf8;
+  border-color: var(--amber-border);
+  background: var(--amber-soft-2);
 }
 
 .review-rule-head {
@@ -868,16 +868,16 @@ onMounted(async () => {
 .rule-flag {
   padding: 1px 5px;
   border-radius: 4px;
-  background: #f1f5f9;
-  color: #94a3b8;
+  background: var(--surface-strong);
+  color: var(--muted-light);
   font-family: var(--mono);
   font-size: 8px;
   font-weight: 650;
 }
 
 .review-rule.hit .rule-flag {
-  background: #fef3c7;
-  color: #b45309;
+  background: var(--amber-soft);
+  color: var(--amber-ink);
 }
 
 .review-rule-head strong {
@@ -943,27 +943,27 @@ onMounted(async () => {
   margin-top: 4px;
   padding: 2px 6px;
   border-radius: 5px;
-  background: #f1eaff;
-  color: #6d4fc4;
+  background: var(--purple-soft);
+  color: var(--purple);
   font-family: var(--mono);
   font-size: 8.5px;
 }
 
 .score-card {
   padding: 14px;
-  border: 1px solid #f5e5c5;
+  border: 1px solid var(--amber-border);
   border-radius: 12px;
-  background: #fffdf7;
+  background: var(--amber-soft-2);
 }
 
 .score-label {
-  color: #a16207;
+  color: var(--amber-ink);
   font-size: 9.5px;
 }
 
 .score-number {
   margin-top: 2px;
-  color: #b45309;
+  color: var(--amber);
   font-family: var(--mono);
   font-size: 30px;
   font-weight: 700;
@@ -988,7 +988,7 @@ onMounted(async () => {
   margin: 7px 0 8px;
   overflow: hidden;
   border-radius: 99px;
-  background: #f4ead6;
+  background: var(--amber-soft);
 }
 
 .score-track span {
@@ -999,7 +999,7 @@ onMounted(async () => {
 }
 
 .score-note {
-  color: #8a6d3b;
+  color: var(--muted);
   font-size: 9.5px;
   line-height: 1.6;
 }
@@ -1022,8 +1022,8 @@ onMounted(async () => {
 .tag-cloud span {
   padding: 3px 8px;
   border-radius: 6px;
-  background: #f1f5f9;
-  color: #475569;
+  background: var(--surface-strong);
+  color: var(--text);
   font-size: 9.5px;
 }
 
@@ -1045,7 +1045,7 @@ onMounted(async () => {
   gap: 10px;
   margin-top: 16px;
   padding-top: 13px;
-  border-top: 1px solid #f0f3f8;
+  border-top: 1px solid var(--border);
 }
 
 .analysis-meta span {
@@ -1097,11 +1097,11 @@ onMounted(async () => {
   align-items: center;
   gap: 12px;
   padding: 12px 18px;
-  border-top: 1px solid #f1e7d4;
+  border-top: 1px solid var(--border);
   border-radius: 0 0 18px 18px;
-  background: rgba(255, 253, 248, 0.96);
+  background: var(--card);
   backdrop-filter: blur(10px);
-  box-shadow: 0 -8px 24px -16px rgba(15, 23, 42, 0.2);
+  box-shadow: var(--shadow-md);
 }
 
 .review-form {
@@ -1131,7 +1131,7 @@ onMounted(async () => {
     padding-left: 0;
     padding-top: 14px;
     border-left: 0;
-    border-top: 1px solid #f0f3f8;
+    border-top: 1px solid var(--border);
   }
 }
 
@@ -1159,7 +1159,7 @@ onMounted(async () => {
   .review-analysis {
     padding-left: 0;
     border-left: 0;
-    border-top: 1px solid #f0f3f8;
+    border-top: 1px solid var(--border);
     padding-top: 14px;
   }
 }

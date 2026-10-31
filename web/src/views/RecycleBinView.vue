@@ -548,8 +548,8 @@ onMounted(load)
   align-items: center;
   gap: 9px;
   padding: 10px 18px;
-  border-bottom: 1px solid #f0f3f8;
-  background: #f8fafc;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-soft);
 }
 
 .select-all {
@@ -652,14 +652,14 @@ onMounted(load)
   padding: 10px 12px;
   overflow: auto;
   border-radius: 10px;
-  background: #f8fafc;
+  background: var(--surface-soft);
 }
 
 .result-row {
   display: flex;
   flex-direction: column;
   padding: 6px 0;
-  border-bottom: 1px dashed #e2e8f0;
+  border-bottom: 1px dashed var(--border);
   font-size: 12px;
 }
 

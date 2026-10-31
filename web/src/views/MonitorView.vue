@@ -473,10 +473,10 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 6px;
   padding: 5px 9px;
-  border: 1px solid #dce7fb;
+  border: 1px solid var(--brand-border);
   border-radius: 8px;
-  background: #f8fbff;
-  color: #4b6b9e;
+  background: var(--brand-softer);
+  color: var(--brand-strong);
   font-size: 10px;
 }
 
@@ -501,9 +501,9 @@ onBeforeUnmount(() => {
   gap: 10px;
   margin-bottom: 14px;
   padding: 12px 14px;
-  border: 1px solid #dce7fb;
+  border: 1px solid var(--brand-border);
   border-radius: 11px;
-  background: #f8fbff;
+  background: var(--brand-softer);
 }
 
 .monitor-hint :deep(svg) {
@@ -516,14 +516,14 @@ onBeforeUnmount(() => {
 
 .monitor-hint strong {
   display: block;
-  color: #1e4b9e;
+  color: var(--brand-strong);
   font-size: 11px;
   font-weight: 600;
 }
 
 .monitor-hint p {
   margin: 3px 0 0;
-  color: #64748b;
+  color: var(--muted);
   font-size: 10px;
 }
 
@@ -560,8 +560,8 @@ onBeforeUnmount(() => {
 .task-chip {
   padding: 4px 8px;
   border-radius: 6px;
-  background: #f5f8fd;
-  color: #64748b;
+  background: var(--surface-soft);
+  color: var(--muted);
   font-size: 9.5px;
 }
 

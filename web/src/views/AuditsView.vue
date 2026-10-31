@@ -1271,9 +1271,8 @@ function validateCategoryForm(): string {
   return ''
 }
 
-function auditMoreOptions(audit: Audit) {
+function auditMoreOptions() {
   const options: Array<Record<string, unknown>> = [
-    { label: '复制审核编码', key: 'copy' },
     { label: '查看详情', key: 'detail' },
     { label: '查看数据报表', key: 'analytics' },
   ]
@@ -1290,11 +1289,12 @@ function auditMoreOptions(audit: Audit) {
   return options
 }
 
+function copyAuditCode(audit: Audit) {
+  copyText(audit.code).then((ok) => (ok ? message.success('审核编码已复制') : message.error('复制失败')))
+}
+
 function handleAuditMore(key: string, audit: Audit) {
   switch (key) {
-    case 'copy':
-      copyText(audit.code).then((ok) => (ok ? message.success('审核编码已复制') : message.error('复制失败')))
-      break
     case 'detail':
       openDetail(audit)
       break
@@ -2199,7 +2199,12 @@ onMounted(async () => {
           <div class="audit-heading">
             <h3 class="audit-name" :title="audit.name">{{ audit.name }}</h3>
             <div class="audit-badges">
-              <span class="audit-code mono">{{ audit.code }}</span>
+              <span class="audit-code-wrap">
+                <span class="audit-code mono">{{ audit.code }}</span>
+                <button class="audit-copy-code" type="button" title="复制审核编码" aria-label="复制审核编码" @click="copyAuditCode(audit)">
+                  <CopyOutline />
+                </button>
+              </span>
               <StatusTag :status="audit.status" type="audit" />
               <StatusTag v-if="audit.provider_kind" :status="audit.provider_kind" type="kind" />
               <span v-if="audit.decision_mode === 'CLASSIFY' || audit.decision_mode === 'CLASSIFY_ONLY'" class="audit-mode-badge" :class="{ classifier: audit.decision_mode === 'CLASSIFY_ONLY' }">
@@ -2259,7 +2264,7 @@ onMounted(async () => {
               <template #icon><DownloadOutline /></template>
               导出记录
             </n-button>
-            <n-dropdown trigger="click" :options="auditMoreOptions(audit)" @select="(key) => handleAuditMore(String(key), audit)">
+            <n-dropdown trigger="click" :options="auditMoreOptions()" @select="(key) => handleAuditMore(String(key), audit)">
               <n-button size="small" quaternary>
                 <template #icon><EllipsisHorizontalOutline /></template>
                 更多
@@ -3389,7 +3394,7 @@ onMounted(async () => {
   padding: 15px 20px;
   border: 1px solid var(--border);
   border-radius: 14px;
-  background: #fff;
+  background: var(--card);
   box-shadow: var(--shadow-sm);
 }
 
@@ -3414,7 +3419,7 @@ onMounted(async () => {
 .summary-divider {
   width: 1px;
   height: 20px;
-  background: #eef1f6;
+  background: var(--border);
 }
 
 .summary-hint {
@@ -3463,7 +3468,7 @@ onMounted(async () => {
   padding: 18px;
   border: 1px solid var(--border);
   border-radius: 16px;
-  background: #fff;
+  background: var(--card);
   box-shadow: var(--shadow-sm);
   transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
 }
@@ -3487,13 +3492,13 @@ onMounted(async () => {
   align-items: center;
   justify-content: center;
   border-radius: 12px;
-  background: #f3f5f9;
-  color: #94a3b8;
+  background: var(--surface-strong);
+  color: var(--muted-light);
   flex: none;
 }
 
 .audit-side.active {
-  background: linear-gradient(145deg, #edf4ff, #e1ebff);
+  background: linear-gradient(145deg, var(--brand-soft), var(--brand-softer));
   color: var(--brand);
 }
 
@@ -3543,12 +3548,42 @@ onMounted(async () => {
   height: 5px;
 }
 
+.audit-code-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
 .audit-code {
   padding: 2px 6px;
   border-radius: 5px;
   background: var(--surface-soft);
   color: var(--muted-light);
   font-size: 9.5px;
+}
+
+.audit-copy-code {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted-light);
+  cursor: pointer;
+}
+
+.audit-copy-code:hover {
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+
+.audit-copy-code :deep(svg) {
+  width: 12px;
+  height: 12px;
 }
 
 .audit-desc {
@@ -3602,8 +3637,8 @@ onMounted(async () => {
 .trigger-chip {
   padding: 2px 7px;
   border-radius: 5px;
-  background: #f2f7ff;
-  color: #3f69bb;
+  background: var(--brand-soft);
+  color: var(--brand-strong);
   font-size: 8.5px;
 }
 
@@ -3662,7 +3697,7 @@ onMounted(async () => {
 .audit-modal {
   width: min(700px, calc(100vw - 32px));
   border-radius: 18px;
-  background: #fff;
+  background: var(--card);
   box-shadow: 0 30px 80px -20px rgba(15, 23, 42, 0.35);
 }
 
@@ -3673,7 +3708,7 @@ onMounted(async () => {
   flex-direction: column;
   overflow: hidden;
   border-radius: 18px;
-  background: #fff;
+  background: var(--card);
   box-shadow: 0 30px 80px -20px rgba(15, 23, 42, 0.35);
 }
 
@@ -3743,7 +3778,8 @@ onMounted(async () => {
 .treaty-banner code {
   padding: 1px 4px;
   border-radius: 4px;
-  background: rgba(255, 255, 255, 0.7);
+  background: var(--surface-strong);
+  color: var(--text);
   font-family: var(--mono);
   font-size: 9px;
 }
@@ -3760,7 +3796,7 @@ onMounted(async () => {
   padding: 26px 14px;
   border: 1px dashed var(--border);
   border-radius: 10px;
-  background: #fbfcfe;
+  background: var(--surface-soft);
   color: var(--muted);
   text-align: center;
 }
@@ -3783,7 +3819,7 @@ onMounted(async () => {
   margin-top: 12px;
   border: 1px solid var(--border);
   border-radius: 10px;
-  background: #fff;
+  background: var(--card);
 }
 
 .treaty-table {
@@ -3795,7 +3831,7 @@ onMounted(async () => {
 .treaty-table th {
   padding: 8px 10px;
   border-bottom: 1px solid var(--border);
-  background: #f8fafd;
+  background: var(--surface-soft);
   color: var(--muted);
   font-size: 9px;
   font-weight: 550;
@@ -3805,7 +3841,7 @@ onMounted(async () => {
 
 .treaty-table td {
   padding: 9px 10px;
-  border-bottom: 1px solid #f1f4f9;
+  border-bottom: 1px solid var(--border);
   color: var(--text);
   font-size: 10px;
   text-align: center;
@@ -3817,11 +3853,11 @@ onMounted(async () => {
 }
 
 .treaty-table tbody tr:hover {
-  background: #fbfcff;
+  background: var(--surface-soft);
 }
 
 .treaty-table tbody tr.failed {
-  background: #fffafa;
+  background: var(--red-soft-2);
 }
 
 .treaty-upload-progress {
@@ -3902,7 +3938,7 @@ onMounted(async () => {
 
 .treaty-name small.error {
   max-width: 360px;
-  color: #d03050;
+  color: var(--red);
   white-space: normal;
 }
 
@@ -3920,7 +3956,7 @@ onMounted(async () => {
   padding: 12px 14px;
   border: 1px solid var(--border);
   border-radius: 10px;
-  background: #fbfcfe;
+  background: var(--surface-soft);
   color: var(--text);
   font-family: var(--mono);
   font-size: 10.5px;
@@ -4008,9 +4044,9 @@ onMounted(async () => {
 .config-sections {
   overflow: hidden;
   margin: 2px 0 16px;
-  border: 1px solid #edf1f7;
+  border: 1px solid var(--border);
   border-radius: 12px;
-  background: #fbfcfe;
+  background: var(--surface-soft);
 }
 
 .config-sections-head {
@@ -4019,8 +4055,8 @@ onMounted(async () => {
   justify-content: space-between;
   gap: 12px;
   padding: 10px 13px;
-  border-bottom: 1px solid #edf1f7;
-  background: #f8fafd;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-soft);
 }
 
 .config-sections-head strong {
@@ -4039,7 +4075,7 @@ onMounted(async () => {
   align-items: center;
   gap: 12px;
   padding: 10px 13px;
-  border-bottom: 1px dashed #edf1f7;
+  border-bottom: 1px dashed var(--border);
 }
 
 .config-section-row:last-child {
@@ -4080,7 +4116,7 @@ onMounted(async () => {
 }
 
 .config-section-error {
-  color: #d03050 !important;
+  color: var(--red) !important;
 }
 
 .config-section-tags {
@@ -4377,7 +4413,7 @@ onMounted(async () => {
   flex-direction: column;
   overflow: hidden;
   border-radius: 18px;
-  background: #fff;
+  background: var(--card);
   box-shadow: 0 30px 80px -20px rgba(15, 23, 42, 0.35);
 }
 
@@ -4391,15 +4427,15 @@ onMounted(async () => {
   align-items: center;
   gap: 7px;
   padding: 9px 20px;
-  border-bottom: 1px solid #e8eef7;
-  background: #f6f9ff;
+  border-bottom: 1px solid var(--border);
+  background: var(--brand-softer);
 }
 
 .assistant-target-label {
   padding: 2px 6px;
   border-radius: 4px;
-  background: #e3ecff;
-  color: #2854a8;
+  background: var(--brand-soft);
+  color: var(--brand-strong);
   font-size: 8.5px;
 }
 
@@ -4884,9 +4920,9 @@ onMounted(async () => {
 .category-panel {
   margin-bottom: 16px;
   padding: 14px;
-  border: 1px solid #e7deff;
+  border: 1px solid var(--purple-border);
   border-radius: 12px;
-  background: #fcfbff;
+  background: var(--purple-soft);
 }
 
 .category-actions {
@@ -5128,7 +5164,7 @@ onMounted(async () => {
   flex-direction: column;
   overflow: hidden;
   border-radius: 18px;
-  background: #fff;
+  background: var(--card);
   box-shadow: 0 30px 80px -20px rgba(15, 23, 42, 0.35);
 }
 
@@ -5142,15 +5178,15 @@ onMounted(async () => {
   align-items: center;
   gap: 7px;
   padding: 9px 20px;
-  border-bottom: 1px solid #e8eef7;
-  background: #f6f9ff;
+  border-bottom: 1px solid var(--border);
+  background: var(--brand-softer);
 }
 
 .assistant-target-label {
   padding: 2px 6px;
   border-radius: 4px;
-  background: #e3ecff;
-  color: #2854a8;
+  background: var(--brand-soft);
+  color: var(--brand-strong);
   font-size: 8.5px;
 }
 
@@ -5366,7 +5402,7 @@ onMounted(async () => {
   flex-direction: column;
   overflow: hidden;
   border-radius: 18px;
-  background: #fff;
+  background: var(--card);
   box-shadow: 0 30px 80px -20px rgba(15, 23, 42, 0.35);
 }
 
@@ -5380,15 +5416,15 @@ onMounted(async () => {
   align-items: center;
   gap: 7px;
   padding: 9px 20px;
-  border-bottom: 1px solid #e8eef7;
-  background: #f6f9ff;
+  border-bottom: 1px solid var(--border);
+  background: var(--brand-softer);
 }
 
 .assistant-target-label {
   padding: 2px 6px;
   border-radius: 4px;
-  background: #e3ecff;
-  color: #2854a8;
+  background: var(--brand-soft);
+  color: var(--brand-strong);
   font-size: 8.5px;
 }
 

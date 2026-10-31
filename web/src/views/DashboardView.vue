@@ -796,8 +796,8 @@ onMounted(async () => {
 .trigger-mini {
   padding: 1px 4px;
   border-radius: 3px;
-  background: #f2f7ff;
-  color: #4a72bf;
+  background: var(--brand-soft);
+  color: var(--brand-strong);
   font-family: var(--mono);
   font-size: 7px;
 }

@@ -13,6 +13,7 @@ import type {
   InAppMessagePage,
   IntegrationGuide,
   LoginResult,
+  LogsAssistantResult,
   MFAChallenge,
   MFASetup,
   MFAStatus,
@@ -248,6 +249,7 @@ export const dashboardApi = {
 
 export const logApi = {
   list: (params?: Record<string, unknown>) => get<Paged<AuditLog>>('/audit-logs', params),
+  assistant: (payload: Record<string, unknown>) => post<LogsAssistantResult>('/audit-logs/assistant', payload),
 }
 
 export const monitorApi = {

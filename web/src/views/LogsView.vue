@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import {
   NButton,
   NDatePicker,
@@ -16,12 +16,14 @@ import {
   RefreshOutline,
   SearchOutline,
   ShieldCheckmarkOutline,
+  SparklesOutline,
 } from '@vicons/ionicons5'
 import PageHeader from '@/components/PageHeader.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import EmptyState from '@/components/EmptyState.vue'
+import LogsAssistantModal from '@/components/LogsAssistantModal.vue'
 import { logApi } from '@/api'
-import type { AuditLog } from '@/api/types'
+import type { AuditLog, LogsAssistantFilter } from '@/api/types'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 const workspace = useWorkspaceStore()
@@ -32,39 +34,14 @@ const total = ref(0)
 const page = ref(1)
 const pageSize = ref(20)
 const operator = ref('')
+const keyword = ref('')
 const action = ref<string[]>([])
 const result = ref<string | null>(null)
 const objectType = ref<string | null>(null)
 const dateRange = ref<[number, number] | null>(null)
 const detailShow = ref(false)
+const assistantShow = ref(false)
 const selected = ref<AuditLog | null>(null)
-
-const actionOptions = [
-  { label: '登录', value: 'LOGIN' },
-  { label: '登录失败', value: 'LOGIN_FAILED' },
-  { label: '项目创建', value: 'PROJECT_CREATE' },
-  { label: '项目修改', value: 'PROJECT_UPDATE' },
-  { label: '项目删除', value: 'PROJECT_DELETE' },
-  { label: '项目密钥变更', value: 'PROJECT_SECRET_UPDATE' },
-  { label: '模型接入变更', value: 'PROVIDER_CREATE' },
-  { label: '模型测试', value: 'PROVIDER_TEST' },
-  { label: '审核配置变更', value: 'AUDIT_CREATE' },
-  { label: '审核配置永久删除', value: 'AUDIT_PURGE' },
-  { label: '数据连接变更', value: 'REDIS_CONNECTION_CREATE' },
-  { label: '数据连接测试', value: 'REDIS_CONNECTION_TEST' },
-  { label: '接入凭证变更', value: 'CREDENTIAL_CREATE' },
-  { label: '触发方式变更', value: 'TRIGGER_UPDATE' },
-  { label: '任务提交', value: 'TASK_SUBMIT' },
-  { label: '任务完成', value: 'TASK_COMPLETE' },
-  { label: '任务失败', value: 'TASK_FAILED' },
-  { label: '人工复核', value: 'TASK_REVIEW' },
-  { label: '任务重试', value: 'TASK_RETRY' },
-  { label: '批量重试', value: 'TASK_BATCH_RETRY' },
-  { label: '账号变更', value: 'USER_CREATE' },
-  { label: '角色变更', value: 'ROLE_CREATE' },
-  { label: '两步验证', value: 'MFA_RESET' },
-  { label: '开放 API 提交', value: 'OPENAPI_SUBMIT' },
-]
 
 const actionLabels: Record<string, string> = {
   LOGIN: '登录',
@@ -73,6 +50,7 @@ const actionLabels: Record<string, string> = {
   LOGIN_LOCKED: '登录锁定',
   LOGIN_MFA_CHALLENGE: '两步验证挑战',
   LOGIN_MFA_FAILED: '两步验证失败',
+  LOGIN_MFA_ONLY: 'Authenticator 登录',
   PASSWORD_CHANGE: '修改密码',
   MFA_ENABLE: '开启两步验证',
   MFA_DISABLE: '关闭两步验证',
@@ -119,17 +97,25 @@ const actionLabels: Record<string, string> = {
   USER_CREATE: '创建账号',
   USER_UPDATE: '更新账号',
   OPENAPI_SUBMIT: '开放 API 提交',
+  NOTIFICATION_CHANNEL_CREATE: '创建通知渠道',
+  NOTIFICATION_CHANNEL_UPDATE: '更新通知渠道',
+  NOTIFICATION_CHANNEL_DELETE: '删除通知渠道',
+  NOTIFICATION_CHANNEL_TEST: '测试通知渠道',
 }
+
+const actionOptions = computed(() =>
+  Object.entries(actionLabels).map(([value, label]) => ({ label, value })),
+)
 
 async function load() {
   loading.value = true
   try {
     const params: Record<string, unknown> = {
-      project_id: workspace.currentProjectId || undefined,
       page: page.value,
       page_size: pageSize.value,
     }
     if (operator.value.trim()) params.operator = operator.value.trim()
+    if (keyword.value.trim()) params.keyword = keyword.value.trim()
     if (action.value.length) params.action = action.value.join(',')
     if (result.value) params.result = result.value
     if (objectType.value) params.object_type = objectType.value
@@ -149,6 +135,7 @@ async function load() {
 
 function reset() {
   operator.value = ''
+  keyword.value = ''
   action.value = []
   result.value = null
   objectType.value = null
@@ -166,7 +153,41 @@ function actionLabel(value: string) {
   return actionLabels[value] || value
 }
 
-watch([action, result, objectType, dateRange, () => workspace.currentProjectId], () => {
+const assistantFilters = computed<LogsAssistantFilter>(() => ({
+  operator: operator.value.trim() || undefined,
+  actions: action.value.length ? [...action.value] : undefined,
+  object_type: objectType.value || undefined,
+  result: result.value || undefined,
+  keyword: keyword.value.trim() || undefined,
+  start: dateRange.value ? dayjs(dateRange.value[0]).format('YYYY-MM-DD') : undefined,
+  end: dateRange.value ? dayjs(dateRange.value[1]).format('YYYY-MM-DD') : undefined,
+}))
+
+let applyingAssistantFilter = false
+
+function applyAssistantFilter(filter: LogsAssistantFilter) {
+  applyingAssistantFilter = true
+  operator.value = filter.operator || ''
+  keyword.value = filter.keyword || ''
+  action.value = filter.actions || []
+  objectType.value = filter.object_type || null
+  result.value = filter.result || null
+  if (filter.start || filter.end) {
+    const start = filter.start ? dayjs(filter.start).valueOf() : dayjs().subtract(30, 'day').valueOf()
+    const end = filter.end ? dayjs(filter.end).valueOf() : dayjs().valueOf()
+    dateRange.value = [start, end]
+  } else {
+    dateRange.value = null
+  }
+  page.value = 1
+  void nextTick(() => {
+    applyingAssistantFilter = false
+    void load()
+  })
+}
+
+watch([action, result, objectType, dateRange], () => {
+  if (applyingAssistantFilter) return
   page.value = 1
   load()
 })
@@ -210,6 +231,16 @@ onMounted(load)
         >
           <template #prefix><SearchOutline /></template>
         </n-input>
+        <n-input
+          v-model:value="keyword"
+          placeholder="关键词 / trace_id"
+          clearable
+          class="keyword-input"
+          @keyup.enter="load"
+          @clear="load"
+        >
+          <template #prefix><SearchOutline /></template>
+        </n-input>
         <n-select
           v-model:value="action"
           :options="actionOptions"
@@ -244,6 +275,10 @@ onMounted(load)
         />
         <n-date-picker v-model:value="dateRange" type="daterange" clearable style="width: 220px" />
         <n-button quaternary @click="reset">重置</n-button>
+        <n-button type="primary" secondary @click="assistantShow = true">
+          <template #icon><SparklesOutline /></template>
+          AI 查询助手
+        </n-button>
         <span class="total-count">共 {{ total }} 条</span>
       </div>
 
@@ -332,6 +367,13 @@ onMounted(load)
         </div>
       </div>
     </n-modal>
+
+    <LogsAssistantModal
+      v-model:show="assistantShow"
+      :project-id="workspace.currentProjectId || 0"
+      :filters="assistantFilters"
+      @apply="applyAssistantFilter"
+    />
   </div>
 </template>
 
@@ -342,10 +384,10 @@ onMounted(load)
   gap: 8px;
   margin-bottom: 14px;
   padding: 10px 14px;
-  border: 1px solid #e1eaf8;
+  border: 1px solid var(--brand-border);
   border-radius: 10px;
-  background: #f8fbff;
-  color: #64748b;
+  background: var(--brand-softer);
+  color: var(--muted);
   font-size: 10.5px;
 }
 
@@ -362,11 +404,15 @@ onMounted(load)
   align-items: center;
   gap: 9px;
   padding: 16px 18px;
-  border-bottom: 1px solid #f0f3f8;
+  border-bottom: 1px solid var(--border);
 }
 
 .operator-input {
   width: 150px;
+}
+
+.keyword-input {
+  width: 190px;
 }
 
 .total-count {
@@ -420,7 +466,7 @@ onMounted(load)
 .log-modal {
   width: min(620px, calc(100vw - 32px));
   border-radius: 17px;
-  background: #fff;
+  background: var(--card);
   box-shadow: 0 30px 80px -20px rgba(15, 23, 42, 0.35);
 }
 
@@ -429,7 +475,7 @@ onMounted(load)
   align-items: flex-start;
   justify-content: space-between;
   padding: 22px 24px 16px;
-  border-bottom: 1px solid #f0f3f8;
+  border-bottom: 1px solid var(--border);
 }
 
 .kicker {

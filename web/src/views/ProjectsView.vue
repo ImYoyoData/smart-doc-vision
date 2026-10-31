@@ -15,6 +15,7 @@ import {
   ArrowForwardOutline,
   BarChartOutline,
   CheckmarkCircleOutline,
+  CopyOutline,
   DocumentTextOutline,
   EllipsisHorizontalOutline,
   FolderOpenOutline,
@@ -32,6 +33,7 @@ import StatusTag from '@/components/StatusTag.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import ProjectSecretsModal from '@/components/ProjectSecretsModal.vue'
 import { projectApi } from '@/api'
+import { copyText } from '@/utils/clipboard'
 import type { Project } from '@/api/types'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { useAuthStore } from '@/stores/auth'
@@ -112,6 +114,10 @@ function openCreate() {
   })
   errorText.value = ''
   modalShow.value = true
+}
+
+function copyProjectCode(project: Project) {
+  copyText(project.code).then((ok) => (ok ? message.success('项目编码已复制') : message.error('复制失败')))
 }
 
 function openEdit(project: Project) {
@@ -349,7 +355,12 @@ onMounted(async () => {
               <StatusTag :status="project.env" type="env" />
               <StatusTag :status="project.status" type="project" />
             </div>
-            <span class="project-code mono">{{ project.code }}</span>
+            <span class="project-code-wrap">
+              <span class="project-code mono">{{ project.code }}</span>
+              <button class="project-copy-code" type="button" title="复制项目编码" aria-label="复制项目编码" @click="copyProjectCode(project)">
+                <CopyOutline />
+              </button>
+            </span>
           </div>
           <button v-if="canUpdateProject" class="card-menu" type="button" @click="openEdit(project)">
             <EllipsisHorizontalOutline />
@@ -707,11 +718,41 @@ onMounted(async () => {
   white-space: nowrap;
 }
 
+.project-code-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-top: 2px;
+}
+
 .project-code {
   display: block;
-  margin-top: 2px;
   color: var(--muted-light);
   font-size: 9.5px;
+}
+
+.project-copy-code {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted-light);
+  cursor: pointer;
+}
+
+.project-copy-code:hover {
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+
+.project-copy-code :deep(svg) {
+  width: 11px;
+  height: 11px;
 }
 
 .card-menu {

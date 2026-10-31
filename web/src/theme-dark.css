@@ -10,7 +10,7 @@ html[data-theme='dark'] :is(
   .assistant-content, .assistant-composer, .assistant-starter-list button,
   .provider-card, .provider-modal, .mode-card, .summary-chip, .kind-card, .protocol-option,
   .connection-card, .connection-test, .connection-modal, .credential-summary,
-  .credential-card, .secret-modal, .project-card, .project-modal, .doc-section,
+  .credential-card, .cred-modal, .secret-modal, .project-card, .project-modal, .doc-section,
   .prompt-modal, .log-modal, .user-modal, .review-rule, .rule-group, .submit-modal,
   .trigger-modal, .script-logs-modal, .secrets-modal, .script-api-modal,
   .script-confirm-modal, .field-ai-foot, .modal-footer, .vars-trigger, .action-card,

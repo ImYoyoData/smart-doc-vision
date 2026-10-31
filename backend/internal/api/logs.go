@@ -14,49 +14,100 @@ import (
 	"smartdoc-vision/backend/internal/service"
 )
 
+type auditLogFilter struct {
+	ProjectID  *uint64
+	Actions    []string
+	Result     string
+	Operator   string
+	ObjectType string
+	ObjectID   string
+	Keyword    string
+	TraceID    string
+	Start      string
+	End        string
+}
+
+// auditLogQuery applies the caller's data scope plus the supplied filters.
+// Super administrators see all logs (including global login events); other
+// users see their projects plus their own project-less login events.
+func (s *Server) auditLogQuery(user *model.User, filter auditLogFilter) *gorm.DB {
+	q := s.db.Model(&model.AuditLog{})
+	if filter.ProjectID != nil {
+		q = q.Where("project_id = ?", *filter.ProjectID)
+	} else if !isSuperAdmin(user) {
+		if len(user.ProjectIDs) == 0 {
+			q = q.Where("project_id IS NULL AND operator = ?", user.Username)
+		} else {
+			q = q.Where("(project_id IN ? OR (project_id IS NULL AND operator = ?))", user.ProjectIDs, user.Username)
+		}
+	}
+	if len(filter.Actions) > 0 {
+		q = q.Where("action IN ?", filter.Actions)
+	}
+	if filter.Result != "" {
+		q = q.Where("result = ?", filter.Result)
+	}
+	if filter.Operator != "" {
+		q = q.Where("operator LIKE ?", "%"+filter.Operator+"%")
+	}
+	if filter.ObjectType != "" {
+		q = q.Where("object_type = ?", filter.ObjectType)
+	}
+	if filter.ObjectID != "" {
+		q = q.Where("object_id = ?", filter.ObjectID)
+	}
+	if filter.TraceID != "" {
+		q = q.Where("trace_id = ?", filter.TraceID)
+	}
+	if filter.Keyword != "" {
+		like := "%" + filter.Keyword + "%"
+		q = q.Where("(operator LIKE ? OR action LIKE ? OR object_type LIKE ? OR object_id LIKE ? OR trace_id LIKE ? OR detail_json LIKE ?)",
+			like, like, like, like, like, like)
+	}
+	if t, err := parseAuditDate(filter.Start); err != nil {
+		q = q.Where("1 = 0")
+	} else if !t.IsZero() {
+		q = q.Where("created_at >= ?", t)
+	}
+	if t, err := parseAuditDate(filter.End); err != nil {
+		q = q.Where("1 = 0")
+	} else if !t.IsZero() {
+		q = q.Where("created_at < ?", t.AddDate(0, 0, 1))
+	}
+	return q
+}
+
+func parseAuditDate(value string) (time.Time, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}, nil
+	}
+	return time.ParseInLocation("2006-01-02", value, time.Local)
+}
+
 func (s *Server) listAuditLogs(c *gin.Context) {
 	page, pageSize := pagination(c)
 	user := currentUser(c)
-	q := s.db.Model(&model.AuditLog{})
+	filter := auditLogFilter{
+		Actions:    splitList(c.Query("action")),
+		Result:     strings.TrimSpace(c.Query("result")),
+		Operator:   strings.TrimSpace(c.Query("operator")),
+		ObjectType: strings.TrimSpace(c.Query("object_type")),
+		ObjectID:   strings.TrimSpace(c.Query("object_id")),
+		Keyword:    strings.TrimSpace(c.Query("keyword")),
+		TraceID:    strings.TrimSpace(c.Query("trace_id")),
+		Start:      c.Query("start"),
+		End:        c.Query("end"),
+	}
 	if pid := c.Query("project_id"); pid != "" {
 		if id, okID := parseUint(pid); okID {
 			if !s.requireProjectAccess(c, id) {
 				return
 			}
-			q = q.Where("project_id = ?", id)
-		}
-	} else if !isSuperAdmin(user) {
-		if len(user.ProjectIDs) == 0 {
-			q = q.Where("1 = 0")
-		} else {
-			q = q.Where("project_id IN ?", user.ProjectIDs)
+			filter.ProjectID = &id
 		}
 	}
-	if v := c.Query("action"); v != "" {
-		q = q.Where("action IN ?", splitList(v))
-	}
-	if v := c.Query("result"); v != "" {
-		q = q.Where("result = ?", v)
-	}
-	if v := strings.TrimSpace(c.Query("operator")); v != "" {
-		q = q.Where("operator LIKE ?", "%"+v+"%")
-	}
-	if v := strings.TrimSpace(c.Query("object_type")); v != "" {
-		q = q.Where("object_type = ?", v)
-	}
-	if v := strings.TrimSpace(c.Query("object_id")); v != "" {
-		q = q.Where("object_id = ?", v)
-	}
-	if v := c.Query("start"); v != "" {
-		if t, err := time.ParseInLocation("2006-01-02", v, time.Local); err == nil {
-			q = q.Where("created_at >= ?", t)
-		}
-	}
-	if v := c.Query("end"); v != "" {
-		if t, err := time.ParseInLocation("2006-01-02", v, time.Local); err == nil {
-			q = q.Where("created_at < ?", t.AddDate(0, 0, 1))
-		}
-	}
+	q := s.auditLogQuery(user, filter)
 	var total int64
 	if err := q.Count(&total).Error; err != nil {
 		serverError(c, err)

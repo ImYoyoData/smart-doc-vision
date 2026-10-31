@@ -382,6 +382,7 @@ func WriteEnv(cfg config.Config) (string, error) {
 		"SITE_NAME":                   cfg.SiteName,
 		"SITE_NAME_EN":                cfg.SiteNameEn,
 		"SITE_LOGO":                   cfg.SiteLogo,
+		"SITE_URL":                    cfg.SiteURL,
 		"CORS_ORIGINS":                strings.Join(cfg.CORSOrigins, ","),
 		"WORKER_COUNT":                strconv.Itoa(cfg.WorkerCount),
 		"MEDIA_ALLOW_PRIVATE":         strconv.FormatBool(cfg.AllowPrivate),

@@ -659,7 +659,7 @@ onMounted(load)
   padding: 18px;
   border: 1px solid var(--border);
   border-radius: 16px;
-  background: #fff;
+  background: var(--card);
   box-shadow: var(--shadow-sm);
   transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
 }
@@ -683,7 +683,7 @@ onMounted(load)
   align-items: center;
   justify-content: center;
   border-radius: 12px;
-  background: linear-gradient(145deg, #edf4ff, #e0ebff);
+  background: linear-gradient(145deg, var(--brand-soft), var(--brand-softer));
   color: var(--brand);
   flex: none;
 }
@@ -814,18 +814,18 @@ onMounted(load)
 }
 
 .channel-test.ok {
-  color: #15803d;
+  color: var(--green);
 }
 
 .channel-test.error {
-  color: #b91c1c;
+  color: var(--red);
 }
 
 .channel-error {
   display: -webkit-box;
   margin: 6px 0 0;
   overflow: hidden;
-  color: #b91c1c;
+  color: var(--red);
   font-size: 9px;
   line-height: 1.5;
   word-break: break-word;
@@ -960,14 +960,14 @@ onMounted(load)
 .channel-modal {
   width: min(720px, calc(100vw - 32px));
   border-radius: 18px;
-  background: #fff;
+  background: var(--card);
   box-shadow: 0 30px 80px -20px rgba(15, 23, 42, 0.35);
 }
 
 .test-modal {
   width: min(480px, calc(100vw - 32px));
   border-radius: 18px;
-  background: #fff;
+  background: var(--card);
   box-shadow: 0 30px 80px -20px rgba(15, 23, 42, 0.35);
 }
 
@@ -977,8 +977,8 @@ onMounted(load)
   justify-content: space-between;
   gap: 18px;
   padding: 22px 24px 16px;
-  border-bottom: 1px solid #f0f3f8;
-  background: linear-gradient(130deg, #f8fbff, #fff);
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(130deg, var(--brand-softer), var(--card));
   border-radius: 18px 18px 0 0;
 }
 
@@ -1075,7 +1075,7 @@ onMounted(load)
   padding: 9px 11px;
   border-radius: 8px;
   background: var(--amber-soft);
-  color: #a16207;
+  color: var(--amber-ink);
   font-size: 10px;
   line-height: 1.6;
 }
@@ -1090,10 +1090,10 @@ onMounted(load)
 .modal-error {
   margin-top: 12px;
   padding: 9px 11px;
-  border: 1px solid #fee2e2;
+  border: 1px solid var(--red-border);
   border-radius: 8px;
-  background: #fef2f2;
-  color: #b91c1c;
+  background: var(--red-soft);
+  color: var(--red);
   font-size: 11px;
 }
 
@@ -1117,15 +1117,15 @@ onMounted(load)
   margin-top: 12px;
   padding: 9px 11px;
   border-radius: 8px;
-  background: #fef2f2;
-  color: #b91c1c;
+  background: var(--red-soft);
+  color: var(--red);
   font-size: 10.5px;
   line-height: 1.5;
 }
 
 .test-result.ok {
   background: var(--green-soft);
-  color: #15803d;
+  color: var(--green);
 }
 
 .test-result :deep(svg) {

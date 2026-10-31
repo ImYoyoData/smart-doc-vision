@@ -40,7 +40,7 @@
 | 管理后台 | 仪表盘、数据报表、项目、模型接入、接入凭证、审核配置与接入指南、任务、待议复核、审计日志、回收站、用户与权限、系统配置、个人中心；桌面/平板/手机响应式布局 |
 | 文本编码 | 输入文本自动处理 UTF-8 BOM、GB18030/Big5 和常见 Latin-1 乱码，MySQL 连接与建表默认 utf8mb4 |
 | 部署 | 本地开发模式、Docker Compose 一键部署、Nginx 反向代理 |
-| 观测 | 结构化任务事件时间线、审计日志、运营工作台、ECharts 数据报表、Provider 健康状态、Prometheus `/metrics`（含项目 Worker 活跃/排队/上限） |
+| 观测 | 结构化任务事件时间线、审计日志（含全局登录日志与 AI 查询助手）、运营工作台、ECharts 数据报表、Provider 健康状态、Prometheus `/metrics`（含项目 Worker 活跃/排队/上限） |
 | 系统配置 | 只读展示进程启动时解析的 `.env` / `config.yml`：运行环境、MySQL、Redis、JWT/Master Key、初始化管理员、默认模型等；密码和密钥服务端脱敏 |
 
 ### 界面预览
@@ -130,6 +130,7 @@ CREATE DATABASE IF NOT EXISTS `smart-doc-vision`
 - `build.ps1` 会把 `.env.example` 复制到 `dist/.env.example`，不再自动生成 `dist/.env`；首次启动会进入安装向导。
 - 旧版 `config.yml` 仅作为兼容兜底读取，但 `.env` 中的同名配置优先；新部署不再需要它。
 - 站点名称与 Logo 通过 `SITE_NAME`、`SITE_NAME_EN`、`SITE_LOGO` 配置，修改后重启生效；`SITE_LOGO` 支持图片 URL、`data:image/...` 或服务器本地图片路径，留空使用内置图标。
+- `SITE_URL` 用于邮件通知中的登录/复核链接，填写外部可访问地址（不带末尾 `/`）；反向代理或容器部署时不要使用默认的 `127.0.0.1`。
 
 `.env` 至少修改：
 
@@ -156,6 +157,7 @@ ADMIN_PASSWORD=你的管理员密码
 SITE_NAME=智审图档
 SITE_NAME_EN=SmartDoc Vision
 SITE_LOGO=
+SITE_URL=http://127.0.0.1:8080
 ```
 
 > 当前工作区的本地 `.env` 已按本机 MySQL / Redis 配置好，且被 `.gitignore` 忽略。`dbhub.toml` 也已被忽略，避免数据库口令进入版本库。
@@ -255,6 +257,13 @@ STORAGE_PUBLIC_BASE_URL=
 - 同一 IP 连续 3 次登录失败后封禁 10 分钟；账号自身连续失败 5 次也会锁定一段时间。Authenticator 登录同样计入失败次数。
 - 验证码错误、密码错误或动态验证码错误都会计入失败次数；成功登录后重置连续失败计数。
 - 错误码：`CAPTCHA_INVALID`（滑块失败/过期）、`IP_BLOCKED`（IP 封禁）、`LOGIN_LOCKED`（账号锁定）、`MFA_LOGIN_INVALID`（Authenticator 账号或验证码错误）。
+
+审计日志查询：
+
+- 「审计日志」页面展示当前账号权限范围内的全部操作；超级管理员默认查看全部项目，包括不带项目归属的登录、两步验证和账号操作日志。
+- 支持操作人、操作类型、对象类型、结果、日期范围以及关键词 / trace_id 模糊查询。
+- 「AI 查询助手」支持自然语言查询、统计分析和语音输入；助手调用只读工具查询日志，并可将最终条件一键应用到筛选表格。模型需使用支持工具调用的通用大模型。
+- 待议复核的站内消息邮件使用 HTML 模板，包含项目、审核配置、任务号、来源、业务键、request_id、模型摘要和直达复核台的按钮；`SITE_URL` 决定邮件按钮链接。
 
 ### 5. 验证
 
