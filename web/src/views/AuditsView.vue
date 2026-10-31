@@ -2386,19 +2386,22 @@ onMounted(async () => {
             <n-button v-if="auth.can('audit:write')" size="tiny" quaternary circle title="复制配置" aria-label="复制配置" @click="openClone(audit)">
               <template #icon><CopyOutline /></template>
             </n-button>
-            <n-button size="tiny" quaternary circle title="接入指南" aria-label="接入指南" @click="openGuide(audit)">
-              <template #icon><LinkOutline /></template>
-            </n-button>
             <n-button size="tiny" quaternary circle title="导出记录" aria-label="导出记录" @click="openExport(audit)">
               <template #icon><DownloadOutline /></template>
             </n-button>
             <n-button v-if="auth.can('audit:write')" size="tiny" quaternary circle class="delete-btn" title="移入回收站" aria-label="移入回收站" @click="remove(audit)">
               <template #icon><TrashOutline /></template>
             </n-button>
-            <n-button v-if="auth.can('task:submit')" class="audit-run" size="small" type="primary" :disabled="audit.status !== 'ACTIVE'" @click="openSubmit(audit)">
-              <template #icon><FlashOutline /></template>
-              发起审核
-            </n-button>
+            <div class="audit-primary-actions">
+              <n-button size="small" secondary @click="openGuide(audit)">
+                <template #icon><LinkOutline /></template>
+                接入指南
+              </n-button>
+              <n-button v-if="auth.can('task:submit')" class="audit-run" size="small" type="primary" :disabled="audit.status !== 'ACTIVE'" @click="openSubmit(audit)">
+                <template #icon><FlashOutline /></template>
+                发起审核
+              </n-button>
+            </div>
           </div>
         </div>
       </article>
@@ -3710,7 +3713,10 @@ onMounted(async () => {
   border-top: 1px solid var(--border);
 }
 
-.audit-run {
+.audit-primary-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   margin-left: auto;
 }
 
