@@ -80,6 +80,12 @@ export const useAuthStore = defineStore('auth', () => {
     return data
   }
 
+  async function loginWithMFA(username: string, code: string) {
+    const data = await authApi.loginWithMFA(username, code)
+    applySession(data)
+    return data
+  }
+
   async function verifyMFA(ticket: string, code: string) {
     const data = await authApi.verifyMFA(ticket, code)
     applySession(data)
@@ -124,6 +130,7 @@ export const useAuthStore = defineStore('auth', () => {
     canMenu,
     can,
     login,
+    loginWithMFA,
     verifyMFA,
     loadMe,
     patchUser,

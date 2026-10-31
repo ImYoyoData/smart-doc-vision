@@ -24,6 +24,81 @@ type mfaTicket struct {
 	IP     string `json:"ip"`
 }
 
+// loginWithMFA authenticates an account with only its TOTP code. It is an
+// opt-in convenience for users who already enabled two-factor authentication;
+// password login remains the normal path.
+func (s *Server) loginWithMFA(c *gin.Context) {
+	var req struct {
+		Username string `json:"username" binding:"required"`
+		Code     string `json:"code" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		badRequest(c, "请输入账号和动态验证码")
+		return
+	}
+	req.Username = strings.TrimSpace(req.Username)
+	req.Code = strings.TrimSpace(req.Code)
+	if req.Username == "" {
+		badRequest(c, "请输入账号")
+		return
+	}
+	if !sixDigitCode(req.Code) {
+		badRequest(c, "请输入 6 位动态验证码")
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 3*time.Second)
+	defer cancel()
+	if s.redis == nil {
+		fail(c, http.StatusServiceUnavailable, "DEPENDENCY_MISSING", "验证码服务不可用", nil)
+		return
+	}
+	ip := c.ClientIP()
+	if retry, code := s.loginLocked(ctx, req.Username, ip); code != "" {
+		s.writeLoginBlocked(c, time.Until(retry), code)
+		return
+	}
+
+	var user model.User
+	lookupErr := s.db.Where("username = ?", req.Username).First(&user).Error
+	secret := ""
+	if lookupErr == nil && user.MFAEnabled {
+		secret, _ = s.cipher.Decrypt(user.MFASecretEnc)
+	}
+	if lookupErr != nil || user.Status != "ACTIVE" || !user.MFAEnabled || secret == "" ||
+		!security.ValidateTOTP(secret, req.Code, time.Now()) {
+		blocked, retry := s.recordLoginFailure(ctx, req.Username, ip)
+		if blocked {
+			s.writeLoginBlocked(c, retry, "IP_BLOCKED")
+			return
+		}
+		s.createAuditLogNoReq(nil, req.Username, "LOGIN_MFA_FAILED", "USER", req.Username, "FAILED",
+			map[string]any{"ip": ip, "method": "totp"}, c.GetString("trace_id"))
+		// Keep the response identical for unknown accounts, disabled accounts
+		// and wrong codes so this endpoint cannot be used for user enumeration.
+		fail(c, http.StatusUnauthorized, "MFA_LOGIN_INVALID", "账号或动态验证码错误", nil)
+		return
+	}
+	if user.TokenVersion == 0 {
+		user.TokenVersion = 1
+		_ = s.db.Model(&user).Update("token_version", 1).Error
+	}
+	s.createAuditLogNoReq(nil, user.Username, "LOGIN_MFA_ONLY", "USER", fmt.Sprint(user.ID), "SUCCESS",
+		map[string]any{"ip": ip}, c.GetString("trace_id"))
+	s.issueSession(c, &user, ip)
+}
+
+func sixDigitCode(code string) bool {
+	if len(code) != 6 {
+		return false
+	}
+	for _, char := range code {
+		if char < '0' || char > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 func (s *Server) createMFATicket(ctx context.Context, user *model.User, ip string) (string, error) {
 	if s.redis == nil {
 		return "", errors.New("MFA 依赖 Redis，请检查 Redis 配置")

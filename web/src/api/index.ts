@@ -47,6 +47,7 @@ export const authApi = {
   captcha: () => get<CaptchaChallenge>('/auth/captcha'),
   login: (payload: { username: string; password: string; captcha_id: string; captcha_x: number }) =>
     post<LoginResult | MFAChallenge>('/auth/login', payload),
+  loginWithMFA: (username: string, code: string) => post<LoginResult>('/auth/login/mfa', { username, code }),
   verifyMFA: (ticket: string, code: string) => post<LoginResult>('/auth/mfa', { ticket, code }),
   mfaStatus: () => get<MFAStatus>('/auth/mfa'),
   mfaSetup: () => post<MFASetup>('/auth/mfa/setup'),

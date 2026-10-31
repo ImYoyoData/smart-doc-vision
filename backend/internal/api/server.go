@@ -125,6 +125,7 @@ func (s *Server) Router() *gin.Engine {
 	{
 		admin.GET("/auth/captcha", s.captchaChallenge)
 		admin.POST("/auth/login", s.login)
+		admin.POST("/auth/login/mfa", s.loginWithMFA)
 		admin.POST("/auth/refresh", s.refresh)
 		admin.POST("/auth/mfa", s.verifyMFA)
 		auth := admin.Group("")

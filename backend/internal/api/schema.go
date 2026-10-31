@@ -110,6 +110,7 @@ func (s *SchemaServer) Router() *gin.Engine {
 	{
 		admin.GET("/auth/captcha", s.srv.captchaChallenge)
 		admin.POST("/auth/login", s.srv.login)
+		admin.POST("/auth/login/mfa", s.srv.loginWithMFA)
 		admin.POST("/auth/refresh", s.srv.refresh)
 		admin.POST("/auth/mfa", s.srv.verifyMFA)
 		auth := admin.Group("")

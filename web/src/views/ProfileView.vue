@@ -96,7 +96,7 @@ async function enableMFA() {
     mfaQrDataUrl.value = ''
     mfaCode.value = ''
     if (auth.user) auth.user.mfa_enabled = true
-    message.success('动态验证码已启用，下次登录需要二次验证')
+    message.success('动态验证码已启用，登录时可选择 Authenticator 直接验证')
   } catch (error) {
     mfaError.value = error instanceof Error ? error.message : '启用失败'
   } finally {
@@ -294,7 +294,7 @@ async function logout() {
       <div class="panel-head">
         <div>
           <h3 class="panel-title">两步验证（TOTP）</h3>
-          <p class="panel-subtitle">启用后登录需要输入身份验证器生成的 6 位动态验证码；丢失验证器可联系超级管理员重置。</p>
+          <p class="panel-subtitle">启用后账号密码登录会继续要求输入身份验证器生成的 6 位动态验证码；登录页也可直接选择 Authenticator 登录，仅输入动态验证码。丢失验证器可联系超级管理员重置。</p>
         </div>
         <span class="mfa-status" :class="{ on: mfaEnabled }">{{ mfaEnabled ? '已启用' : '未启用' }}</span>
       </div>

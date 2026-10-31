@@ -27,6 +27,8 @@ const site = useSiteStore()
 
 const username = ref(localStorage.getItem('sdv.last_user') || '')
 const password = ref('')
+const authMode = ref<'password' | 'authenticator'>('password')
+const totpCode = ref('')
 const loading = ref(false)
 const errorText = ref('')
 const captchaShow = ref(false)
@@ -43,16 +45,56 @@ onMounted(() => {
 })
 
 function submit() {
+  if (loading.value) return
+  if (authMode.value === 'authenticator') {
+    void submitMFAOnly()
+    return
+  }
   if (!username.value.trim() || !password.value) {
     errorText.value = '请输入账号和密码'
     return
   }
-  if (loading.value) return
   errorText.value = ''
   captchaError.value = ''
   captchaPayload.value = null
   // The slider is intentionally hidden until the user asks to sign in.
   captchaShow.value = true
+}
+
+function switchAuthMode(mode: 'password' | 'authenticator') {
+  if (loading.value || authMode.value === mode) return
+  authMode.value = mode
+  errorText.value = ''
+  if (mode === 'password') {
+    totpCode.value = ''
+    return
+  }
+  password.value = ''
+  closeCaptcha()
+  closeMFA()
+}
+
+async function submitMFAOnly() {
+  if (loading.value) return
+  const name = username.value.trim()
+  if (!name) {
+    errorText.value = '请输入账号'
+    return
+  }
+  if (!/^\d{6}$/.test(totpCode.value.trim())) {
+    errorText.value = '请输入 6 位动态验证码'
+    return
+  }
+  loading.value = true
+  errorText.value = ''
+  try {
+    await auth.loginWithMFA(name, totpCode.value.trim())
+    await finishLogin()
+  } catch (error) {
+    errorText.value = error instanceof Error ? error.message : '动态验证码验证失败'
+  } finally {
+    loading.value = false
+  }
 }
 
 function closeCaptcha() {
@@ -72,6 +114,7 @@ async function finishLogin() {
   message.success('登录成功，欢迎回来')
   captchaShow.value = false
   mfaShow.value = false
+  totpCode.value = ''
   const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/dashboard'
   router.replace(redirect)
 }
@@ -245,6 +288,28 @@ function forgot() {
         </div>
 
         <form class="login-form" @submit.prevent="submit">
+          <div class="login-mode-tabs" role="tablist" aria-label="登录方式">
+            <button
+              type="button"
+              role="tab"
+              :aria-selected="authMode === 'password'"
+              :class="{ active: authMode === 'password' }"
+              :disabled="loading"
+              @click="switchAuthMode('password')"
+            >
+              账号密码
+            </button>
+            <button
+              type="button"
+              role="tab"
+              :aria-selected="authMode === 'authenticator'"
+              :class="{ active: authMode === 'authenticator' }"
+              :disabled="loading"
+              @click="switchAuthMode('authenticator')"
+            >
+              Authenticator 登录
+            </button>
+          </div>
           <label class="field">
             <span class="field-label">账号</span>
             <n-input
@@ -255,7 +320,7 @@ function forgot() {
               @keyup.enter="submit"
             />
           </label>
-          <label class="field">
+          <label v-if="authMode === 'password'" class="field">
             <span class="field-label">密码</span>
             <n-input
               v-model:value="password"
@@ -271,23 +336,48 @@ function forgot() {
               </template>
             </n-input>
           </label>
+          <label v-else class="field">
+            <span class="field-label">动态验证码</span>
+            <n-input
+              v-model:value="totpCode"
+              size="large"
+              maxlength="6"
+              placeholder="请输入身份验证器中的 6 位验证码"
+              class="totp-code-input"
+              :input-props="{ inputmode: 'numeric', autocomplete: 'one-time-code' }"
+              @keyup.enter="submit"
+            >
+              <template #prefix>
+                <ShieldCheckmarkOutline class="input-icon" />
+              </template>
+            </n-input>
+            <span class="auth-mode-hint">仅适用于已启用两步验证的账号；未启用请使用账号密码登录。</span>
+          </label>
 
           <div v-if="errorText" class="login-error">{{ errorText }}</div>
 
           <n-button type="primary" size="large" block :loading="loading" attr-type="submit" class="login-button">
-            <template #icon><EyeOutline /></template>
-            登录控制台
+            <template #icon>
+              <ShieldCheckmarkOutline v-if="authMode === 'authenticator'" />
+              <EyeOutline v-else />
+            </template>
+            {{ authMode === 'authenticator' ? '验证并登录' : '登录控制台' }}
           </n-button>
 
-          <div class="form-meta">
+          <div v-if="authMode === 'password'" class="form-meta">
             <span>首次登录账号由 <code>ADMIN_USERNAME</code> / <code>ADMIN_PASSWORD</code> 初始化</span>
             <button type="button" class="forgot" @click="forgot">忘记密码？</button>
+          </div>
+          <div v-else class="form-meta authenticator-meta">
+            <span>账号密码登录在启用两步验证后，会继续要求输入动态验证码。</span>
+            <button type="button" class="forgot" @click="switchAuthMode('password')">使用账号密码</button>
           </div>
         </form>
 
         <div class="secure-note">
           <ShieldCheckmarkOutline />
-          <span>滑块验证 · 同一 IP 连续 3 次失败封禁 10 分钟 · 全量操作审计</span>
+          <span v-if="authMode === 'password'">滑块验证 · 同一 IP 连续 3 次失败封禁 10 分钟 · 全量操作审计</span>
+          <span v-else>动态验证码 · 连续失败会锁定账号或 IP · 全量操作审计</span>
         </div>
       </div>
       <div class="form-footer">{{ site.displayName }} {{ site.nameEn }} · 让审核可追溯、可复用、可进化</div>
@@ -760,7 +850,57 @@ h1 span {
 }
 
 .login-form {
-  margin-top: 34px;
+  margin-top: 26px;
+}
+
+.login-mode-tabs {
+  display: flex;
+  gap: 3px;
+  margin-bottom: 20px;
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--surface-strong);
+}
+
+.login-mode-tabs button {
+  flex: 1;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.login-mode-tabs button.active {
+  background: var(--card);
+  color: var(--ink);
+  box-shadow: var(--shadow-sm);
+}
+
+.login-mode-tabs button:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.totp-code-input :deep(input) {
+  font-family: var(--mono);
+  font-size: 20px;
+  letter-spacing: 0.24em;
+}
+
+.auth-mode-hint {
+  display: block;
+  margin-top: 7px;
+  color: var(--muted-light);
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.authenticator-meta {
+  align-items: center;
 }
 
 .field {
