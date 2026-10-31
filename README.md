@@ -6,11 +6,11 @@
 
 ### 发布会宣传片
 
-[![智审图档 · 40 秒发布会宣传片](docs/video/launch-preview.gif)](docs/video/smartdoc-vision-launch.mp4)
+[![智审图档 · 40 秒 3D 立体宣传片](docs/video/launch-preview.gif)](docs/video/smartdoc-vision-launch.mp4)
 
 ![点击播放完整宣传片](docs/video/smartdoc-vision-launch.mp4)
 
-[▶ 观看完整宣传片（40 秒 · 1080p · 含音效）](docs/video/smartdoc-vision-launch.mp4)
+[▶ 观看完整 3D 宣传片（40 秒 · 1080p · 含原创电子配乐）](docs/video/smartdoc-vision-launch.mp4)
 
 ![登录页](docs/screenshots/login.png)
 
@@ -862,7 +862,7 @@ smart-doc-vision/
 
 ## 宣传视频
 
-仓库内置独立的 Remotion 工程 `video/`，用于生成 40 秒 1080p 产品宣传片：
+仓库内置独立的 Remotion 工程 `video/`，用于生成 40 秒 1080p 3D 立体产品宣传片（当前宣传片使用 `SmartDocCinematic` 合成，3D 透视、实拍 UI 面板、审阅闭环和原创电子配乐）：
 
 ```bash
 cd video
@@ -870,7 +870,8 @@ npm install
 SDV_TOKEN=<后台 access_token> npm run capture   # 采集当前界面的高清截图
 npm run render                                  # 输出 out/smartdoc-vision-promo.mp4（品牌介绍版）
 node scripts/make-beat.mjs                      # 合成 120 BPM 原创配乐（40 秒）
-npm run render:launch                           # 输出 out/smartdoc-vision-launch.mp4（发布会卡点版）
+npm run render:launch                           # 输出 out/smartdoc-vision-launch.mp4（旧版发布会卡点版）
+npm run render:cinematic                        # 输出 out/smartdoc-vision-cinematic.mp4（3D 立体版）
 npm run studio                                  # 可视化调整分镜
 ```
 
