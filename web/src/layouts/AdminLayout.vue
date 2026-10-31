@@ -73,14 +73,42 @@ const isMobile = ref(window.matchMedia('(max-width: 960px)').matches)
 let mobileMedia: MediaQueryList | null = null
 const menuCollapsed = computed(() => sidebarCollapsed.value && !isMobile.value)
 const activeMenuKey = computed(() => (route.name ? String(route.name) : ''))
-const watermarkContent = computed(() => {
+const watermarkLines = computed(() => {
   const username = auth.user?.username || auth.displayName || ''
   const email = auth.user?.email?.trim() || ''
-  return [username, email].filter(Boolean).join('\n')
+  return [username, email].filter(Boolean)
+})
+const watermarkContent = computed(() => watermarkLines.value.join('\n'))
+const watermarkLayout = computed(() => {
+  const lines = watermarkLines.value.length ? watermarkLines.value : ['']
+  const fontSize = 12
+  const lineHeight = 18
+  const measured = measureWatermarkWidth(lines, fontSize)
+  const textWidth = Math.max(140, measured)
+  const textHeight = lines.length * lineHeight
+  const xOffset = 10
+  const rad = (-18 * Math.PI) / 180
+  const cos = Math.cos(rad)
+  const sin = Math.sin(rad)
+  // Rotation around the top-left corner: lift the text by enough that the
+  // longest line never clips against the top edge.
+  const yOffset = Math.ceil((Math.abs(sin) * (xOffset + textWidth)) / cos) + 6
+  const width = Math.ceil(cos * (xOffset + textWidth) - sin * (yOffset + textHeight)) + 8
+  const height = Math.ceil(sin * xOffset + cos * (yOffset + textHeight)) + 8
+  return { width, height, xOffset, yOffset }
 })
 const watermarkColor = computed(() =>
   theme.isDark ? 'rgba(255, 255, 255, 0.10)' : 'rgba(15, 23, 42, 0.09)',
 )
+
+function measureWatermarkWidth(lines: string[], fontSize: number): number {
+  const fallback = Math.max(...lines.map((line) => line.length)) * fontSize
+  if (typeof document === 'undefined') return fallback
+  const context = document.createElement('canvas').getContext('2d')
+  if (!context) return fallback
+  context.font = `500 ${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif`
+  return Math.ceil(Math.max(...lines.map((line) => context.measureText(line).width)))
+}
 const githubURL = 'https://github.com/ImYoyoData/smart-doc-vision'
 const version = ref('1.0.0')
 const metaLoading = ref(false)
@@ -390,13 +418,17 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
     <n-watermark
       fullscreen
       :content="watermarkContent"
-      :font-size="13"
+      :font-size="12"
+      :line-height="18"
+      :font-weight="500"
       :font-color="watermarkColor"
       :rotate="-18"
-      :width="320"
-      :height="150"
-      :x-gap="24"
-      :y-gap="24"
+      :width="watermarkLayout.width"
+      :height="watermarkLayout.height"
+      :x-gap="10"
+      :y-gap="10"
+      :x-offset="watermarkLayout.xOffset"
+      :y-offset="watermarkLayout.yOffset"
       :z-index="9000"
       :selectable="false"
     />
