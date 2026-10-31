@@ -768,6 +768,23 @@ onMounted(async () => {
   background: #f8fafc;
 }
 
+.queue-submeta {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  margin-top: 3px;
+  color: var(--muted-light);
+  font-size: 8.5px;
+  line-height: 1.4;
+}
+
+.queue-submeta span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .queue-empty {
   display: flex;
   height: 100%;
