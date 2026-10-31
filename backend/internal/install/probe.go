@@ -55,6 +55,18 @@ func AllOK(results []ProbeResult) bool {
 	return true
 }
 
+// TestDatabase probes a single database connection for the installer's
+// per-step test button. The request must already be normalized.
+func TestDatabase(ctx context.Context, req Database) ProbeResult {
+	return probeDatabase(ctx, req)
+}
+
+// TestRedis probes a single Redis connection for the installer's per-step
+// test button. The request must already be normalized.
+func TestRedis(ctx context.Context, req Redis) ProbeResult {
+	return probeRedis(ctx, req)
+}
+
 func probeDatabase(ctx context.Context, req Database) ProbeResult {
 	started := time.Now()
 	label := "MySQL"

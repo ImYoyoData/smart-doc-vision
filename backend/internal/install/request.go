@@ -27,6 +27,10 @@ import (
 	"smartdoc-vision/backend/internal/storage"
 )
 
+// maxSiteLogoValueBytes caps SITE_LOGO because the installer accepts inline
+// data URLs (uploaded images and pasted SVG) in addition to a short URL.
+const maxSiteLogoValueBytes = 512 << 10
+
 var (
 	databaseNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,63}$`)
 	adminNamePattern    = regexp.MustCompile(`^[A-Za-z0-9_.-]{3,32}$`)
@@ -197,8 +201,8 @@ func (r Request) ValidateSite() error {
 	if len([]rune(r.Site.NameEn)) > 64 {
 		return fmt.Errorf("英文名称不能超过 64 个字符")
 	}
-	if len(r.Site.Logo) > 1024 {
-		return fmt.Errorf("Logo 地址过长")
+	if len(r.Site.Logo) > maxSiteLogoValueBytes {
+		return fmt.Errorf("Logo 图片过大，不能超过 512KB")
 	}
 	return nil
 }
@@ -206,6 +210,33 @@ func (r Request) ValidateSite() error {
 // ValidateConnections checks the fields needed before probing MySQL, Redis and
 // storage. The test endpoint does not require the agreement or admin account.
 func (r Request) ValidateConnections() error {
+	if err := r.ValidateDatabase(); err != nil {
+		return err
+	}
+	if err := r.ValidateRedis(); err != nil {
+		return err
+	}
+	switch r.Storage.Driver {
+	case "local":
+		if r.Storage.LocalDir == "" {
+			return fmt.Errorf("本地存储目录不能为空")
+		}
+	case "s3":
+		if r.Storage.S3.Bucket == "" {
+			return fmt.Errorf("对象存储 Bucket 不能为空")
+		}
+		if r.Storage.S3.AccessKey == "" || r.Storage.S3.SecretKey == "" {
+			return fmt.Errorf("对象存储 AccessKey / SecretKey 不能为空")
+		}
+	default:
+		return fmt.Errorf("不支持的存储类型 %q", r.Storage.Driver)
+	}
+	return nil
+}
+
+// ValidateDatabase checks only the database fields so the installer can test
+// that connection before the rest of the form is filled.
+func (r Request) ValidateDatabase() error {
 	if r.Database.Driver != config.DriverMySQL && r.Database.Driver != config.DriverPostgres {
 		return fmt.Errorf("数据库类型需为 mysql 或 postgres")
 	}
@@ -228,6 +259,11 @@ func (r Request) ValidateConnections() error {
 			return fmt.Errorf("PostgreSQL SSL 模式无效")
 		}
 	}
+	return nil
+}
+
+// ValidateRedis checks only the Redis fields for the standalone test button.
+func (r Request) ValidateRedis() error {
 	if r.Redis.Host == "" {
 		return fmt.Errorf("Redis 地址不能为空")
 	}
@@ -236,21 +272,6 @@ func (r Request) ValidateConnections() error {
 	}
 	if r.Redis.DB < 0 || r.Redis.DB > 15 {
 		return fmt.Errorf("Redis 数据库编号必须在 0~15 之间")
-	}
-	switch r.Storage.Driver {
-	case "local":
-		if r.Storage.LocalDir == "" {
-			return fmt.Errorf("本地存储目录不能为空")
-		}
-	case "s3":
-		if r.Storage.S3.Bucket == "" {
-			return fmt.Errorf("对象存储 Bucket 不能为空")
-		}
-		if r.Storage.S3.AccessKey == "" || r.Storage.S3.SecretKey == "" {
-			return fmt.Errorf("对象存储 AccessKey / SecretKey 不能为空")
-		}
-	default:
-		return fmt.Errorf("不支持的存储类型 %q", r.Storage.Driver)
 	}
 	return nil
 }

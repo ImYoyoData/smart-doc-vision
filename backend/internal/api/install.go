@@ -96,6 +96,8 @@ func (s *InstallerServer) Router() *gin.Engine {
 	r.GET("/api/site", func(c *gin.Context) { ok(c, siteInfoPayload(s.cfg)) })
 	r.GET("/api/site/logo", func(c *gin.Context) { serveSiteLogo(s.cfg, c) })
 	r.POST("/api/install/test", s.test)
+	r.POST("/api/install/test/database", s.testDatabase)
+	r.POST("/api/install/test/redis", s.testRedis)
 	r.POST("/api/install", s.install)
 	return r
 }
@@ -132,6 +134,50 @@ func (s *InstallerServer) test(c *gin.Context) {
 		}
 	}
 	ok(c, payload)
+}
+
+// testDatabase backs the per-step "test connection" button on the database
+// step. Only the database fields are validated so the button works before the
+// rest of the installer form is complete.
+func (s *InstallerServer) testDatabase(c *gin.Context) {
+	if s.state != install.StateNeedsInstall {
+		fail(c, http.StatusForbidden, "INSTALL_DISABLED", "当前状态不允许执行安装检测", nil)
+		return
+	}
+	var req install.Request
+	if err := c.ShouldBindJSON(&req); err != nil {
+		badRequest(c, "参数格式错误")
+		return
+	}
+	req.Normalize()
+	if err := req.ValidateDatabase(); err != nil {
+		badRequest(c, err.Error())
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+	defer cancel()
+	ok(c, install.TestDatabase(ctx, req.Database))
+}
+
+// testRedis backs the per-step "test connection" button on the Redis step.
+func (s *InstallerServer) testRedis(c *gin.Context) {
+	if s.state != install.StateNeedsInstall {
+		fail(c, http.StatusForbidden, "INSTALL_DISABLED", "当前状态不允许执行安装检测", nil)
+		return
+	}
+	var req install.Request
+	if err := c.ShouldBindJSON(&req); err != nil {
+		badRequest(c, "参数格式错误")
+		return
+	}
+	req.Normalize()
+	if err := req.ValidateRedis(); err != nil {
+		badRequest(c, err.Error())
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
+	defer cancel()
+	ok(c, install.TestRedis(ctx, req.Redis))
 }
 
 func (s *InstallerServer) install(c *gin.Context) {

@@ -189,6 +189,45 @@ func TestBuildConfigAndValidation(t *testing.T) {
 	}
 }
 
+func TestPerStepConnectionValidationAndInlineLogo(t *testing.T) {
+	req := Request{
+		Database: Database{Driver: config.DriverMySQL, Host: "db.local", Port: 3306, User: "root", Database: "smartdoc"},
+		Redis:    Redis{Host: "redis.local", Port: 6379, DB: 0},
+	}
+	req.Normalize()
+	if err := req.ValidateDatabase(); err != nil {
+		t.Fatalf("database validation should pass: %v", err)
+	}
+	if err := req.ValidateRedis(); err != nil {
+		t.Fatalf("redis validation should pass: %v", err)
+	}
+
+	badDatabase := req
+	badDatabase.Database.Host = ""
+	if err := badDatabase.ValidateDatabase(); err == nil {
+		t.Fatal("expected empty database host to fail")
+	}
+	if err := badDatabase.ValidateRedis(); err != nil {
+		t.Fatalf("redis validation must not depend on database fields: %v", err)
+	}
+
+	badRedis := req
+	badRedis.Redis.DB = 16
+	if err := badRedis.ValidateRedis(); err == nil {
+		t.Fatal("expected redis database 16 to fail")
+	}
+
+	logo := req
+	logo.Site.Logo = "data:image/svg+xml;base64," + strings.Repeat("A", 100<<10)
+	if err := logo.ValidateSite(); err != nil {
+		t.Fatalf("inline logo within the limit should pass: %v", err)
+	}
+	logo.Site.Logo = "data:image/svg+xml;base64," + strings.Repeat("A", maxSiteLogoValueBytes)
+	if err := logo.ValidateSite(); err == nil {
+		t.Fatal("expected oversized inline logo to fail")
+	}
+}
+
 func TestBuildPostgresConfigKeepsSecrets(t *testing.T) {
 	base := config.Config{Configured: true, JWTSecret: "existing-jwt", MasterKey: "existing-master-key"}
 	req := Request{

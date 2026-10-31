@@ -157,6 +157,10 @@ async function request<T>(config: Parameters<typeof client.request>[0]): Promise
 export const installApi = {
   status: () => request<InstallStatus>({ method: 'GET', url: '/install/status', timeout: 5_000 }),
   test: (payload: InstallRequest) => request<InstallTestResult>({ method: 'POST', url: '/install/test', data: payload }),
+  testDatabase: (database: InstallDatabase) =>
+    request<InstallProbeResult>({ method: 'POST', url: '/install/test/database', data: { database }, timeout: 20_000 }),
+  testRedis: (redis: InstallRedis) =>
+    request<InstallProbeResult>({ method: 'POST', url: '/install/test/redis', data: { redis }, timeout: 20_000 }),
   install: (payload: InstallRequest) =>
     request<InstallResult>({ method: 'POST', url: '/install', data: payload, timeout: 300_000 }),
 }

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import {
   NAlert,
   NButton,
@@ -54,6 +54,15 @@ const databaseModal = ref(false)
 const databaseChoice = ref<'repair' | 'reset'>('repair')
 const confirmModal = ref(false)
 const databaseAck = ref(false)
+const logoInput = ref<HTMLInputElement | null>(null)
+const logoPreview = ref('')
+const logoDragging = ref(false)
+const logoError = ref('')
+const databaseTest = ref<InstallProbeResult | null>(null)
+const databaseTesting = ref(false)
+const redisTest = ref<InstallProbeResult | null>(null)
+const redisTesting = ref(false)
+const installConfirmModal = ref(false)
 
 const stepTitles = ['介绍与协议', '数据库', 'Redis', '文件存储', '管理员', '检测并安装']
 const stepDescriptions = [
@@ -183,6 +192,201 @@ const canProceed = computed(() => {
   }
 })
 
+function previewableLogo(value: string) {
+  return /^(data:image\/|https?:\/\/)/i.test(value)
+}
+
+function setLogo(value: string) {
+  form.site.logo = value
+  logoPreview.value = previewableLogo(value) ? value : ''
+  logoError.value = ''
+}
+
+function focusLogoDrop(event: MouseEvent) {
+  ;(event.currentTarget as HTMLElement).focus()
+}
+
+function pickLogo() {
+  logoInput.value?.click()
+}
+
+function clearLogo() {
+  setLogo('')
+}
+
+function loadLogoImage(source: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const image = new Image()
+    image.onload = () => resolve(image)
+    image.onerror = () => reject(new Error('无法读取该图片，请更换 PNG、JPG、WebP 或 SVG'))
+    image.src = source
+  })
+}
+
+function svgDataUrl(text: string) {
+  const bytes = new TextEncoder().encode(text)
+  let binary = ''
+  for (const byte of bytes) binary += String.fromCharCode(byte)
+  return `data:image/svg+xml;base64,${btoa(binary)}`
+}
+
+function extractSvg(source: string) {
+  const start = source.search(/<svg[\s>]/i)
+  return start < 0 ? '' : source.slice(start).trim()
+}
+
+async function processLogo(file: Blob, name = 'logo') {
+  logoError.value = ''
+  const isSvg = file.type === 'image/svg+xml' || /\.svg$/i.test(name)
+  if (!file.type.startsWith('image/') && !isSvg) {
+    logoError.value = '请选择 PNG、JPG、WebP 或 SVG 图片'
+    return
+  }
+  if (isSvg) {
+    if (file.size > 256 * 1024) {
+      logoError.value = 'SVG 文件不能超过 256KB，建议精简后重试'
+      return
+    }
+    const text = extractSvg(await file.text())
+    if (!text) {
+      logoError.value = '没有读取到有效的 SVG 内容'
+      return
+    }
+    const dataUrl = svgDataUrl(text)
+    try {
+      await loadLogoImage(dataUrl)
+    } catch (error) {
+      logoError.value = error instanceof Error ? error.message : 'SVG 解析失败'
+      return
+    }
+    setLogo(dataUrl)
+    return
+  }
+  if (file.size > 8 * 1024 * 1024) {
+    logoError.value = '图片文件不能超过 8MB'
+    return
+  }
+  const objectURL = URL.createObjectURL(file)
+  try {
+    const image = await loadLogoImage(objectURL)
+    const size = 256
+    const width = image.naturalWidth || 512
+    const height = image.naturalHeight || 512
+    const scale = Math.max(size / width, size / height)
+    const drawWidth = width * scale
+    const drawHeight = height * scale
+    const canvas = document.createElement('canvas')
+    canvas.width = size
+    canvas.height = size
+    const context = canvas.getContext('2d')
+    if (!context) throw new Error('浏览器不支持图片裁剪')
+    context.clearRect(0, 0, size, size)
+    context.drawImage(image, (size - drawWidth) / 2, (size - drawHeight) / 2, drawWidth, drawHeight)
+    let dataURL = canvas.toDataURL('image/webp', 0.86)
+    if (!dataURL.startsWith('data:image/webp')) dataURL = canvas.toDataURL('image/png')
+    setLogo(dataURL)
+  } catch (error) {
+    logoError.value = error instanceof Error ? error.message : 'Logo 处理失败'
+  } finally {
+    URL.revokeObjectURL(objectURL)
+  }
+}
+
+function onLogoFileChange(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (file) void processLogo(file, file.name)
+  input.value = ''
+}
+
+function onLogoDrop(event: DragEvent) {
+  logoDragging.value = false
+  const file = event.dataTransfer?.files?.[0]
+  if (file) void processLogo(file, file.name)
+}
+
+function onLogoPaste(event: ClipboardEvent) {
+  const items = Array.from(event.clipboardData?.items || [])
+  const fileItem = items.find((item) => item.kind === 'file' && item.type.startsWith('image/'))
+  if (fileItem) {
+    const file = fileItem.getAsFile()
+    if (file) {
+      void processLogo(file, file.name)
+      return
+    }
+  }
+  const text = (event.clipboardData?.getData('text/plain') || '').trim()
+  if (!text) return
+  if (/<svg[\s>]/i.test(text)) {
+    void processLogo(new Blob([text], { type: 'image/svg+xml' }), 'pasted-logo.svg')
+    return
+  }
+  if (/^https?:\/\//i.test(text)) {
+    setLogo(text)
+    return
+  }
+  logoError.value = '请粘贴图片、SVG 代码或图片地址'
+}
+
+// Editing a field invalidates the previous connection test result.
+watch(
+  () => form.database,
+  () => {
+    databaseTest.value = null
+  },
+  { deep: true },
+)
+watch(
+  () => form.redis,
+  () => {
+    redisTest.value = null
+  },
+  { deep: true },
+)
+
+async function testDatabaseConnection() {
+  if (databaseTesting.value || checking.value || installing.value) return
+  stepError.value = ''
+  databaseTest.value = null
+  if (
+    !form.database.host.trim() ||
+    !form.database.user.trim() ||
+    !form.database.database.trim() ||
+    !form.database.port ||
+    form.database.port < 1 ||
+    form.database.port > 65535
+  ) {
+    stepError.value = '请先填写数据库主机地址、用户名、数据库名和有效端口'
+    return
+  }
+  databaseTesting.value = true
+  try {
+    databaseTest.value = await installApi.testDatabase(buildPayload().database)
+  } catch (error) {
+    stepError.value = error instanceof Error ? error.message : '数据库连接检测失败'
+  } finally {
+    databaseTesting.value = false
+  }
+}
+
+async function testRedisConnection() {
+  if (redisTesting.value || checking.value || installing.value) return
+  stepError.value = ''
+  redisTest.value = null
+  if (!form.redis.host.trim() || !form.redis.port || form.redis.port < 1 || form.redis.port > 65535) {
+    stepError.value = '请先填写 Redis 主机地址和有效端口'
+    return
+  }
+  redisTesting.value = true
+  try {
+    redisTest.value = await installApi.testRedis(buildPayload().redis)
+  } catch (error) {
+    stepError.value = error instanceof Error ? error.message : 'Redis 连接检测失败'
+  } finally {
+    redisTesting.value = false
+  }
+}
+
 function applyDefaults(defaults: InstallDefaults) {
   Object.assign(form.database, defaults.database)
   form.database.password = ''
@@ -200,7 +404,7 @@ function applyDefaults(defaults: InstallDefaults) {
   form.admin.confirm = ''
   form.site.name = defaults.site?.name || '智审图档'
   form.site.name_en = defaults.site?.name_en || 'SmartDoc Vision'
-  form.site.logo = defaults.site?.logo || ''
+  setLogo(defaults.site?.logo || '')
 }
 
 async function initialize() {
@@ -343,7 +547,9 @@ async function runInstall() {
       databaseModal.value = true
       return
     }
-    await executeInstall('create', false)
+    // Checks passed: ask for an explicit confirmation before writing config,
+    // creating tables and the administrator account.
+    installConfirmModal.value = true
   } catch (error) {
     installError.value = error instanceof Error ? error.message : '安装失败'
   } finally {
@@ -381,6 +587,12 @@ async function confirmDatabaseInstall() {
   confirmModal.value = false
   databaseModal.value = false
   await executeInstall(mode, true)
+}
+
+async function confirmPlainInstall() {
+  if (installing.value) return
+  installConfirmModal.value = false
+  await executeInstall('create', false)
 }
 
 function reportColumn(change: { table: string; column: string; expected?: string }) {
@@ -554,9 +766,8 @@ onMounted(initialize)
               <n-radio value="postgres">PostgreSQL</n-radio>
             </n-radio-group>
             <div class="form-grid">
-              <label>主机地址<em>*</em><n-input v-model:value="form.database.host" placeholder="127.0.0.1" /></label>
-              <label>端口<em>*</em>
-                <n-input-number
+              <label><span class="field-label">主机地址<em>*</em></span><n-input v-model:value="form.database.host" placeholder="127.0.0.1" /></label>
+              <label><span class="field-label">端口<em>*</em></span><n-input-number
                   v-model:value="form.database.port"
                   :min="1"
                   :max="65535"
@@ -564,13 +775,27 @@ onMounted(initialize)
                   :placeholder="form.database.driver === 'postgres' ? '5432' : '3306'"
                 />
               </label>
-              <label>用户名<em>*</em>
-                <n-input v-model:value="form.database.user" :placeholder="form.database.driver === 'postgres' ? 'postgres' : 'root'" />
+              <label><span class="field-label">用户名<em>*</em></span><n-input v-model:value="form.database.user" :placeholder="form.database.driver === 'postgres' ? 'postgres' : 'root'" />
               </label>
-              <label>密码<n-input v-model:value="form.database.password" type="password" show-password-on="click" placeholder="无密码可留空" /></label>
-              <label>数据库名<em>*</em><n-input v-model:value="form.database.database" placeholder="smart-doc-vision" /></label>
-              <label v-if="form.database.driver === 'mysql'">字符集<n-input v-model:value="form.database.charset" placeholder="utf8mb4" /></label>
-              <label v-else>SSL 模式<n-select v-model:value="form.database.sslmode" :options="sslModeOptions" /></label>
+              <label><span class="field-label">密码</span><n-input v-model:value="form.database.password" type="password" show-password-on="click" placeholder="无密码可留空" /></label>
+              <label><span class="field-label">数据库名<em>*</em></span><n-input v-model:value="form.database.database" placeholder="smart-doc-vision" /></label>
+              <label v-if="form.database.driver === 'mysql'"><span class="field-label">字符集</span><n-input v-model:value="form.database.charset" placeholder="utf8mb4" /></label>
+              <label v-else><span class="field-label">SSL 模式</span><n-select v-model:value="form.database.sslmode" :options="sslModeOptions" /></label>
+            </div>
+            <div class="test-row">
+              <n-button secondary :loading="databaseTesting" :disabled="checking || installing" @click="testDatabaseConnection">
+                <template #icon><ServerOutline /></template>
+                {{ databaseTesting ? '正在检测连接…' : '检测数据库连接' }}
+              </n-button>
+              <div v-if="databaseTest" class="test-result" :class="databaseTest.ok ? 'ok' : 'fail'">
+                <CheckmarkCircleOutline v-if="databaseTest.ok" class="test-icon" />
+                <AlertCircleOutline v-else class="test-icon" />
+                <div class="test-copy">
+                  <strong>{{ databaseTest.message }}</strong>
+                  <span v-if="databaseTest.note">{{ databaseTest.note }}</span>
+                </div>
+                <span class="test-time">{{ databaseTest.latency_ms }} ms</span>
+              </div>
             </div>
             <n-alert type="info" :bordered="false">
               {{ databaseLabel }} 账号需要具备建库、建表和读写权限。安装时会自动创建数据库（MySQL 使用 CREATE DATABASE IF NOT EXISTS，PostgreSQL 使用 CREATE DATABASE）并创建全部数据表。
@@ -586,10 +811,25 @@ onMounted(initialize)
               </div>
             </div>
             <div class="form-grid">
-              <label>主机地址<em>*</em><n-input v-model:value="form.redis.host" placeholder="127.0.0.1" /></label>
-              <label>端口<em>*</em><n-input-number v-model:value="form.redis.port" :min="1" :max="65535" :show-button="false" /></label>
-              <label>密码<n-input v-model:value="form.redis.password" type="password" show-password-on="click" placeholder="无密码可留空" /></label>
-              <label>数据库编号<em>*</em><n-input-number v-model:value="form.redis.db" :min="0" :max="15" :show-button="false" /></label>
+              <label><span class="field-label">主机地址<em>*</em></span><n-input v-model:value="form.redis.host" placeholder="127.0.0.1" /></label>
+              <label><span class="field-label">端口<em>*</em></span><n-input-number v-model:value="form.redis.port" :min="1" :max="65535" :show-button="false" /></label>
+              <label><span class="field-label">密码</span><n-input v-model:value="form.redis.password" type="password" show-password-on="click" placeholder="无密码可留空" /></label>
+              <label><span class="field-label">数据库编号<em>*</em></span><n-input-number v-model:value="form.redis.db" :min="0" :max="15" :show-button="false" /></label>
+            </div>
+            <div class="test-row">
+              <n-button secondary :loading="redisTesting" :disabled="checking || installing" @click="testRedisConnection">
+                <template #icon><LinkOutline /></template>
+                {{ redisTesting ? '正在检测连接…' : '检测 Redis 连接' }}
+              </n-button>
+              <div v-if="redisTest" class="test-result" :class="redisTest.ok ? 'ok' : 'fail'">
+                <CheckmarkCircleOutline v-if="redisTest.ok" class="test-icon" />
+                <AlertCircleOutline v-else class="test-icon" />
+                <div class="test-copy">
+                  <strong>{{ redisTest.message }}</strong>
+                  <span v-if="redisTest.note">{{ redisTest.note }}</span>
+                </div>
+                <span class="test-time">{{ redisTest.latency_ms }} ms</span>
+              </div>
             </div>
             <n-alert type="info" :bordered="false">
               Redis 必须允许当前服务器访问。请避免与其他业务共用同一个数据库编号。
@@ -612,7 +852,7 @@ onMounted(initialize)
 
             <template v-if="form.storage.driver === 'local'">
               <div class="form-grid single">
-                <label>本地目录<em>*</em><n-input v-model:value="form.storage.local_dir" placeholder="例如 /app/data/uploads" /></label>
+                <label><span class="field-label">本地目录<em>*</em></span><n-input v-model:value="form.storage.local_dir" placeholder="例如 /app/data/uploads" /></label>
               </div>
               <n-alert type="info" :bordered="false">
                 默认目录为 <code>{{ status?.system.local_storage_dir }}</code>。图片会保存到该目录下按任务月份划分的子目录中。
@@ -624,19 +864,19 @@ onMounted(initialize)
 
             <template v-else>
               <div class="form-grid">
-                <label>服务商<em>*</em>
+                <label><span class="field-label">服务商<em>*</em></span>
                   <n-select
                     :value="form.storage.s3.provider"
                     :options="providerOptions.map((item) => ({ label: item.label, value: item.value }))"
                     @update:value="onProviderChange"
                   />
                 </label>
-                <label>Region<n-input v-model:value="form.storage.s3.region" :placeholder="selectedProvider?.region || '按服务商填写'" /></label>
-                <label class="span-2">Endpoint<n-input v-model:value="form.storage.s3.endpoint" :placeholder="endpointPlaceholder" /></label>
-                <label>Bucket<em>*</em><n-input v-model:value="form.storage.s3.bucket" placeholder="smartdoc-uploads" /></label>
-                <label>路径前缀<n-input v-model:value="form.storage.s3.prefix" placeholder="可选，例如 smartdoc" /></label>
-                <label>AccessKey<em>*</em><n-input v-model:value="form.storage.s3.access_key" placeholder="Access Key ID" /></label>
-                <label>SecretKey<em>*</em><n-input v-model:value="form.storage.s3.secret_key" type="password" show-password-on="click" placeholder="Secret Access Key" /></label>
+                <label><span class="field-label">Region（地域）</span><n-input v-model:value="form.storage.s3.region" :placeholder="selectedProvider?.region || '按服务商填写'" /></label>
+                <label class="span-2"><span class="field-label">Endpoint（访问地址）</span><n-input v-model:value="form.storage.s3.endpoint" :placeholder="endpointPlaceholder" /></label>
+                <label><span class="field-label">Bucket（存储桶）<em>*</em></span><n-input v-model:value="form.storage.s3.bucket" placeholder="smartdoc-uploads" /></label>
+                <label><span class="field-label">路径前缀</span><n-input v-model:value="form.storage.s3.prefix" placeholder="可选，例如 smartdoc" /></label>
+                <label><span class="field-label">AccessKey（访问密钥 ID）<em>*</em></span><n-input v-model:value="form.storage.s3.access_key" placeholder="Access Key ID" /></label>
+                <label><span class="field-label">SecretKey（访问密钥）<em>*</em></span><n-input v-model:value="form.storage.s3.secret_key" type="password" show-password-on="click" placeholder="Secret Access Key" /></label>
               </div>
               <div class="inline-check">
                 <n-checkbox v-model:checked="form.storage.s3.force_path_style">使用 Path-Style 访问（部分自建 S3 需要）</n-checkbox>
@@ -647,7 +887,7 @@ onMounted(initialize)
             </template>
 
             <div class="form-grid single public-base">
-              <label>公开访问前缀（可选）<n-input v-model:value="form.storage.public_base_url" placeholder="例如 https://cdn.example.com/uploads" /></label>
+              <label><span class="field-label">公开访问前缀（可选）</span><n-input v-model:value="form.storage.public_base_url" placeholder="例如 https://cdn.example.com/uploads" /></label>
             </div>
             <p class="hint">配置公开访问前缀后，系统直接返回该前缀 + 对象路径；不配置时本地存储使用签名地址，对象存储使用预签名地址。</p>
           </template>
@@ -661,9 +901,9 @@ onMounted(initialize)
               </div>
             </div>
             <div class="form-grid">
-              <label>账号<em>*</em><n-input v-model:value="form.admin.username" placeholder="admin" /></label>
-              <label>密码<em>*</em><n-input v-model:value="form.admin.password" type="password" show-password-on="click" placeholder="至少 8 位" /></label>
-              <label>确认密码<em>*</em><n-input v-model:value="form.admin.confirm" type="password" show-password-on="click" placeholder="再次输入密码" /></label>
+              <label><span class="field-label">账号<em>*</em></span><n-input v-model:value="form.admin.username" placeholder="admin" /></label>
+              <label><span class="field-label">密码<em>*</em></span><n-input v-model:value="form.admin.password" type="password" show-password-on="click" placeholder="至少 8 位" /></label>
+              <label><span class="field-label">确认密码<em>*</em></span><n-input v-model:value="form.admin.confirm" type="password" show-password-on="click" placeholder="再次输入密码" /></label>
             </div>
             <p class="hint">密码长度为 8~72 位。安装完成后请妥善保存，后续可在个人中心修改。</p>
 
@@ -672,11 +912,40 @@ onMounted(initialize)
               <p>留空使用平台默认名称和内置图标；安装后也可以修改 .env 中的 SITE_NAME、SITE_NAME_EN、SITE_LOGO。</p>
             </div>
             <div class="form-grid">
-              <label>网站名称<n-input v-model:value="form.site.name" placeholder="留空使用默认：智审图档" maxlength="64" /></label>
-              <label>英文名称<n-input v-model:value="form.site.name_en" placeholder="留空使用默认：SmartDoc Vision" maxlength="64" /></label>
-              <label class="span-2">Logo 地址或路径<n-input v-model:value="form.site.logo" placeholder="https://... 或服务器本地图片路径；留空使用内置图标" maxlength="1024" /></label>
+              <label><span class="field-label">网站名称</span><n-input v-model:value="form.site.name" placeholder="留空使用默认：智审图档" maxlength="64" /></label>
+              <label><span class="field-label">英文名称</span><n-input v-model:value="form.site.name_en" placeholder="留空使用默认：SmartDoc Vision" maxlength="64" /></label>
+              <div class="logo-field span-2">
+                <span class="field-label">Logo（可选）</span>
+                <div
+                  class="logo-drop"
+                  :class="{ dragging: logoDragging, 'has-logo': logoPreview }"
+                  tabindex="0"
+                  @click="focusLogoDrop"
+                  @dragover.prevent="logoDragging = true"
+                  @dragleave.prevent="logoDragging = false"
+                  @drop.prevent="onLogoDrop"
+                  @paste.prevent="onLogoPaste"
+                >
+                  <img v-if="logoPreview" :src="logoPreview" alt="站点 Logo 预览" />
+                  <div v-else class="logo-placeholder">
+                    <CloudUploadOutline />
+                    <strong>上传、拖入或粘贴 Logo</strong>
+                    <span>支持 PNG / JPG / WebP / SVG 图片，图片自动居中裁剪为 1:1；也可以点击此处后粘贴 SVG 代码或图片地址。</span>
+                    <button type="button" class="logo-choose" @click.stop="pickLogo">选择图片</button>
+                  </div>
+                  <template v-if="logoPreview">
+                    <button type="button" class="logo-clear" title="移除 Logo" @click.stop="clearLogo">移除</button>
+                    <button type="button" class="logo-replace" @click.stop="pickLogo">更换</button>
+                  </template>
+                </div>
+                <p v-if="!logoPreview && form.site.logo" class="logo-path">
+                  当前 Logo 路径：<code>{{ form.site.logo }}</code>
+                </p>
+                <p v-if="logoError" class="logo-error">{{ logoError }}</p>
+                <input ref="logoInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml" hidden @change="onLogoFileChange" />
+              </div>
             </div>
-            <p class="hint">自定义 Logo 支持 https 链接、data:image 数据或服务器上可读的 png/jpg/webp/svg 图片路径。修改 .env 后需要重启服务生效。</p>
+            <p class="hint">Logo 留空使用内置图标；上传的图片会压缩后写入 .env 的 SITE_LOGO，安装完成后仍可在「系统配置」中修改。</p>
           </template>
 
           <template v-else>
@@ -868,6 +1137,31 @@ onMounted(initialize)
           >
             确认并执行
           </n-button>
+        </div>
+      </div>
+    </n-modal>
+
+    <n-modal
+      v-model:show="installConfirmModal"
+      preset="card"
+      :mask-closable="false"
+      style="width: min(620px, 94vw)"
+      title="二次确认：开始安装"
+    >
+      <div class="confirm-body">
+        <n-alert type="warning" :bordered="false">
+          环境检测已全部通过。确认后将写入 <code>.env</code> 与 <code>.install.txt</code>，创建数据库表、基础数据和超级管理员账号，过程不可中断。
+        </n-alert>
+        <div class="confirm-summary">
+          <div><span>数据库</span><strong>{{ databaseLabel }} · {{ form.database.host }}:{{ form.database.port }} / {{ form.database.database }}</strong></div>
+          <div><span>Redis</span><strong>{{ redisSummary() }}</strong></div>
+          <div><span>文件存储</span><strong>{{ storageSummary() }}</strong></div>
+          <div><span>管理员</span><strong>{{ form.admin.username }}</strong></div>
+          <div><span>站点品牌</span><strong>{{ form.site.name || '默认平台品牌' }}{{ form.site.logo ? ' · 自定义 Logo' : '' }}</strong></div>
+        </div>
+        <div class="modal-actions">
+          <n-button secondary :disabled="installing" @click="installConfirmModal = false">返回修改</n-button>
+          <n-button type="primary" :loading="installing" @click="confirmPlainInstall">确认并安装</n-button>
         </div>
       </div>
     </n-modal>
@@ -1148,7 +1442,8 @@ onMounted(initialize)
   grid-column: span 2;
 }
 
-.form-grid label {
+.form-grid label,
+.form-grid .logo-field {
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -1156,10 +1451,144 @@ onMounted(initialize)
   font-size: 10.5px;
 }
 
-.form-grid label em {
+.form-grid .field-label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 2px;
+}
+
+.form-grid label em,
+.form-grid .field-label em {
   margin-left: 3px;
   color: var(--red);
   font-style: normal;
+}
+
+.logo-drop {
+  position: relative;
+  display: flex;
+  min-height: 150px;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 16px;
+  border: 1px dashed var(--border-strong);
+  border-radius: 12px;
+  background: var(--surface-soft);
+  cursor: pointer;
+  transition: border-color 0.16s ease, background 0.16s ease;
+}
+
+.logo-drop:hover,
+.logo-drop.dragging {
+  border-color: var(--brand-border);
+  background: var(--brand-softer);
+}
+
+.logo-drop:focus-visible {
+  outline: 2px solid var(--brand-border);
+  outline-offset: 2px;
+}
+
+.logo-drop img {
+  display: block;
+  width: 96px;
+  height: 96px;
+  border-radius: 18px;
+  object-fit: cover;
+  box-shadow: var(--shadow-sm);
+}
+
+.logo-placeholder {
+  display: flex;
+  align-items: center;
+  flex-direction: column;
+  gap: 5px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.logo-placeholder :deep(svg) {
+  width: 24px;
+  height: 24px;
+  color: var(--brand);
+}
+
+.logo-placeholder strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.logo-placeholder span {
+  max-width: 460px;
+  color: var(--muted-light);
+  font-size: 9.5px;
+  line-height: 1.55;
+}
+
+.logo-choose {
+  margin-top: 3px;
+  padding: 4px 9px;
+  border: 1px solid var(--brand-border);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--brand-strong);
+  font-size: 9.5px;
+  cursor: pointer;
+}
+
+.logo-clear,
+.logo-replace {
+  position: absolute;
+  top: 8px;
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--muted);
+  font-size: 9px;
+  cursor: pointer;
+}
+
+.logo-clear {
+  right: 8px;
+}
+
+.logo-replace {
+  right: 48px;
+}
+
+.logo-clear:hover {
+  border-color: var(--red-border);
+  color: var(--red);
+}
+
+.logo-replace:hover {
+  border-color: var(--brand-border);
+  color: var(--brand);
+}
+
+.logo-path {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.55;
+  word-break: break-all;
+}
+
+.logo-path code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--surface-strong);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 9.5px;
+}
+
+.logo-error {
+  margin: 0;
+  color: var(--red);
+  font-size: 10px;
 }
 
 .storage-switch,
@@ -1175,6 +1604,107 @@ onMounted(initialize)
 
 .inline-check {
   margin: 2px 0 14px;
+}
+
+.test-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: -2px 0 14px;
+}
+
+.test-result {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 11px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface-soft);
+}
+
+.test-result.ok {
+  border-color: rgba(34, 197, 94, 0.28);
+  background: var(--green-soft);
+}
+
+.test-result.fail {
+  border-color: rgba(239, 68, 68, 0.28);
+  background: var(--red-soft);
+}
+
+.test-icon {
+  width: 15px;
+  height: 15px;
+  margin-top: 1px;
+  color: var(--muted);
+  flex: none;
+}
+
+.test-result.ok .test-icon {
+  color: var(--green);
+}
+
+.test-result.fail .test-icon {
+  color: var(--red);
+}
+
+.test-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.test-copy strong {
+  color: var(--ink);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.test-copy span {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.test-time {
+  align-self: center;
+  color: var(--muted-light);
+  font-family: var(--mono);
+  font-size: 9px;
+  flex: none;
+}
+
+.confirm-summary {
+  display: grid;
+  gap: 6px;
+}
+
+.confirm-summary > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 12px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.confirm-summary span {
+  color: var(--muted);
+  font-size: 10.5px;
+}
+
+.confirm-summary strong {
+  overflow: hidden;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .public-base {
