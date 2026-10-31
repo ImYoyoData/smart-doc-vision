@@ -164,6 +164,10 @@ func (s *Server) login(c *gin.Context) {
 		fail(c, http.StatusForbidden, "ACCOUNT_DISABLED", "账号已被停用", nil)
 		return
 	}
+	if s.schemaGate && user.Role != model.RoleSuperAdmin {
+		fail(c, http.StatusServiceUnavailable, "SCHEMA_UPGRADE_REQUIRED", "数据库结构需要兼容升级，仅超级管理员可登录", nil)
+		return
+	}
 	if user.TokenVersion == 0 {
 		user.TokenVersion = 1
 		_ = s.db.Model(&user).Update("token_version", 1).Error
@@ -185,6 +189,10 @@ func (s *Server) login(c *gin.Context) {
 // issueSession finalizes a login after password (and MFA, when enabled)
 // verification and returns the access/refresh token pair.
 func (s *Server) issueSession(c *gin.Context, user *model.User, ip string) {
+	if s.schemaGate && user.Role != model.RoleSuperAdmin {
+		fail(c, http.StatusServiceUnavailable, "SCHEMA_UPGRADE_REQUIRED", "数据库结构需要兼容升级，仅超级管理员可登录", nil)
+		return
+	}
 	access, err := s.tokens.Access(user.ID, user.Username, user.Role, user.TokenVersion)
 	if err != nil {
 		serverError(c, err)
@@ -233,6 +241,10 @@ func (s *Server) refresh(c *gin.Context) {
 	}
 	if claims.TokenVersion != user.TokenVersion {
 		fail(c, http.StatusUnauthorized, "TOKEN_REVOKED", "登录状态已被撤销，请重新登录", nil)
+		return
+	}
+	if s.schemaGate && user.Role != model.RoleSuperAdmin {
+		fail(c, http.StatusServiceUnavailable, "SCHEMA_UPGRADE_REQUIRED", "数据库结构需要兼容升级，仅超级管理员可登录", nil)
 		return
 	}
 	s.hydrateUser(&user)

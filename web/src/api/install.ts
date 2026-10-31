@@ -1,6 +1,8 @@
 import axios from 'axios'
+import type { SchemaReport } from './schema'
 
 export type InstallState = 'installed' | 'needs_install' | 'config_missing'
+export type DatabaseMode = 'create' | 'repair' | 'reset'
 
 export interface InstallMySQL {
   host: string
@@ -47,6 +49,9 @@ export interface InstallRequest {
   redis: InstallRedis
   storage: InstallStorage
   admin: InstallAdmin
+  database_mode: DatabaseMode | ''
+  confirm_reset: boolean
+  confirm_repair: boolean
 }
 
 export interface InstallSystemInfo {
@@ -92,6 +97,8 @@ export interface InstallProbeResult {
 export interface InstallTestResult {
   ok: boolean
   results: InstallProbeResult[]
+  database?: SchemaReport | null
+  database_error?: string
 }
 
 export interface InstallResult {

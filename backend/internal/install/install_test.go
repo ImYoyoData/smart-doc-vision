@@ -152,6 +152,32 @@ func TestBuildConfigAndValidation(t *testing.T) {
 	if err := bad.Validate(); err == nil {
 		t.Fatal("expected agreement validation to fail")
 	}
+
+	bad = req
+	bad.DatabaseMode = "reset"
+	if err := bad.Validate(); err == nil {
+		t.Fatal("expected reset without confirmation to fail")
+	}
+	bad.ConfirmReset = true
+	if err := bad.Validate(); err != nil {
+		t.Fatalf("reset with confirmation should pass: %v", err)
+	}
+
+	bad = req
+	bad.DatabaseMode = "repair"
+	if err := bad.Validate(); err == nil {
+		t.Fatal("expected repair without confirmation to fail")
+	}
+	bad.ConfirmRepair = true
+	if err := bad.Validate(); err != nil {
+		t.Fatalf("repair with confirmation should pass: %v", err)
+	}
+
+	bad = req
+	bad.DatabaseMode = "drop-everything"
+	if err := bad.Validate(); err == nil {
+		t.Fatal("expected unknown database mode to fail")
+	}
 }
 
 func TestWriteMarkerPermissions(t *testing.T) {

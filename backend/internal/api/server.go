@@ -36,6 +36,9 @@ type Server struct {
 	tasks     *service.TaskService
 	media     *media.Loader
 	filestore storage.Store
+	// schemaGate restricts the instance to super-admin login and schema
+	// endpoints while the database structure needs an explicit upgrade.
+	schemaGate bool
 
 	rolesMu   sync.RWMutex
 	roles     map[string]catalog.RoleDefinition
@@ -227,6 +230,7 @@ func (s *Server) Router() *gin.Engine {
 			auth.GET("/meta/system", s.systemInfo)
 			auth.GET("/system/monitor", s.systemMonitor)
 			auth.GET("/system/config", s.systemConfig)
+			auth.GET("/system/schema/status", s.schemaStatus)
 			auth.GET("/system/update", s.systemUpdate)
 			auth.PUT("/system/update/auto-check", s.updateAutoCheck)
 			auth.GET("/users", s.listUsers)

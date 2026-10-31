@@ -6,6 +6,7 @@ import {
   NCheckbox,
   NInput,
   NInputNumber,
+  NModal,
   NRadio,
   NRadioGroup,
   NSelect,
@@ -26,7 +27,8 @@ import {
   ServerOutline,
   ShieldCheckmarkOutline,
 } from '@vicons/ionicons5'
-import { installApi, type InstallDefaults, type InstallProbeResult, type InstallRequest } from '@/api/install'
+import { installApi, type DatabaseMode, type InstallDefaults, type InstallProbeResult, type InstallRequest } from '@/api/install'
+import type { SchemaReport } from '@/api/schema'
 import { useInstallStore } from '@/stores/install'
 
 const store = useInstallStore()
@@ -44,6 +46,11 @@ const installError = ref('')
 const installed = ref(false)
 const installedInfo = ref<{ installed_at: string; version: string; env_file: string } | null>(null)
 const stepError = ref('')
+const databaseReport = ref<SchemaReport | null>(null)
+const databaseModal = ref(false)
+const databaseChoice = ref<'repair' | 'reset'>('repair')
+const confirmModal = ref(false)
+const databaseAck = ref(false)
 
 const stepTitles = ['介绍与协议', 'MySQL', 'Redis', '文件存储', '管理员', '检测并安装']
 
@@ -213,7 +220,7 @@ function prevStep() {
   if (activeStep.value > 0) activeStep.value -= 1
 }
 
-function buildPayload(): InstallRequest {
+function buildPayload(mode: DatabaseMode | '' = '', confirmReset = false, confirmRepair = false): InstallRequest {
   return {
     agreement: agreed.value,
     mysql: {
@@ -249,6 +256,9 @@ function buildPayload(): InstallRequest {
       username: form.admin.username.trim(),
       password: form.admin.password,
     },
+    database_mode: mode,
+    confirm_reset: confirmReset,
+    confirm_repair: confirmRepair,
   }
 }
 
@@ -264,21 +274,76 @@ async function runInstall() {
   try {
     const result = await installApi.test(buildPayload())
     probes.value = result.results
+    if (result.database_error) {
+      installError.value = result.database_error
+      return
+    }
     if (!result.ok) {
       installError.value = '环境检测未通过，请根据下方提示修正后重试'
       return
     }
-    installing.value = true
-    const installedResult = await installApi.install(buildPayload())
-    installedInfo.value = installedResult
-    installed.value = true
+    if (result.database?.existing) {
+      databaseReport.value = result.database
+      databaseChoice.value = 'repair'
+      databaseModal.value = true
+      return
+    }
+    await executeInstall('create', false)
   } catch (error) {
     installError.value = error instanceof Error ? error.message : '安装失败'
   } finally {
     checking.value = false
+  }
+}
+
+async function executeInstall(mode: DatabaseMode, confirmed: boolean) {
+  installError.value = ''
+  installing.value = true
+  try {
+    const installedResult = await installApi.install(
+      buildPayload(mode, mode === 'reset' && confirmed, mode === 'repair' && confirmed),
+    )
+    installedInfo.value = installedResult
+    installed.value = true
+    databaseModal.value = false
+    confirmModal.value = false
+  } catch (error) {
+    installError.value = error instanceof Error ? error.message : '安装失败'
+    confirmModal.value = false
+  } finally {
     installing.value = false
   }
 }
+
+function openDatabaseConfirm() {
+  databaseAck.value = false
+  confirmModal.value = true
+}
+
+async function confirmDatabaseInstall() {
+  if (!databaseAck.value || installing.value) return
+  const mode = databaseChoice.value
+  confirmModal.value = false
+  databaseModal.value = false
+  await executeInstall(mode, true)
+}
+
+function reportColumn(change: { table: string; column: string; expected?: string }) {
+  return `${change.table}.${change.column}${change.expected ? ` → ${change.expected}` : ''}`
+}
+
+function reportModified(change: { table: string; column: string; expected?: string; actual?: string }) {
+  return `${change.table}.${change.column}：${change.actual || '—'} → ${change.expected || '—'}`
+}
+
+const reportExistingTables = computed(() => databaseReport.value?.existing_tables || [])
+const reportMissingTables = computed(() => databaseReport.value?.missing_tables || [])
+const reportAddedColumns = computed(() => databaseReport.value?.added_columns || [])
+const reportModifiedColumns = computed(() => databaseReport.value?.modified_columns || [])
+const reportAddedIndexes = computed(() => databaseReport.value?.added_indexes || [])
+const reportExtraTables = computed(() => databaseReport.value?.extra_tables || [])
+const reportExtraColumns = computed(() => databaseReport.value?.extra_columns || [])
+const reportWarnings = computed(() => databaseReport.value?.warnings || [])
 
 function reloadPage() {
   window.location.reload()
@@ -583,6 +648,137 @@ onMounted(initialize)
         </footer>
       </template>
     </div>
+
+    <n-modal
+      v-model:show="databaseModal"
+      preset="card"
+      :mask-closable="false"
+      style="width: min(860px, 94vw)"
+      title="检测到数据库已有业务表"
+    >
+      <div class="db-modal-body">
+        <n-alert type="warning" :bordered="false">
+          目标数据库中已经存在本系统的表。请选择“校验并修复”保留现有数据，或“清空并重新安装”重建。
+          两种操作都需要再次确认。
+        </n-alert>
+        <div class="db-summary">
+          <span>已有业务表 <strong>{{ reportExistingTables.length }}</strong> 张</span>
+          <span>程序结构版本 <strong>{{ databaseReport?.schema_version || '—' }}</strong></span>
+          <span>数据库记录版本 <strong>{{ databaseReport?.database_version || '未记录' }}</strong></span>
+        </div>
+        <n-alert v-if="databaseReport?.missing_core" type="error" :bordered="false">
+          核心用户表或关键字段缺失。校验修复会补齐表结构，但现有账号可能无法保留。
+        </n-alert>
+
+        <div class="db-diff">
+          <section v-if="reportMissingTables.length">
+            <h4>将新建表</h4>
+            <div class="diff-chips">
+              <span v-for="table in reportMissingTables" :key="table" class="diff-chip">{{ table }}</span>
+            </div>
+          </section>
+          <section v-if="reportAddedColumns.length">
+            <h4>将新增列</h4>
+            <ul>
+              <li v-for="change in reportAddedColumns" :key="`${change.table}.${change.column}`">
+                {{ reportColumn(change) }}
+              </li>
+            </ul>
+          </section>
+          <section v-if="reportModifiedColumns.length">
+            <h4>将调整列（可能影响数据）</h4>
+            <ul>
+              <li v-for="change in reportModifiedColumns" :key="`${change.table}.${change.column}`">
+                {{ reportModified(change) }}
+                <em v-if="change.reason">{{ change.reason }}</em>
+              </li>
+            </ul>
+          </section>
+          <section v-if="reportAddedIndexes.length">
+            <h4>将新增索引</h4>
+            <ul>
+              <li v-for="index in reportAddedIndexes" :key="`${index.table}.${index.name}`">
+                {{ index.table }} · {{ index.name }}<span v-if="index.columns">（{{ index.columns }}）</span>
+              </li>
+            </ul>
+          </section>
+          <section v-if="reportExtraTables.length || reportExtraColumns.length">
+            <h4>模型之外，保留不删除</h4>
+            <div class="diff-chips">
+              <span v-for="table in reportExtraTables" :key="table" class="diff-chip muted">{{ table }}</span>
+              <span v-for="change in reportExtraColumns" :key="`${change.table}.${change.column}`" class="diff-chip muted">
+                {{ change.table }}.{{ change.column }}
+              </span>
+            </div>
+          </section>
+        </div>
+
+        <div v-if="reportWarnings.length" class="db-warnings">
+          <p v-for="warning in reportWarnings" :key="warning">{{ warning }}</p>
+        </div>
+
+        <n-radio-group v-model:value="databaseChoice" class="db-options">
+          <label class="db-option" :class="{ active: databaseChoice === 'repair' }" @click="databaseChoice = 'repair'">
+            <n-radio value="repair" />
+            <div>
+              <strong>验证并修复表结构（推荐，保留数据）</strong>
+              <p>补齐缺失的表、字段和索引；只调整与模型不一致的列。不会删除模型之外的列或表。</p>
+            </div>
+          </label>
+          <label class="db-option danger" :class="{ active: databaseChoice === 'reset' }" @click="databaseChoice = 'reset'">
+            <n-radio value="reset" />
+            <div>
+              <strong>清空数据表并重新安装</strong>
+              <p>删除本系统已知业务表及全部数据后重建。无关表保留；操作不可恢复，需要二次确认。</p>
+            </div>
+          </label>
+        </n-radio-group>
+
+        <div class="modal-actions">
+          <n-button secondary :disabled="installing" @click="databaseModal = false">取消</n-button>
+          <n-button type="primary" :disabled="installing" @click="openDatabaseConfirm">继续</n-button>
+        </div>
+      </div>
+    </n-modal>
+
+    <n-modal
+      v-model:show="confirmModal"
+      preset="card"
+      :mask-closable="false"
+      style="width: min(560px, 92vw)"
+      :title="databaseChoice === 'reset' ? '再次确认：清空数据库' : '再次确认：修复数据库结构'"
+    >
+      <div class="confirm-body">
+        <n-alert :type="databaseChoice === 'reset' ? 'error' : 'warning'" :bordered="false">
+          {{
+            databaseChoice === 'reset'
+              ? '此操作会删除本系统已知表的全部数据（包括账号、项目、审核配置和任务），且不可恢复。'
+              : '兼容修复会新增缺失的表、字段和索引，并按模型调整部分列类型；调整可能导致超长数据被截断。'
+          }}
+        </n-alert>
+        <p v-if="databaseChoice === 'reset'" class="confirm-list">
+          建议先完成数据库备份。系统不会删除模型之外的表。
+        </p>
+        <n-checkbox v-model:checked="databaseAck">
+          {{
+            databaseChoice === 'reset'
+              ? '我已备份数据库，并确认清空以上数据表'
+              : '我已备份数据库，并了解列类型调整风险'
+          }}
+        </n-checkbox>
+        <div class="modal-actions">
+          <n-button secondary :disabled="installing" @click="confirmModal = false">返回</n-button>
+          <n-button
+            :type="databaseChoice === 'reset' ? 'error' : 'primary'"
+            :disabled="!databaseAck || installing"
+            :loading="installing"
+            @click="confirmDatabaseInstall"
+          >
+            确认并执行
+          </n-button>
+        </div>
+      </div>
+    </n-modal>
   </div>
 </template>
 
@@ -1024,6 +1220,154 @@ onMounted(initialize)
   align-items: center;
   justify-content: space-between;
   margin-top: 16px;
+}
+
+.db-modal-body,
+.confirm-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.db-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  padding: 10px 13px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-size: 10.5px;
+}
+
+.db-summary strong {
+  color: var(--text);
+  font-family: var(--mono);
+  font-weight: 620;
+}
+
+.db-diff {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 260px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.db-diff h4 {
+  margin: 0 0 6px;
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 620;
+}
+
+.db-diff ul {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 4px 16px;
+  margin: 0;
+  padding-left: 17px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.db-diff li em {
+  margin-left: 5px;
+  color: var(--muted-light);
+  font-style: normal;
+}
+
+.diff-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.diff-chip {
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--surface-soft);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 9.5px;
+}
+
+.diff-chip.muted {
+  color: var(--muted-light);
+  text-decoration: line-through;
+}
+
+.db-warnings {
+  padding: 10px 13px;
+  border: 1px solid rgba(239, 68, 68, 0.22);
+  border-radius: 9px;
+  background: var(--red-soft);
+}
+
+.db-warnings p {
+  margin: 2px 0;
+  color: var(--red);
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.db-options {
+  display: grid;
+  gap: 9px;
+}
+
+.db-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: var(--card);
+  cursor: pointer;
+  transition: border-color 0.18s ease, background 0.18s ease;
+}
+
+.db-option.active {
+  border-color: var(--brand);
+  background: var(--brand-softer);
+}
+
+.db-option.danger.active {
+  border-color: var(--red);
+  background: var(--red-soft);
+}
+
+.db-option strong {
+  display: block;
+  color: var(--ink);
+  font-size: 11.5px;
+  font-weight: 620;
+}
+
+.db-option p {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.confirm-list {
+  margin: 0;
+  color: var(--muted);
+  font-size: 10.5px;
+  line-height: 1.65;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 2px;
 }
 
 @media (max-width: 720px) {

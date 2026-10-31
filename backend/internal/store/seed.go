@@ -28,8 +28,11 @@ func EnsureAdmin(db *gorm.DB, username, password string) error {
 		return err
 	}
 	var user model.User
-	err = db.Where("username = ?", username).First(&user).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
+	result := db.Where("username = ?", username).Limit(1).Find(&user)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
 		user = model.User{
 			Username:     username,
 			PasswordHash: hash,
@@ -38,9 +41,6 @@ func EnsureAdmin(db *gorm.DB, username, password string) error {
 			Status:       "ACTIVE",
 		}
 		return db.Create(&user).Error
-	}
-	if err != nil {
-		return err
 	}
 	return db.Model(&model.User{}).Where("id = ?", user.ID).Updates(map[string]any{
 		"password_hash": hash,

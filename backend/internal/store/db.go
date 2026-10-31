@@ -12,6 +12,7 @@ import (
 
 	"smartdoc-vision/backend/internal/config"
 	"smartdoc-vision/backend/internal/model"
+	"smartdoc-vision/backend/internal/schema"
 )
 
 func Open(cfg config.Config) (*gorm.DB, error) {
@@ -32,41 +33,25 @@ func Open(cfg config.Config) (*gorm.DB, error) {
 	if err := ping(sqlDB); err != nil {
 		return nil, err
 	}
-	// Keep every table UTF-8 even when the target database was created with a
-	// legacy default charset. Use a dedicated migration session so query state
-	// from AutoMigrate never leaks into the shared runtime connection.
-	migrateDB := db.Set("gorm:table_options", "ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci")
-	if err := migrateDB.AutoMigrate(
-		&model.User{},
-		&model.ProjectMember{},
-		&model.UserAuditScope{},
-		&model.Project{},
-		&model.APICredential{},
-		&model.AIProvider{},
-		&model.Audit{},
-		&model.TriggerSource{},
-		&model.Task{},
-		&model.TaskEvent{},
-		&model.AuditLog{},
-		&model.Role{},
-		&model.ProjectSecret{},
-		&model.ScriptExecution{},
-		&model.RedisConnection{},
-		&model.ProviderUsageLog{},
-		&model.NotificationChannel{},
-		&model.InAppMessage{},
-	); err != nil {
-		return nil, fmt.Errorf("migrate: %w", err)
+	return db, nil
+}
+
+// Prepare applies the model schema after the caller has explicitly accepted
+// the migration (normal startup with a matching schema, installer, or an
+// administrator-confirmed upgrade). It never drops application tables.
+func Prepare(db *gorm.DB) error {
+	if err := schema.Apply(db); err != nil {
+		return err
 	}
 	// AppKey moved to api_credentials; the legacy project column must not keep
 	// a unique index or a second project with an empty AppKey cannot be created.
-	if err := dropLegacyProjectAppKeyIndex(migrateDB); err != nil {
+	if err := dropLegacyProjectAppKeyIndex(db); err != nil {
 		log.Printf("drop legacy project app_key index: %v", err)
 	}
 	if err := cleanupLegacyData(db); err != nil {
 		log.Printf("cleanup legacy data: %v", err)
 	}
-	return db, nil
+	return nil
 }
 
 func dropLegacyProjectAppKeyIndex(db *gorm.DB) error {

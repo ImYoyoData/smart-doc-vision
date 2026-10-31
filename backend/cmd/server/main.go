@@ -11,12 +11,16 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/redis/go-redis/v9"
+	"gorm.io/gorm"
+
 	"smartdoc-vision/backend/internal/api"
 	"smartdoc-vision/backend/internal/config"
 	"smartdoc-vision/backend/internal/engine"
 	"smartdoc-vision/backend/internal/install"
 	"smartdoc-vision/backend/internal/media"
 	"smartdoc-vision/backend/internal/metrics"
+	appschema "smartdoc-vision/backend/internal/schema"
 	"smartdoc-vision/backend/internal/security"
 	"smartdoc-vision/backend/internal/service"
 	"smartdoc-vision/backend/internal/storage"
@@ -53,10 +57,6 @@ type appRuntime struct {
 	close   func()
 }
 
-type bootstrapOptions struct {
-	forceAdmin bool
-}
-
 func main() {
 	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
 	cfg := config.Load()
@@ -70,6 +70,7 @@ func main() {
 	state := install.Detect(cfg)
 	switcher := &handlerSwitcher{}
 	var installer *api.InstallerServer
+	var schemaServer *api.SchemaServer
 	var app *appRuntime
 
 	switch state {
@@ -84,25 +85,42 @@ func main() {
 		installer = api.NewInstallerServer(cfg, state, nil, nil)
 		switcher.Set(installer.Router())
 	default:
-		var err error
-		app, err = bootstrap(cfg, bootstrapOptions{})
+		db, cache, cipher, err := connectInfra(cfg)
 		if err != nil {
 			log.Fatalf("bootstrap: %v", err)
 		}
-		switcher.Set(app.handler)
-		if _, found := install.FindMarker(); !found {
-			marker := install.Marker{
-				Path:    install.MarkerPathForConfig(cfg),
-				Version: appversion.Version,
-				Storage: cfg.StorageDriver,
-				Admin:   cfg.AdminUsername,
-				Source:  "existing-config",
+		report, err := appschema.Inspect(db)
+		if err != nil {
+			closeInfra(db, cache)
+			log.Fatalf("inspect schema: %v", err)
+		}
+		if report.Required {
+			log.Printf("schema: database structure requires an administrator-confirmed upgrade (version %s, db %s)",
+				report.SchemaVersion, report.DatabaseVersion)
+			if report.MissingCore {
+				log.Printf("schema: core tables are missing; online login/repair is unavailable until the database is restored")
 			}
-			if err := install.WriteMarker(marker.Path, marker); err != nil {
-				log.Printf("install marker: %v", err)
-			} else {
-				log.Printf("install marker: created %s", marker.Path)
+			schemaServer = api.NewSchemaServer(cfg, db, cache, cipher, report,
+				func(ctx context.Context) (http.Handler, func(), error) {
+					return prepareAndBuild(ctx, cfg, db, cache, cipher)
+				}, switcher.Set)
+			switcher.Set(schemaServer.Router())
+		} else {
+			if err := store.Prepare(db); err != nil {
+				closeInfra(db, cache)
+				log.Fatalf("prepare schema: %v", err)
 			}
+			if err := seedApp(cfg, db, cipher); err != nil {
+				closeInfra(db, cache)
+				log.Fatalf("seed: %v", err)
+			}
+			app, err = buildApp(cfg, db, cache, cipher)
+			if err != nil {
+				closeInfra(db, cache)
+				log.Fatalf("bootstrap: %v", err)
+			}
+			switcher.Set(app.handler)
+			ensureInstallMarker(cfg)
 		}
 	}
 
@@ -134,9 +152,12 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = httpServer.Shutdown(ctx)
-	if installer != nil {
+	switch {
+	case schemaServer != nil:
+		schemaServer.Close()
+	case installer != nil:
 		installer.Close()
-	} else if app != nil {
+	case app != nil:
 		app.close()
 	}
 	log.Println("stopped")
@@ -147,8 +168,56 @@ func installApplication(ctx context.Context, base config.Config, req install.Req
 	if err := install.EnsureDatabase(ctx, req.MySQL); err != nil {
 		return nil, nil, err
 	}
-	app, err := bootstrap(cfg, bootstrapOptions{forceAdmin: true})
+	db, cache, cipher, err := connectInfra(cfg)
 	if err != nil {
+		return nil, nil, err
+	}
+	report, err := appschema.Inspect(db)
+	if err != nil {
+		closeInfra(db, cache)
+		return nil, nil, err
+	}
+	mode := req.DatabaseMode
+	if mode == "" {
+		if report.Existing {
+			closeInfra(db, cache)
+			return nil, nil, errors.New("数据库已有业务表，请选择校验修复或清空重建")
+		}
+		mode = "create"
+	}
+	if report.Existing && mode == "create" {
+		closeInfra(db, cache)
+		return nil, nil, errors.New("数据库已有业务表，不能直接重新创建")
+	}
+	if mode == "reset" {
+		if !req.ConfirmReset {
+			closeInfra(db, cache)
+			return nil, nil, errors.New("清空数据库需要二次确认")
+		}
+		if err := appschema.Reset(db); err != nil {
+			closeInfra(db, cache)
+			return nil, nil, err
+		}
+	}
+	if mode == "repair" && !req.ConfirmRepair {
+		closeInfra(db, cache)
+		return nil, nil, errors.New("修复数据库结构需要二次确认")
+	}
+	if err := store.Prepare(db); err != nil {
+		closeInfra(db, cache)
+		return nil, nil, err
+	}
+	if err := store.EnsureAdmin(db, cfg.AdminUsername, cfg.AdminPassword); err != nil {
+		closeInfra(db, cache)
+		return nil, nil, err
+	}
+	if err := seedApp(cfg, db, cipher); err != nil {
+		closeInfra(db, cache)
+		return nil, nil, err
+	}
+	app, err := buildApp(cfg, db, cache, cipher)
+	if err != nil {
+		closeInfra(db, cache)
 		return nil, nil, err
 	}
 	envPath, err := install.WriteEnv(cfg)
@@ -172,46 +241,81 @@ func installApplication(ctx context.Context, base config.Config, req install.Req
 	return app.handler, app.close, nil
 }
 
-func bootstrap(cfg config.Config, opts bootstrapOptions) (*appRuntime, error) {
+// prepareAndBuild is used after an administrator confirms a schema upgrade.
+// It deliberately leaves the database connection open when a step fails so the
+// administrator can inspect the error and retry.
+func prepareAndBuild(ctx context.Context, cfg config.Config, db *gorm.DB, cache *redis.Client, cipher *security.Cipher) (http.Handler, func(), error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	if err := store.Prepare(db); err != nil {
+		return nil, nil, err
+	}
+	if err := seedApp(cfg, db, cipher); err != nil {
+		return nil, nil, err
+	}
+	app, err := buildApp(cfg, db, cache, cipher)
+	if err != nil {
+		return nil, nil, err
+	}
+	ensureInstallMarker(cfg)
+	return app.handler, app.close, nil
+}
+
+func connectInfra(cfg config.Config) (*gorm.DB, *redis.Client, *security.Cipher, error) {
 	cipher, err := security.NewCipher(cfg.MasterKey)
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
 	db, err := store.Open(cfg)
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
 	cache, err := store.OpenRedis(cfg)
 	if err != nil {
-		sqlDB, _ := db.DB()
-		if sqlDB != nil {
-			_ = sqlDB.Close()
-		}
-		return nil, err
+		closeInfra(db, nil)
+		return nil, nil, nil, err
 	}
+	return db, cache, cipher, nil
+}
 
-	closeAll := func() {
+func closeInfra(db *gorm.DB, cache *redis.Client) {
+	if cache != nil {
 		_ = cache.Close()
-		if sqlDB, sqlErr := db.DB(); sqlErr == nil {
+	}
+	if db != nil {
+		if sqlDB, err := db.DB(); err == nil {
 			_ = sqlDB.Close()
 		}
 	}
+}
 
-	if opts.forceAdmin {
-		if err := store.EnsureAdmin(db, cfg.AdminUsername, cfg.AdminPassword); err != nil {
-			closeAll()
-			return nil, err
-		}
-	}
+func seedApp(cfg config.Config, db *gorm.DB, cipher *security.Cipher) error {
 	seeder := store.Seeder{DB: db, Cipher: cipher, Cfg: cfg}
-	if err := seeder.Run(); err != nil {
-		closeAll()
-		return nil, err
-	}
+	return seeder.Run()
+}
 
+func ensureInstallMarker(cfg config.Config) {
+	if _, found := install.FindMarker(); found {
+		return
+	}
+	marker := install.Marker{
+		Path:    install.MarkerPathForConfig(cfg),
+		Version: appversion.Version,
+		Storage: cfg.StorageDriver,
+		Admin:   cfg.AdminUsername,
+		Source:  "existing-config",
+	}
+	if err := install.WriteMarker(marker.Path, marker); err != nil {
+		log.Printf("install marker: %v", err)
+		return
+	}
+	log.Printf("install marker: created %s", marker.Path)
+}
+
+func buildApp(cfg config.Config, db *gorm.DB, cache *redis.Client, cipher *security.Cipher) (*appRuntime, error) {
 	fileStore, err := storage.New(install.StorageConfig(cfg))
 	if err != nil {
-		closeAll()
 		return nil, err
 	}
 	loader := media.NewLoader(media.NewFetcher(cfg.AllowPrivate), fileStore)
@@ -239,7 +343,7 @@ func bootstrap(cfg config.Config, opts bootstrapOptions) (*appRuntime, error) {
 		eng.Stop()
 		retentionCancel()
 		monitorCancel()
-		closeAll()
+		closeInfra(db, cache)
 	}
 	return &appRuntime{handler: server.Router(), close: closeRuntime}, nil
 }

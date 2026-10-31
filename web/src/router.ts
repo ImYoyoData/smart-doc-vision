@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useInstallStore } from '@/stores/install'
+import { useSchemaStore } from '@/stores/schema'
 
 const routes: RouteRecordRaw[] = [
   {
@@ -8,6 +9,12 @@ const routes: RouteRecordRaw[] = [
     name: 'install',
     component: () => import('@/views/InstallView.vue'),
     meta: { public: true, title: '安装系统' },
+  },
+  {
+    path: '/schema-upgrade',
+    name: 'schema-upgrade',
+    component: () => import('@/views/SchemaUpgradeView.vue'),
+    meta: { title: '数据库兼容升级' },
   },
   {
     path: '/login',
@@ -159,6 +166,17 @@ router.beforeEach(async (to) => {
   }
   if (to.name === 'login' && auth.isAuthenticated) {
     return { path: '/dashboard' }
+  }
+  if (auth.isAuthenticated) {
+    const schema = useSchemaStore()
+    if (!schema.checked) {
+      await schema.load()
+    }
+    if (schema.required) {
+      if (to.name !== 'schema-upgrade') return { name: 'schema-upgrade' }
+    } else if (to.name === 'schema-upgrade') {
+      return { path: '/dashboard' }
+    }
   }
   if (to.meta.menu && auth.user?.menus?.length && !auth.user.menus.includes(String(to.meta.menu))) {
     return { path: '/dashboard' }

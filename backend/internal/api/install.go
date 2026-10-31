@@ -120,7 +120,16 @@ func (s *InstallerServer) test(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
 	defer cancel()
 	results := install.TestAll(ctx, s.cfg, req)
-	ok(c, gin.H{"ok": install.AllOK(results), "results": results})
+	payload := gin.H{"ok": install.AllOK(results), "results": results}
+	if install.AllOK(results) {
+		if report, err := install.InspectDatabase(ctx, req.MySQL); err != nil {
+			payload["ok"] = false
+			payload["database_error"] = "数据库结构检测失败: " + err.Error()
+		} else {
+			payload["database"] = report
+		}
+	}
+	ok(c, payload)
 }
 
 func (s *InstallerServer) install(c *gin.Context) {
@@ -144,6 +153,31 @@ func (s *InstallerServer) install(c *gin.Context) {
 	req.Normalize()
 	if err := req.Validate(); err != nil {
 		badRequest(c, err.Error())
+		return
+	}
+
+	inspectCtx, inspectCancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
+	report, inspectErr := install.InspectDatabase(inspectCtx, req.MySQL)
+	inspectCancel()
+	if inspectErr != nil {
+		fail(c, http.StatusUnprocessableEntity, "DATABASE_INSPECT_FAILED", "数据库结构检测失败: "+inspectErr.Error(), nil)
+		return
+	}
+	if req.DatabaseMode == "" {
+		if report.Existing {
+			fail(c, http.StatusConflict, "DATABASE_DECISION_REQUIRED",
+				"检测到数据库已有业务表，请选择清空重建或校验修复", report)
+			return
+		}
+		req.DatabaseMode = "create"
+	}
+	if report.Existing && req.DatabaseMode == "create" {
+		fail(c, http.StatusConflict, "DATABASE_DECISION_REQUIRED",
+			"数据库已有业务表，不能直接重新创建；请选择校验修复或清空重建", report)
+		return
+	}
+	if req.DatabaseMode == "reset" && !req.ConfirmReset {
+		badRequest(c, "清空数据库需要二次确认")
 		return
 	}
 

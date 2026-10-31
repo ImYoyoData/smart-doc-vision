@@ -14,8 +14,12 @@ import (
 
 	mysqlDriver "github.com/go-sql-driver/mysql"
 	"github.com/joho/godotenv"
+	"gorm.io/driver/mysql"
+	"gorm.io/gorm"
+	gormlogger "gorm.io/gorm/logger"
 
 	"smartdoc-vision/backend/internal/config"
+	"smartdoc-vision/backend/internal/schema"
 	"smartdoc-vision/backend/internal/storage"
 )
 
@@ -69,6 +73,11 @@ type Request struct {
 	Redis     Redis   `json:"redis"`
 	Storage   Storage `json:"storage"`
 	Admin     Admin   `json:"admin"`
+	// DatabaseMode is create, repair or reset. The installer requires an
+	// explicit choice when application tables already exist.
+	DatabaseMode  string `json:"database_mode"`
+	ConfirmReset  bool   `json:"confirm_reset"`
+	ConfirmRepair bool   `json:"confirm_repair"`
 }
 
 func (r *Request) Normalize() {
@@ -110,6 +119,7 @@ func (r *Request) Normalize() {
 	r.Storage.S3.AccessKey = strings.TrimSpace(r.Storage.S3.AccessKey)
 	r.Storage.S3.SecretKey = strings.TrimSpace(r.Storage.S3.SecretKey)
 	r.Storage.S3.Prefix = strings.Trim(strings.TrimSpace(r.Storage.S3.Prefix), "/")
+	r.DatabaseMode = strings.ToLower(strings.TrimSpace(r.DatabaseMode))
 
 	r.Admin.Username = strings.TrimSpace(r.Admin.Username)
 	if r.Admin.Username == "" {
@@ -126,6 +136,17 @@ func (r Request) Validate() error {
 	}
 	if len(r.Admin.Password) < 8 || len(r.Admin.Password) > 72 {
 		return fmt.Errorf("管理员密码长度需为 8~72 位")
+	}
+	switch r.DatabaseMode {
+	case "", "create", "repair", "reset":
+	default:
+		return fmt.Errorf("数据库处理方式无效")
+	}
+	if r.DatabaseMode == "reset" && !r.ConfirmReset {
+		return fmt.Errorf("清空数据库需要二次确认")
+	}
+	if r.DatabaseMode == "repair" && !r.ConfirmRepair {
+		return fmt.Errorf("修复数据库结构需要二次确认")
 	}
 	return r.ValidateConnections()
 }
@@ -257,6 +278,51 @@ func EnsureDatabase(ctx context.Context, cfg MySQL) error {
 		return fmt.Errorf("创建数据库失败: %w", err)
 	}
 	return nil
+}
+
+// InspectDatabase connects to the target database and reports structural
+// differences without modifying anything.
+func InspectDatabase(ctx context.Context, cfg MySQL) (schema.Report, error) {
+	timeoutCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	db, err := gorm.Open(mysql.Open(mysqlDSN(cfg, true)), &gorm.Config{
+		Logger:  gormlogger.Default.LogMode(gormlogger.Silent),
+		NowFunc: func() time.Time { return time.Now().Local() },
+	})
+	if err != nil {
+		if unknownDatabaseError(err) {
+			return schema.FreshReport(), nil
+		}
+		return schema.Report{}, fmt.Errorf("连接 MySQL 失败: %w", err)
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		return schema.Report{}, err
+	}
+	defer sqlDB.Close()
+	sqlDB.SetMaxOpenConns(2)
+	if err := sqlDB.PingContext(timeoutCtx); err != nil {
+		if unknownDatabaseError(err) {
+			return schema.FreshReport(), nil
+		}
+		return schema.Report{}, fmt.Errorf("连接 MySQL 失败: %w", err)
+	}
+	report, err := schema.Inspect(db.WithContext(timeoutCtx))
+	if err != nil {
+		if unknownDatabaseError(err) {
+			return schema.FreshReport(), nil
+		}
+		return report, err
+	}
+	return report, nil
+}
+
+func unknownDatabaseError(err error) bool {
+	if err == nil {
+		return false
+	}
+	value := strings.ToLower(err.Error())
+	return strings.Contains(value, "unknown database") || strings.Contains(value, "error 1049")
 }
 
 // WriteEnv serializes the installed configuration. It never overwrites an
