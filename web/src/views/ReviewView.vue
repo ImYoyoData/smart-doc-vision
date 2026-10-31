@@ -1,12 +1,14 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import {
   NButton,
+  NDatePicker,
   NImage,
   NInput,
   NSelect,
   NSpin,
+  NVirtualList,
   useDialog,
   useMessage,
 } from 'naive-ui'
@@ -49,6 +51,10 @@ const audits = ref<Audit[]>([])
 const selectedId = ref<number | null>(null)
 const detail = ref<TaskDetail | null>(null)
 const auditFilter = ref<number | null>(null)
+const queueDateRange = ref<[number, number] | null>(null)
+const queueRequestId = ref('')
+const queueBizKey = ref('')
+let queueFilterTimer: ReturnType<typeof setTimeout> | null = null
 const reasonCode = ref('MANUAL_CONFIRMED')
 const remark = ref('')
 const reasonOptions = REVIEW_REASON_OPTIONS
@@ -93,6 +99,10 @@ function formatDuration(ms?: number | null) {
   return ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)}s`
 }
 
+function formatCreatedAt(value?: string) {
+  return value ? dayjs(value).format('YYYY-MM-DD HH:mm') : '—'
+}
+
 function waitLabel(task: Task) {
   const minutes = Math.max(0, dayjs().diff(dayjs(task.created_at), 'minute'))
   if (minutes < 60) return `${minutes} 分钟`
@@ -135,28 +145,64 @@ async function loadQueue() {
     const params: Record<string, unknown> = {
       project_id: workspace.currentProjectId,
       status: 'REVIEW_PENDING',
-      page: 1,
       page_size: 100,
       sort: 'created_at:asc',
     }
     if (auditFilter.value) params.audit_id = auditFilter.value
-    const data = await taskApi.list(params)
-    queue.value = data.items
-    total.value = data.total
-    if (selectedId.value && !data.items.some((t) => t.id === selectedId.value)) {
+    if (queueRequestId.value.trim()) params.request_id = queueRequestId.value.trim()
+    if (queueBizKey.value.trim()) params.biz_key = queueBizKey.value.trim()
+    if (queueDateRange.value) {
+      params.start = dayjs(queueDateRange.value[0]).format('YYYY-MM-DD')
+      params.end = dayjs(queueDateRange.value[1]).format('YYYY-MM-DD')
+    }
+    // The queue is rendered by NVirtualList; fetch up to 10 pages so the list
+    // still has real data when a project accumulates many pending reviews.
+    const items: Task[] = []
+    let pageNo = 1
+    let knownTotal = 0
+    for (let index = 0; index < 10; index += 1) {
+      const data = await taskApi.list({ ...params, page: pageNo })
+      knownTotal = data.total
+      items.push(...data.items)
+      if (data.items.length < 100 || items.length >= data.total) break
+      pageNo += 1
+    }
+    queue.value = items
+    total.value = knownTotal
+    if (selectedId.value && !items.some((t) => t.id === selectedId.value)) {
       selectedId.value = null
       detail.value = null
     }
-    if (!selectedId.value && data.items.length) {
+    if (!selectedId.value && items.length) {
       const target = Number.isFinite(initialTaskId) && initialTaskId > 0
-        ? data.items.find((task) => task.id === initialTaskId)
+        ? items.find((task) => task.id === initialTaskId)
         : undefined
-      await selectTask(target || data.items[0])
+      await selectTask(target || items[0])
     }
   } catch (error) {
     message.error(error instanceof Error ? error.message : '加载复核队列失败')
   } finally {
     loading.value = false
+  }
+}
+
+function scheduleQueueFilterReload() {
+  if (queueFilterTimer) clearTimeout(queueFilterTimer)
+  queueFilterTimer = setTimeout(() => {
+    selectedId.value = null
+    detail.value = null
+    loadQueue()
+  }, 350)
+}
+
+function resetQueueFilters() {
+  queueDateRange.value = null
+  queueRequestId.value = ''
+  queueBizKey.value = ''
+  if (auditFilter.value) {
+    auditFilter.value = null
+  } else {
+    loadQueue()
   }
 }
 
@@ -224,6 +270,9 @@ watch(() => workspace.currentProjectId, async () => {
   selectedId.value = null
   detail.value = null
   auditFilter.value = null
+  queueDateRange.value = null
+  queueRequestId.value = ''
+  queueBizKey.value = ''
   await Promise.all([loadQueue(), loadAudits(), reviewStore.refresh(workspace.currentProjectId)])
 })
 
@@ -231,6 +280,12 @@ watch(auditFilter, () => {
   selectedId.value = null
   detail.value = null
   loadQueue()
+})
+
+watch([queueDateRange, queueRequestId, queueBizKey], scheduleQueueFilterReload)
+
+onBeforeUnmount(() => {
+  if (queueFilterTimer) clearTimeout(queueFilterTimer)
 })
 
 onMounted(async () => {
@@ -284,30 +339,55 @@ onMounted(async () => {
             class="audit-filter"
           />
         </div>
+        <div class="queue-filters">
+          <n-date-picker
+            v-model:value="queueDateRange"
+            type="daterange"
+            size="small"
+            clearable
+            placeholder="提交时间"
+            class="queue-date-range"
+          />
+          <n-input v-model:value="queueRequestId" size="small" clearable placeholder="request_id" />
+          <n-input v-model:value="queueBizKey" size="small" clearable placeholder="业务键" />
+          <button type="button" class="queue-filter-reset" @click="resetQueueFilters">重置筛选</button>
+        </div>
         <div class="queue-list">
-          <button
-            v-for="task in queue"
-            :key="task.id"
-            type="button"
-            class="queue-item"
-            :class="{ active: task.id === selectedId }"
-            @click="selectTask(task)"
+          <n-virtual-list
+            v-if="queue.length"
+            :items="queue"
+            :item-size="104"
+            key-field="id"
+            class="queue-virtual"
           >
-            <span class="queue-accent"></span>
-            <span class="queue-main">
-              <span class="queue-top">
-                <span class="queue-no mono">{{ task.task_no }}</span>
-                <span class="queue-wait"><TimeOutline />{{ waitLabel(task) }}</span>
-              </span>
-              <span class="queue-audit">{{ task.audit_name || '—' }}</span>
-              <span class="queue-meta">
-                <span>{{ sourceLabel(task.source_type) }}</span>
-                <span>{{ task.media_type }}</span>
-                <span class="mono">{{ task.biz_key || '无业务键' }}</span>
-              </span>
-            </span>
-          </button>
-          <div v-if="!queue.length && !loading" class="queue-empty">
+            <template #default="{ item }">
+              <button
+                type="button"
+                class="queue-item"
+                :class="{ active: item.id === selectedId }"
+                @click="selectTask(item)"
+              >
+                <span class="queue-accent"></span>
+                <span class="queue-main">
+                  <span class="queue-top">
+                    <span class="queue-no mono">{{ item.task_no }}</span>
+                    <span class="queue-wait"><TimeOutline />{{ waitLabel(item) }}</span>
+                  </span>
+                  <span class="queue-audit">{{ item.audit_name || '—' }}</span>
+                  <span class="queue-meta">
+                    <span>{{ sourceLabel(item.source_type) }}</span>
+                    <span>{{ item.media_type }}</span>
+                    <span class="mono">{{ item.biz_key || '无业务键' }}</span>
+                  </span>
+                  <span class="queue-submeta">
+                    <span>{{ formatCreatedAt(item.created_at) }}</span>
+                    <span v-if="item.request_id" class="mono">{{ item.request_id }}</span>
+                  </span>
+                </span>
+              </button>
+            </template>
+          </n-virtual-list>
+          <div v-else-if="!loading" class="queue-empty">
             <CheckmarkCircleOutline />
             <strong>复核队列已清空</strong>
             <span>新的待议任务会自动出现在这里</span>
@@ -550,20 +630,55 @@ onMounted(async () => {
   width: 130px;
 }
 
+.queue-filters {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  padding: 0 16px 10px;
+  border-bottom: 1px solid #f0f3f8;
+}
+
+.queue-date-range {
+  grid-column: span 2;
+  width: 100%;
+}
+
+.queue-filter-reset {
+  grid-column: span 2;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--brand);
+  font-size: 10.5px;
+  text-align: right;
+  cursor: pointer;
+}
+
+.queue-filter-reset:hover {
+  color: var(--brand-strong);
+  text-decoration: underline;
+}
+
 .queue-list {
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
+  overflow: hidden;
   padding: 7px;
+}
+
+.queue-virtual {
+  height: 100%;
 }
 
 .queue-item {
   position: relative;
   display: flex;
   width: 100%;
+  height: 96px;
   align-items: stretch;
   gap: 0;
   margin-bottom: 4px;
+  box-sizing: border-box;
   padding: 11px 11px 11px 14px;
   border: 1px solid transparent;
   border-radius: 10px;
