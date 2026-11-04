@@ -38,6 +38,7 @@ services:
     restart: unless-stopped
     environment:
       APP_ENV: production
+      SERVER_HOST: 0.0.0.0
       SERVER_PORT: 8080
       # 数据库：默认使用下方 MySQL 服务。改用 PostgreSQL 时设置
       # DB_DSN=postgres://user:pass@host:5432/db?sslmode=disable（DB_DRIVER 会按 DSN 自动识别），

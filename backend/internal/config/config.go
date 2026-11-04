@@ -22,6 +22,10 @@ import (
 const defaultMasterKey = "dev-smartdoc-vision-master-key-change-me"
 const defaultJWTSecret = "dev-smartdoc-vision-change-me"
 
+// defaultServerHost listens on every interface, matching the behaviour of the
+// previous hard-coded ":port" address while still being explicit in the config.
+const defaultServerHost = "0.0.0.0"
+
 const (
 	// DriverMySQL and DriverPostgres are the supported database backends.
 	DriverMySQL    = "mysql"
@@ -30,6 +34,7 @@ const (
 
 type Config struct {
 	AppEnv           string
+	ServerHost       string
 	ServerPort       string
 	DatabaseDriver   string
 	DatabaseDSN      string
@@ -88,7 +93,8 @@ type Config struct {
 
 type yamlConfig struct {
 	HTTP struct {
-		Port *int `yaml:"port"`
+		Host *string `yaml:"host"`
+		Port *int    `yaml:"port"`
 	} `yaml:"http"`
 	MySQL struct {
 		DSN      *string `yaml:"dsn"`
@@ -176,6 +182,7 @@ func Load() Config {
 	if serverPort <= 0 || serverPort > 65535 {
 		serverPort = 8080
 	}
+	serverHost := fallbackString(pickString("SERVER_HOST", fileCfg.HTTP.Host, dotenvValues, defaultServerHost), defaultServerHost)
 
 	databaseDriver := resolveDatabaseDriver(dotenvValues)
 	defaultHost, defaultPort, defaultUser := "127.0.0.1", 3306, "root"
@@ -232,6 +239,7 @@ func Load() Config {
 
 	cfg := Config{
 		AppEnv:                  pickString("APP_ENV", nil, dotenvValues, "production"),
+		ServerHost:              serverHost,
 		ServerPort:              strconv.Itoa(serverPort),
 		DatabaseDriver:          databaseDriver,
 		DatabaseDSN:             databaseDSN,
@@ -288,6 +296,20 @@ func Load() Config {
 		cfg.RedisDB = 0
 	}
 	return cfg
+}
+
+// ListenAddr is the host:port the HTTP server binds to. An empty host means
+// every interface, which is also the default.
+func (c Config) ListenAddr() string {
+	host := strings.TrimSpace(c.ServerHost)
+	if host == "" {
+		host = defaultServerHost
+	}
+	port := strings.TrimSpace(c.ServerPort)
+	if port == "" {
+		port = "8080"
+	}
+	return net.JoinHostPort(host, port)
 }
 
 func findConfigFile(name string) string {
@@ -616,7 +638,11 @@ func EnvTemplate(values map[string]string) string {
 		"# production / development。生产环境请保持 production；",
 		"# development 会放宽 CORS 并输出更详细的调试信息。",
 		"APP_ENV=" + value("APP_ENV"),
-		"# HTTP 监听端口。修改后需重启，并同步调整反向代理和 SITE_URL。",
+		"# HTTP 监听地址。默认 0.0.0.0 表示监听全部网卡；",
+		"# 只允许本机访问可改为 127.0.0.1，也可用启动参数 -host 临时覆盖。",
+		"SERVER_HOST=" + value("SERVER_HOST"),
+		"# HTTP 监听端口。修改后需重启，并同步调整反向代理和 SITE_URL；",
+		"# 也可用启动参数 -port 临时覆盖。",
 		"SERVER_PORT=" + value("SERVER_PORT"),
 		"",
 		"# ================================= 数据库 =====================================",
@@ -739,6 +765,7 @@ func MigrateLegacyEnvFile(cfg Config) (string, error) {
 
 	merged := map[string]string{
 		"APP_ENV":                     cfg.AppEnv,
+		"SERVER_HOST":                 cfg.ServerHost,
 		"SERVER_PORT":                 cfg.ServerPort,
 		"DB_DRIVER":                   NormalizeDatabaseDriver(cfg.DatabaseDriver),
 		"DB_HOST":                     cfg.DatabaseHost,
@@ -882,6 +909,7 @@ func fillDatabaseFields(target map[string]string, dsn string) {
 func writeDefaultEnv(path string) error {
 	values := map[string]string{
 		"APP_ENV":                     "production",
+		"SERVER_HOST":                 defaultServerHost,
 		"SERVER_PORT":                 "8080",
 		"DB_DRIVER":                   DriverMySQL,
 		"DB_HOST":                     "127.0.0.1",

@@ -48,6 +48,7 @@ func (s *Server) systemConfigGroups() []systemConfigGroup {
 			Key: "runtime", Title: "运行环境", Description: "进程启动时解析出的基础运行参数。",
 			Fields: []systemConfigField{
 				plainConfigField("APP_ENV", "运行环境", cfg.AppEnv),
+				plainConfigField("SERVER_HOST", "监听地址", cfg.ServerHost),
 				plainConfigField("SERVER_PORT", "服务端口", cfg.ServerPort),
 				plainConfigField("WORKER_COUNT", "审核 Worker 数", fmt.Sprint(cfg.WorkerCount)),
 				plainConfigField("MEDIA_ALLOW_PRIVATE", "允许私有网络地址", yesNo(cfg.AllowPrivate)),

@@ -3,10 +3,15 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
+	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -31,6 +36,32 @@ import (
 	appversion "smartdoc-vision/backend/internal/version"
 	"smartdoc-vision/backend/internal/webui"
 )
+
+// applyListenOverrides lets -host / -port win over SERVER_HOST / SERVER_PORT
+// for one run without touching .env.
+func applyListenOverrides(cfg *config.Config, host, port string) error {
+	if host = strings.TrimSpace(host); host != "" {
+		cfg.ServerHost = host
+	}
+	if port = strings.TrimSpace(port); port != "" {
+		number, err := strconv.Atoi(port)
+		if err != nil || number < 1 || number > 65535 {
+			return fmt.Errorf("invalid -port %q: must be 1-65535", port)
+		}
+		cfg.ServerPort = strconv.Itoa(number)
+	}
+	return nil
+}
+
+// displayAddr renders the listen address for logs, mapping the wildcard host to
+// a loopback URL that is actually clickable on the machine that runs the server.
+func displayAddr(cfg config.Config) string {
+	host := strings.TrimSpace(cfg.ServerHost)
+	if host == "" || host == "0.0.0.0" || host == "::" || host == "[::]" {
+		host = "127.0.0.1"
+	}
+	return net.JoinHostPort(host, cfg.ServerPort)
+}
 
 type handlerSwitcher struct {
 	mu      sync.RWMutex
@@ -65,7 +96,15 @@ func main() {
 	}
 	defer logging.Close()
 	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
+	portFlag := flag.String("port", "", "HTTP listen port; overrides SERVER_PORT (default 8080)")
+	hostFlag := flag.String("host", "", "HTTP listen host; overrides SERVER_HOST (default 0.0.0.0)")
+	flag.Parse()
+
 	cfg := config.Load()
+	if err := applyListenOverrides(&cfg, *hostFlag, *portFlag); err != nil {
+		log.Fatalf("config: %v", err)
+	}
+
 	if backup, err := config.MigrateLegacyEnvFile(cfg); err != nil {
 		log.Printf("config: migrate legacy .env: %v", err)
 	} else if backup != "" {
@@ -139,7 +178,7 @@ func main() {
 	}
 
 	httpServer := &http.Server{
-		Addr:              ":" + cfg.ServerPort,
+		Addr:              cfg.ListenAddr(),
 		Handler:           switcher,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       5 * time.Minute,
@@ -148,9 +187,9 @@ func main() {
 	}
 
 	go func() {
-		log.Printf("SmartDoc Vision API listening on http://127.0.0.1:%s (Redis DB %d)", cfg.ServerPort, cfg.RedisDB)
+		log.Printf("SmartDoc Vision API listening on %s (http://%s, Redis DB %d)", httpServer.Addr, displayAddr(cfg), cfg.RedisDB)
 		if webui.Available() {
-			log.Printf("Admin UI: http://127.0.0.1:%s/admin", cfg.ServerPort)
+			log.Printf("Admin UI: http://%s/admin", displayAddr(cfg))
 		} else {
 			log.Printf("Admin UI is not embedded; run build.ps1 to bundle it")
 		}

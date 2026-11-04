@@ -255,6 +255,54 @@ func TestDotenvBeatsYAMLDSN(t *testing.T) {
 	}
 }
 
+func TestListenAddr(t *testing.T) {
+	tests := []struct {
+		name string
+		host string
+		port string
+		want string
+	}{
+		{name: "defaults", host: "", port: "", want: "0.0.0.0:8080"},
+		{name: "explicit", host: "127.0.0.1", port: "9000", want: "127.0.0.1:9000"},
+		{name: "ipv6", host: "::", port: "8080", want: "[::]:8080"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := Config{ServerHost: tc.host, ServerPort: tc.port}
+			if got := cfg.ListenAddr(); got != tc.want {
+				t.Fatalf("ListenAddr() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestListenAddrFromEnv(t *testing.T) {
+	dir := t.TempDir()
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(wd) }()
+
+	content := "SERVER_HOST=127.0.0.1\nSERVER_PORT=9000\nDB_HOST=127.0.0.1\nJWT_SECRET=jwt\nMASTER_KEY=0123456789abcdef0123456789abcdef\n"
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Empty environment values are ignored by pickString, so the .env values win.
+	t.Setenv("SERVER_HOST", "")
+	t.Setenv("SERVER_PORT", "")
+	cfg := Load()
+	if cfg.ServerHost != "127.0.0.1" || cfg.ServerPort != "9000" {
+		t.Fatalf("unexpected listen config: host=%q port=%q", cfg.ServerHost, cfg.ServerPort)
+	}
+	if got := cfg.ListenAddr(); got != "127.0.0.1:9000" {
+		t.Fatalf("ListenAddr() = %q", got)
+	}
+}
+
 func TestDotenvBeatsYAMLRedisAddr(t *testing.T) {
 	host := "redis.yml"
 	var cfg yamlConfig

@@ -515,6 +515,7 @@ func WriteEnv(cfg config.Config) (string, error) {
 	}
 	values := map[string]string{
 		"APP_ENV":                     cfg.AppEnv,
+		"SERVER_HOST":                 cfg.ServerHost,
 		"SERVER_PORT":                 cfg.ServerPort,
 		"DB_DRIVER":                   cfg.DatabaseDriver,
 		"DB_HOST":                     cfg.DatabaseHost,

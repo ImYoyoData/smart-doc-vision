@@ -132,6 +132,7 @@ CREATE DATABASE "smart-doc-vision" ENCODING 'UTF8';
 ```
 
 - 管理后台固定入口：`http://127.0.0.1:<SERVER_PORT>/admin`，根路径 `/` 会自动跳转。
+- HTTP 监听地址由 `SERVER_HOST`（默认 `0.0.0.0`，即全部网卡）和 `SERVER_PORT`（默认 `8080`）决定。临时改端口或只监听本机时可以不改 `.env`，直接用启动参数覆盖：`./smartdoc-vision -port 9000 -host 127.0.0.1`；命令行参数优先级最高。
 - 编译发布默认 `APP_ENV=production`；本地开发请显式设置 `APP_ENV=development`。安装向导生成的 `.env` 固定为 `production`。
 - 数据库和 Redis 配置全部写在同一个 `.env` 中：`DB_DRIVER=mysql|postgres` 选择数据库类型，连接参数使用 `DB_HOST` / `DB_PORT` / `DB_USER` / `DB_PASSWORD` / `DB_NAME`，也可用完整 `DB_DSN` 覆盖分项配置；旧版 `MYSQL_*` / `MYSQL_DSN` 写法仍然兼容。Redis 可用 `REDIS_ADDR` 或 `REDIS_HOST` + `REDIS_PORT`。
 - **所有 `.env` 配置只在启动时读取，修改后必须重启服务才会生效。** 其中 `DEFAULT_AI_*` / `JEV_*` 只在首次创建模型时使用，已有模型请在后台「模型接入」修改。
@@ -147,6 +148,7 @@ CREATE DATABASE "smart-doc-vision" ENCODING 'UTF8';
 `.env` 至少修改：
 
 ```dotenv
+SERVER_HOST=0.0.0.0
 SERVER_PORT=8080
 
 # 数据库：mysql 或 postgres
@@ -201,6 +203,21 @@ npm run dev
 ```
 
 访问 <http://127.0.0.1:5173>。
+
+后端监听地址默认是 `0.0.0.0:8080`（全部网卡、8080 端口），可以用启动参数临时覆盖而无需修改 `.env`：
+
+```bash
+# 改成 9000 端口
+go run ./cmd/server -port 9000
+
+# 只监听本机，端口用 .env / 默认值
+go run ./cmd/server -host 127.0.0.1
+
+# 两者同时指定
+go run ./cmd/server -host 0.0.0.0 -port 9000
+```
+
+优先级为：启动参数 `-host` / `-port` > 环境变量 `SERVER_HOST` / `SERVER_PORT` > `.env` > `config.yml` > 内置默认值。`-port` 必须是 1~65535 的整数，否则进程会直接报错退出。
 
 首次使用（或新项目）请在「接入凭证」页面创建项目凭证，并勾选允许访问的审核配置；创建时复制一次 AppSecret。凭证是调用开放 API / WebSocket 的唯一机器身份。
 
