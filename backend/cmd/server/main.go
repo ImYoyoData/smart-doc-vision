@@ -91,19 +91,23 @@ type appRuntime struct {
 }
 
 func main() {
+	portFlag := flag.String("port", "", "HTTP listen port; overrides SERVER_PORT (default 8080)")
+	hostFlag := flag.String("host", "", "HTTP listen host; overrides SERVER_HOST (default 0.0.0.0)")
+	flag.Parse()
+
+	// Load the configuration before wiring log files: config.Load applies
+	// APP_TIMEZONE to time.Local, so every log line, database write and API
+	// timestamp from here on shares one time zone.
+	cfg := config.Load()
+	if err := applyListenOverrides(&cfg, *hostFlag, *portFlag); err != nil {
+		log.Fatalf("config: %v", err)
+	}
 	if err := logging.Setup(); err != nil {
 		log.Printf("logging: file logs disabled: %v", err)
 	}
 	defer logging.Close()
 	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
-	portFlag := flag.String("port", "", "HTTP listen port; overrides SERVER_PORT (default 8080)")
-	hostFlag := flag.String("host", "", "HTTP listen host; overrides SERVER_HOST (default 0.0.0.0)")
-	flag.Parse()
-
-	cfg := config.Load()
-	if err := applyListenOverrides(&cfg, *hostFlag, *portFlag); err != nil {
-		log.Fatalf("config: %v", err)
-	}
+	log.Printf("config: time zone %s (APP_TIMEZONE)", config.TimeZoneLabel(cfg.TimeZone))
 
 	if backup, err := config.MigrateLegacyEnvFile(cfg); err != nil {
 		log.Printf("config: migrate legacy .env: %v", err)

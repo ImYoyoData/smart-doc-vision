@@ -47,7 +47,9 @@ func (s *Server) prometheusMetrics(c *gin.Context) {
 		}
 	}
 	var today int64
-	start := time.Now().Truncate(24 * time.Hour)
+	// Truncate(24h) rounds against UTC, which puts the boundary at 08:00 for
+	// UTC+8. Build the boundary in the configured zone instead.
+	start := startOfDay(time.Now())
 	if err := s.db.WithContext(ctx).Model(&model.Task{}).Where("created_at >= ?", start).Count(&today).Error; err == nil {
 		lines = append(lines,
 			"# HELP smartdoc_tasks_created_today Tasks created since local midnight.\n# TYPE smartdoc_tasks_created_today gauge",

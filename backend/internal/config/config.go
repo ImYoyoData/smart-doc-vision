@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	_ "time/tzdata" // embed the IANA database so Windows and slim containers resolve Asia/Shanghai
 
 	mysqlDriver "github.com/go-sql-driver/mysql"
 	"github.com/joho/godotenv"
@@ -21,6 +22,10 @@ import (
 
 const defaultMasterKey = "dev-smartdoc-vision-master-key-change-me"
 const defaultJWTSecret = "dev-smartdoc-vision-change-me"
+
+// DefaultTimeZone is used when APP_TIMEZONE is empty. "Local" (or "server")
+// follows the operating system time zone instead.
+const DefaultTimeZone = "Asia/Shanghai"
 
 // defaultServerHost listens on every interface, matching the behaviour of the
 // previous hard-coded ":port" address while still being explicit in the config.
@@ -34,6 +39,7 @@ const (
 
 type Config struct {
 	AppEnv           string
+	TimeZone         string
 	ServerHost       string
 	ServerPort       string
 	DatabaseDriver   string
@@ -61,6 +67,8 @@ type Config struct {
 	SiteLogo   string
 	SiteURL    string
 
+	// DefaultAI*/JEV* are legacy .env seed values kept for compatibility; new
+	// deployments configure models on the 「模型接入」 page instead.
 	DefaultAIBaseURL        string
 	DefaultAIModel          string
 	DefaultAIAPIKey         string
@@ -93,8 +101,9 @@ type Config struct {
 
 type yamlConfig struct {
 	HTTP struct {
-		Host *string `yaml:"host"`
-		Port *int    `yaml:"port"`
+		Host     *string `yaml:"host"`
+		Port     *int    `yaml:"port"`
+		TimeZone *string `yaml:"timezone"`
 	} `yaml:"http"`
 	MySQL struct {
 		DSN      *string `yaml:"dsn"`
@@ -184,6 +193,18 @@ func Load() Config {
 	}
 	serverHost := fallbackString(pickString("SERVER_HOST", fileCfg.HTTP.Host, dotenvValues, defaultServerHost), defaultServerHost)
 
+	// The time zone must be applied before any DSN or timestamp is built:
+	// time.Local drives time.Now(), the MySQL `loc` parameter and GORM's
+	// NowFunc, so setting it once keeps logs, JSON output and the database in
+	// agreement.
+	timeZone := pickString("APP_TIMEZONE", fileCfg.HTTP.TimeZone, dotenvValues, DefaultTimeZone)
+	if resolved, err := ApplyTimeZone(timeZone); err != nil {
+		log.Printf("config: %v; falling back to %s", err, DefaultTimeZone)
+		timeZone, _ = ApplyTimeZone(DefaultTimeZone)
+	} else {
+		timeZone = resolved
+	}
+
 	databaseDriver := resolveDatabaseDriver(dotenvValues)
 	defaultHost, defaultPort, defaultUser := "127.0.0.1", 3306, "root"
 	if databaseDriver == DriverPostgres {
@@ -221,6 +242,7 @@ func Load() Config {
 		databaseHost, databasePort, databaseUser, databasePassword, databaseName, databaseCharset, databaseSSLMode)
 	if databaseDriver == DriverMySQL {
 		databaseDSN = ensureMySQLCharset(databaseDSN)
+		databaseDSN = ensureMySQLLocation(databaseDSN)
 	}
 
 	redisHost := fallbackString(pickString("REDIS_HOST", fileCfg.Redis.Host, dotenvValues, "127.0.0.1"), "127.0.0.1")
@@ -239,6 +261,7 @@ func Load() Config {
 
 	cfg := Config{
 		AppEnv:                  pickString("APP_ENV", nil, dotenvValues, "production"),
+		TimeZone:                timeZone,
 		ServerHost:              serverHost,
 		ServerPort:              strconv.Itoa(serverPort),
 		DatabaseDriver:          databaseDriver,
@@ -296,6 +319,31 @@ func Load() Config {
 		cfg.RedisDB = 0
 	}
 	return cfg
+}
+
+// ApplyTimeZone loads the requested IANA zone (or "Local"/"server" for the
+// operating system zone) and makes it the process-wide default by assigning
+// time.Local. It returns the name that was applied.
+func ApplyTimeZone(name string) (string, error) {
+	value := strings.TrimSpace(name)
+	switch strings.ToLower(value) {
+	case "", "local", "server", "system":
+		// Keep whatever the OS reports; resolve it once so callers see a name.
+		return time.Local.String(), nil
+	}
+	location, err := time.LoadLocation(value)
+	if err != nil {
+		return "", fmt.Errorf("APP_TIMEZONE %q 无法识别: %w", value, err)
+	}
+	time.Local = location
+	return location.String(), nil
+}
+
+// TimeZoneLabel renders a configured zone together with the offset currently
+// in effect, e.g. "Asia/Shanghai (UTC+08:00)". It makes a wrong zone obvious
+// in the startup log and on the system config page.
+func TimeZoneLabel(name string) string {
+	return fallbackString(strings.TrimSpace(name), DefaultTimeZone) + " (UTC" + time.Now().Format("-07:00") + ")"
 }
 
 // ListenAddr is the host:port the HTTP server binds to. An empty host means
@@ -456,8 +504,25 @@ func buildPostgresDSN(host string, port int, user, password, database, sslmode s
 	query := url.Values{}
 	query.Set("sslmode", fallbackString(sslmode, "disable"))
 	query.Set("connect_timeout", "10")
+	if name := LocalTimeZoneName(); name != "" {
+		query.Set("timezone", name)
+	}
 	target.RawQuery = query.Encode()
 	return target.String()
+}
+
+// LocalTimeZoneName returns the IANA name of time.Local, or "" when the
+// process follows an unnamed OS zone ("Local" on Windows). It is used to align
+// database sessions with the Go runtime.
+func LocalTimeZoneName() string {
+	name := strings.TrimSpace(time.Local.String())
+	if name == "" || strings.EqualFold(name, "Local") {
+		return ""
+	}
+	if _, err := time.LoadLocation(name); err != nil {
+		return ""
+	}
+	return name
 }
 
 func resolveRedisAddr(fileCfg yamlConfig, dotenv map[string]string, host string, port int) string {
@@ -593,6 +658,35 @@ func buildMySQLDSN(host string, port int, user, password, database, charset stri
 	return cfg.FormatDSN()
 }
 
+// ensureMySQLLocation makes an explicit DSN follow the application time zone.
+// Without `loc` the driver falls back to UTC, so every DATETIME written by Go
+// would be stored as UTC while the UI and reports assume local wall-clock time.
+func ensureMySQLLocation(dsn string) string {
+	if hasDSNParam(dsn, "loc") {
+		return dsn
+	}
+	parsed, err := mysqlDriver.ParseDSN(dsn)
+	if err != nil {
+		return dsn
+	}
+	parsed.Loc = time.Local
+	return parsed.FormatDSN()
+}
+
+// hasDSNParam reports whether a MySQL DSN already carries the given query key.
+func hasDSNParam(dsn, key string) bool {
+	index := strings.Index(dsn, "?")
+	if index < 0 {
+		return false
+	}
+	for _, part := range strings.Split(dsn[index+1:], "&") {
+		if name, _, found := strings.Cut(part, "="); found && strings.EqualFold(strings.TrimSpace(name), key) {
+			return true
+		}
+	}
+	return false
+}
+
 func ensureMySQLCharset(dsn string) string {
 	if strings.Contains(strings.ToLower(dsn), "charset=") {
 		return dsn
@@ -618,9 +712,20 @@ func splitCSV(value string) []string {
 // development defaults share it so the explanations never drift apart.
 func EnvTemplate(values map[string]string) string {
 	value := func(key string) string { return formatEnvValue(values[key]) }
+	// Fall back to the same defaults Load() uses so a partially filled caller
+	// never produces entries such as "SERVER_PORT=".
+	orDefault := func(key, fallback string) string {
+		return formatEnvValue(fallbackString(values[key], fallback))
+	}
 	dsnLine := "# 可选：完整连接串，填写后优先于上面的分项配置。"
 	if strings.TrimSpace(values["DB_DSN"]) != "" {
 		dsnLine = "DB_DSN=" + value("DB_DSN")
+	}
+	driver := NormalizeDatabaseDriver(values["DB_DRIVER"])
+	storageDriver := strings.ToLower(strings.TrimSpace(values["STORAGE_DRIVER"]))
+	dbPort, dbUser := "3306", "root"
+	if driver == DriverPostgres {
+		dbPort, dbUser = "5432", "postgres"
 	}
 	lines := []string{
 		"# =============================================================================",
@@ -637,87 +742,96 @@ func EnvTemplate(values map[string]string) string {
 		"# ================================ 运行环境 ====================================",
 		"# production / development。生产环境请保持 production；",
 		"# development 会放宽 CORS 并输出更详细的调试信息。",
-		"APP_ENV=" + value("APP_ENV"),
+		"APP_ENV=" + orDefault("APP_ENV", "production"),
+		"# 时区：日志、任务时间、报表按天统计和数据库写入都使用该时区。",
+		"# 默认 Asia/Shanghai；填 Local 表示跟随服务器操作系统时区。修改后需重启。",
+		"APP_TIMEZONE=" + orDefault("APP_TIMEZONE", DefaultTimeZone),
 		"# HTTP 监听地址。默认 0.0.0.0 表示监听全部网卡；",
 		"# 只允许本机访问可改为 127.0.0.1，也可用启动参数 -host 临时覆盖。",
-		"SERVER_HOST=" + value("SERVER_HOST"),
+		"SERVER_HOST=" + orDefault("SERVER_HOST", defaultServerHost),
 		"# HTTP 监听端口。修改后需重启，并同步调整反向代理和 SITE_URL；",
 		"# 也可用启动参数 -port 临时覆盖。",
-		"SERVER_PORT=" + value("SERVER_PORT"),
+		"SERVER_PORT=" + orDefault("SERVER_PORT", "8080"),
 		"",
 		"# ================================= 数据库 =====================================",
 		"# 数据库类型：mysql 或 postgres（PostgreSQL）。",
-		"DB_DRIVER=" + value("DB_DRIVER"),
-		"DB_HOST=" + value("DB_HOST"),
-		"DB_PORT=" + value("DB_PORT"),
-		"DB_USER=" + value("DB_USER"),
+		"DB_DRIVER=" + driver,
+		"DB_HOST=" + orDefault("DB_HOST", "127.0.0.1"),
+		"DB_PORT=" + orDefault("DB_PORT", dbPort),
+		"DB_USER=" + orDefault("DB_USER", dbUser),
 		"DB_PASSWORD=" + value("DB_PASSWORD"),
-		"DB_NAME=" + value("DB_NAME"),
-		"# PostgreSQL 专用：disable / require / verify-ca / verify-full。",
-		"DB_SSLMODE=" + value("DB_SSLMODE"),
-		"# MySQL 专用：字符集，通常保持 utf8mb4。",
-		"DB_CHARSET=" + value("DB_CHARSET"),
-		dsnLine,
-		"# MySQL 示例：",
-		"# DB_DSN=root:password@tcp(127.0.0.1:3306)/smart-doc-vision?charset=utf8mb4&parseTime=True&loc=Local",
-		"# PostgreSQL 示例：",
-		"# DB_DSN=postgres://postgres:password@127.0.0.1:5432/smart-doc-vision?sslmode=disable",
+		"DB_NAME=" + orDefault("DB_NAME", "smart-doc-vision"),
+	}
+	if driver == DriverPostgres {
+		lines = append(lines,
+			"# PostgreSQL 专用：disable / require / verify-ca / verify-full。",
+			"DB_SSLMODE="+orDefault("DB_SSLMODE", "disable"),
+		)
+	} else {
+		lines = append(lines,
+			"# MySQL 专用：字符集，通常保持 utf8mb4。",
+			"DB_CHARSET="+orDefault("DB_CHARSET", "utf8mb4"),
+		)
+	}
+	lines = append(lines, dsnLine)
+	if driver == DriverPostgres {
+		lines = append(lines, "# DB_DSN=postgres://postgres:password@127.0.0.1:5432/smart-doc-vision?sslmode=disable")
+	} else {
+		lines = append(lines, "# DB_DSN=root:password@tcp(127.0.0.1:3306)/smart-doc-vision?charset=utf8mb4&parseTime=True&loc=Local")
+	}
+	lines = append(lines,
 		"",
 		"# ================================== Redis ====================================",
 		"# 用于任务队列、去重锁、运行监控与缓存。",
-		"REDIS_ADDR=" + value("REDIS_ADDR"),
-		"REDIS_PASSWORD=" + value("REDIS_PASSWORD"),
-		"REDIS_DB=" + value("REDIS_DB"),
+		"REDIS_ADDR="+orDefault("REDIS_ADDR", "127.0.0.1:6379"),
+		"REDIS_PASSWORD="+value("REDIS_PASSWORD"),
+		"REDIS_DB="+orDefault("REDIS_DB", "3"),
 		"",
 		"# ================================ 安全密钥 ====================================",
 		"# JWT 登录令牌的签名密钥；修改后所有已登录会话立即失效，可以随时更换。",
-		"JWT_SECRET=" + value("JWT_SECRET"),
+		"JWT_SECRET="+value("JWT_SECRET"),
 		"# 数据加密主密钥；用于加密数据库中的敏感配置，首次安装后不要修改（见文件顶部）。",
-		"MASTER_KEY=" + value("MASTER_KEY"),
+		"MASTER_KEY="+value("MASTER_KEY"),
 		"",
 		"# ================================ 站点品牌 ====================================",
-		"# 修改后需重启。SITE_LOGO 支持 https 地址、data:image 或服务器本地图片路径。",
-		"SITE_NAME=" + value("SITE_NAME"),
-		"SITE_NAME_EN=" + value("SITE_NAME_EN"),
-		"SITE_LOGO=" + value("SITE_LOGO"),
-		"# 对外访问地址，用于通知邮件中的直达链接，末尾不要带 /。",
-		"SITE_URL=" + value("SITE_URL"),
+		"# 修改后需重启；也可以留空，在「系统配置 → 站点品牌」中在线修改。",
+		"# SITE_LOGO 支持 https 地址、data:image 或服务器本地图片路径。",
+		"SITE_NAME="+orDefault("SITE_NAME", "智审图档"),
+		"SITE_NAME_EN="+orDefault("SITE_NAME_EN", "SmartDoc Vision"),
+		"SITE_LOGO="+value("SITE_LOGO"),
+		"SITE_URL="+orDefault("SITE_URL", "http://127.0.0.1:8080"),
 		"",
 		"# ================================ 运行参数 ====================================",
 		"# 允许跨域访问的页面来源，多个用英文逗号分隔。",
-		"CORS_ORIGINS=" + value("CORS_ORIGINS"),
+		"CORS_ORIGINS="+orDefault("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"),
 		"# 审核 Worker 并发数，范围 1~32。",
-		"WORKER_COUNT=" + value("WORKER_COUNT"),
+		"WORKER_COUNT="+orDefault("WORKER_COUNT", "4"),
 		"# 是否允许模型读取内网地址（生产环境建议 false）。",
-		"MEDIA_ALLOW_PRIVATE=" + value("MEDIA_ALLOW_PRIVATE"),
-		"",
-		"# =============================== 默认模型 =====================================",
-		"# 仅在数据库中还没有「通用大模型」时用于首次创建；",
-		"# 已有模型请到后台「模型接入」修改，改这里不会影响已经创建的模型。",
-		"DEFAULT_AI_BASE_URL=" + value("DEFAULT_AI_BASE_URL"),
-		"DEFAULT_AI_MODEL=" + value("DEFAULT_AI_MODEL"),
-		"DEFAULT_AI_API_KEY=" + value("DEFAULT_AI_API_KEY"),
-		"DEFAULT_AI_SUPPORTS_VISION=" + value("DEFAULT_AI_SUPPORTS_VISION"),
-		"JEV_BASE_URL=" + value("JEV_BASE_URL"),
-		"JEV_MODEL=" + value("JEV_MODEL"),
+		"MEDIA_ALLOW_PRIVATE="+orDefault("MEDIA_ALLOW_PRIVATE", "false"),
 		"",
 		"# ================================ 文件存储 ====================================",
 		"# local：服务器本地目录；s3：任意 S3 兼容对象存储。",
-		"STORAGE_DRIVER=" + value("STORAGE_DRIVER"),
-		"STORAGE_LOCAL_DIR=" + value("STORAGE_LOCAL_DIR"),
-		"# 可选 CDN/公网前缀，映射到存储根目录。",
-		"STORAGE_PUBLIC_BASE_URL=" + value("STORAGE_PUBLIC_BASE_URL"),
-		"# aliyun | tencent | qiniu | aws | minio | custom",
-		"STORAGE_S3_PROVIDER=" + value("STORAGE_S3_PROVIDER"),
-		"STORAGE_S3_ENDPOINT=" + value("STORAGE_S3_ENDPOINT"),
-		"STORAGE_S3_REGION=" + value("STORAGE_S3_REGION"),
-		"STORAGE_S3_BUCKET=" + value("STORAGE_S3_BUCKET"),
-		"STORAGE_S3_ACCESS_KEY=" + value("STORAGE_S3_ACCESS_KEY"),
-		"STORAGE_S3_SECRET_KEY=" + value("STORAGE_S3_SECRET_KEY"),
-		"STORAGE_S3_PREFIX=" + value("STORAGE_S3_PREFIX"),
-		"STORAGE_S3_FORCE_PATH_STYLE=" + value("STORAGE_S3_FORCE_PATH_STYLE"),
-		"",
+		"STORAGE_DRIVER="+orDefault("STORAGE_DRIVER", "local"),
+	)
+	if storageDriver == "s3" {
+		lines = append(lines,
+			"# aliyun | tencent | qiniu | aws | minio | custom",
+			"STORAGE_S3_PROVIDER="+orDefault("STORAGE_S3_PROVIDER", "custom"),
+			"STORAGE_S3_REGION="+value("STORAGE_S3_REGION"),
+			"STORAGE_S3_BUCKET="+value("STORAGE_S3_BUCKET"),
+			"STORAGE_S3_ACCESS_KEY="+value("STORAGE_S3_ACCESS_KEY"),
+			"STORAGE_S3_SECRET_KEY="+value("STORAGE_S3_SECRET_KEY"),
+			"# 已知服务商可留空，由服务商与 Region 自动推导；MinIO/自定义必须填写。",
+			"STORAGE_S3_ENDPOINT="+value("STORAGE_S3_ENDPOINT"),
+			"STORAGE_S3_PREFIX="+value("STORAGE_S3_PREFIX"),
+			"STORAGE_S3_FORCE_PATH_STYLE="+orDefault("STORAGE_S3_FORCE_PATH_STYLE", "false"),
+			"# 可选 CDN/公网前缀，映射到存储根目录。",
+			"STORAGE_PUBLIC_BASE_URL="+value("STORAGE_PUBLIC_BASE_URL"),
+		)
+	} else {
+		lines = append(lines, "STORAGE_LOCAL_DIR="+orDefault("STORAGE_LOCAL_DIR", filepath.Join("data", "uploads")))
 	}
+	lines = append(lines, "")
 	return strings.Join(lines, "\n")
 }
 
@@ -765,6 +879,7 @@ func MigrateLegacyEnvFile(cfg Config) (string, error) {
 
 	merged := map[string]string{
 		"APP_ENV":                     cfg.AppEnv,
+		"APP_TIMEZONE":                fallbackString(cfg.TimeZone, DefaultTimeZone),
 		"SERVER_HOST":                 cfg.ServerHost,
 		"SERVER_PORT":                 cfg.ServerPort,
 		"DB_DRIVER":                   NormalizeDatabaseDriver(cfg.DatabaseDriver),
@@ -787,12 +902,6 @@ func MigrateLegacyEnvFile(cfg Config) (string, error) {
 		"CORS_ORIGINS":                strings.Join(cfg.CORSOrigins, ","),
 		"WORKER_COUNT":                strconv.Itoa(cfg.WorkerCount),
 		"MEDIA_ALLOW_PRIVATE":         strconv.FormatBool(cfg.AllowPrivate),
-		"DEFAULT_AI_BASE_URL":         cfg.DefaultAIBaseURL,
-		"DEFAULT_AI_MODEL":            cfg.DefaultAIModel,
-		"DEFAULT_AI_API_KEY":          cfg.DefaultAIAPIKey,
-		"DEFAULT_AI_SUPPORTS_VISION":  strconv.FormatBool(cfg.DefaultAISupportsVision),
-		"JEV_BASE_URL":                cfg.JEVBaseURL,
-		"JEV_MODEL":                   cfg.JEVModel,
 		"STORAGE_DRIVER":              cfg.StorageDriver,
 		"STORAGE_LOCAL_DIR":           cfg.StorageLocalDir,
 		"STORAGE_PUBLIC_BASE_URL":     cfg.StoragePublicBaseURL,
@@ -908,35 +1017,29 @@ func fillDatabaseFields(target map[string]string, dsn string) {
 
 func writeDefaultEnv(path string) error {
 	values := map[string]string{
-		"APP_ENV":                     "production",
-		"SERVER_HOST":                 defaultServerHost,
-		"SERVER_PORT":                 "8080",
-		"DB_DRIVER":                   DriverMySQL,
-		"DB_HOST":                     "127.0.0.1",
-		"DB_PORT":                     "3306",
-		"DB_USER":                     "root",
-		"DB_NAME":                     "smart-doc-vision",
-		"DB_SSLMODE":                  "disable",
-		"DB_CHARSET":                  "utf8mb4",
-		"REDIS_ADDR":                  "127.0.0.1:6379",
-		"REDIS_DB":                    "3",
-		"JWT_SECRET":                  randomHex(32),
-		"MASTER_KEY":                  randomHex(32),
-		"SITE_NAME":                   "智审图档",
-		"SITE_NAME_EN":                "SmartDoc Vision",
-		"SITE_URL":                    "http://127.0.0.1:8080",
-		"CORS_ORIGINS":                "http://localhost:5173,http://127.0.0.1:5173",
-		"WORKER_COUNT":                "4",
-		"MEDIA_ALLOW_PRIVATE":         "false",
-		"DEFAULT_AI_BASE_URL":         "https://api.openai.com/v1",
-		"DEFAULT_AI_MODEL":            "gpt-4o-mini",
-		"DEFAULT_AI_SUPPORTS_VISION":  "false",
-		"JEV_BASE_URL":                "https://api.typesafe.ai/v1",
-		"JEV_MODEL":                   "jev-latest",
-		"STORAGE_DRIVER":              "local",
-		"STORAGE_LOCAL_DIR":           filepath.Join("data", "uploads"),
-		"STORAGE_S3_PROVIDER":         "custom",
-		"STORAGE_S3_FORCE_PATH_STYLE": "false",
+		"APP_ENV":             "production",
+		"APP_TIMEZONE":        DefaultTimeZone,
+		"SERVER_HOST":         defaultServerHost,
+		"SERVER_PORT":         "8080",
+		"DB_DRIVER":           DriverMySQL,
+		"DB_HOST":             "127.0.0.1",
+		"DB_PORT":             "3306",
+		"DB_USER":             "root",
+		"DB_NAME":             "smart-doc-vision",
+		"DB_SSLMODE":          "disable",
+		"DB_CHARSET":          "utf8mb4",
+		"REDIS_ADDR":          "127.0.0.1:6379",
+		"REDIS_DB":            "3",
+		"JWT_SECRET":          randomHex(32),
+		"MASTER_KEY":          randomHex(32),
+		"SITE_NAME":           "智审图档",
+		"SITE_NAME_EN":        "SmartDoc Vision",
+		"SITE_URL":            "http://127.0.0.1:8080",
+		"CORS_ORIGINS":        "http://localhost:5173,http://127.0.0.1:5173",
+		"WORKER_COUNT":        "4",
+		"MEDIA_ALLOW_PRIVATE": "false",
+		"STORAGE_DRIVER":      "local",
+		"STORAGE_LOCAL_DIR":   filepath.Join("data", "uploads"),
 	}
 	return os.WriteFile(path, []byte(EnvTemplate(values)), 0o600)
 }

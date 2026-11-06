@@ -48,6 +48,7 @@ func (s *Server) systemConfigGroups() []systemConfigGroup {
 			Key: "runtime", Title: "运行环境", Description: "进程启动时解析出的基础运行参数。",
 			Fields: []systemConfigField{
 				plainConfigField("APP_ENV", "运行环境", cfg.AppEnv),
+				plainConfigField("APP_TIMEZONE", "时区", config.TimeZoneLabel(cfg.TimeZone)),
 				plainConfigField("SERVER_HOST", "监听地址", cfg.ServerHost),
 				plainConfigField("SERVER_PORT", "服务端口", cfg.ServerPort),
 				plainConfigField("WORKER_COUNT", "审核 Worker 数", fmt.Sprint(cfg.WorkerCount)),
@@ -58,17 +59,6 @@ func (s *Server) systemConfigGroups() []systemConfigGroup {
 		{
 			Key: "database", Title: "数据库", Description: "主数据库连接（MySQL 或 PostgreSQL）；密码在服务端脱敏后返回。",
 			Fields: databaseConfigFields(cfg),
-		},
-		{
-			Key: "ai", Title: "默认模型", Description: "未在模型接入中单独配置时使用的默认 AI 参数。",
-			Fields: []systemConfigField{
-				plainConfigField("DEFAULT_AI_BASE_URL", "默认 Base URL", cfg.DefaultAIBaseURL),
-				plainConfigField("DEFAULT_AI_MODEL", "默认模型", cfg.DefaultAIModel),
-				secretConfigField("DEFAULT_AI_API_KEY", "默认 API Key", cfg.DefaultAIAPIKey),
-				plainConfigField("DEFAULT_AI_SUPPORTS_VISION", "默认支持图片", yesNo(cfg.DefaultAISupportsVision)),
-				plainConfigField("JEV_BASE_URL", "JEV Base URL", cfg.JEVBaseURL),
-				plainConfigField("JEV_MODEL", "JEV 模型", cfg.JEVModel),
-			},
 		},
 		{
 			Key: "security", Title: "安全与密钥", Description: "登录令牌与数据加密密钥；密钥只显示脱敏值。后台账号保存在数据库中，请在「账号管理」中维护。",
@@ -100,7 +90,6 @@ func storageConfigFields(cfg config.Config) []systemConfigField {
 	}
 	fields := []systemConfigField{
 		plainConfigField("STORAGE_DRIVER", "存储方式", label),
-		plainConfigField("STORAGE_PUBLIC_BASE_URL", "公开访问前缀", cfg.StoragePublicBaseURL),
 	}
 	if driver == "s3" {
 		provider := strings.TrimSpace(cfg.StorageS3Provider)
@@ -109,6 +98,7 @@ func storageConfigFields(cfg config.Config) []systemConfigField {
 			endpoint = "按服务商默认端点"
 		}
 		fields = append(fields,
+			plainConfigField("STORAGE_PUBLIC_BASE_URL", "公开访问前缀", cfg.StoragePublicBaseURL),
 			plainConfigField("STORAGE_S3_PROVIDER", "服务商", provider),
 			plainConfigField("STORAGE_S3_ENDPOINT", "Endpoint", endpoint),
 			plainConfigField("STORAGE_S3_REGION", "Region", cfg.StorageS3Region),

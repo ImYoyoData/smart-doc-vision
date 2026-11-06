@@ -14,7 +14,6 @@ import {
   ServerOutline,
   SettingsOutline,
   ShieldCheckmarkOutline,
-  SparklesOutline,
 } from '@vicons/ionicons5'
 import BrandMark from '@/components/BrandMark.vue'
 import PageHeader from '@/components/PageHeader.vue'
@@ -65,7 +64,6 @@ const groupIcons: Record<string, unknown> = {
   database: ServerOutline,
   redis: LinkOutline,
   security: ShieldCheckmarkOutline,
-  ai: SparklesOutline,
   storage: CloudUploadOutline,
 }
 
@@ -297,6 +295,10 @@ onMounted(() => {
         <div class="summary-card">
           <span>服务端口</span>
           <strong class="mono">{{ runtimeValue('SERVER_PORT') }}</strong>
+        </div>
+        <div class="summary-card">
+          <span>时区</span>
+          <strong class="mono">{{ runtimeValue('APP_TIMEZONE') }}</strong>
         </div>
         <div class="summary-card">
           <span>审核 Worker</span>

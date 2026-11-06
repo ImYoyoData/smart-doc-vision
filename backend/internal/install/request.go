@@ -314,6 +314,9 @@ func postgresDSN(cfg Database, includeDatabase bool) string {
 	}
 	query.Set("sslmode", sslmode)
 	query.Set("connect_timeout", "10")
+	if name := config.LocalTimeZoneName(); name != "" {
+		query.Set("timezone", name)
+	}
 	target.RawQuery = query.Encode()
 	return target.String()
 }
@@ -322,6 +325,9 @@ func postgresDSN(cfg Database, includeDatabase bool) string {
 func BuildConfig(base config.Config, req Request) config.Config {
 	req.Normalize()
 	base.AppEnv = "production"
+	if strings.TrimSpace(base.TimeZone) == "" {
+		base.TimeZone = config.DefaultTimeZone
+	}
 	base.DatabaseDriver = req.Database.Driver
 	base.DatabaseDSN = databaseDSN(req.Database, true)
 	base.DatabaseHost = req.Database.Host
@@ -515,6 +521,7 @@ func WriteEnv(cfg config.Config) (string, error) {
 	}
 	values := map[string]string{
 		"APP_ENV":                     cfg.AppEnv,
+		"APP_TIMEZONE":                cfg.TimeZone,
 		"SERVER_HOST":                 cfg.ServerHost,
 		"SERVER_PORT":                 cfg.ServerPort,
 		"DB_DRIVER":                   cfg.DatabaseDriver,
@@ -537,12 +544,6 @@ func WriteEnv(cfg config.Config) (string, error) {
 		"CORS_ORIGINS":                strings.Join(cfg.CORSOrigins, ","),
 		"WORKER_COUNT":                strconv.Itoa(cfg.WorkerCount),
 		"MEDIA_ALLOW_PRIVATE":         strconv.FormatBool(cfg.AllowPrivate),
-		"DEFAULT_AI_BASE_URL":         cfg.DefaultAIBaseURL,
-		"DEFAULT_AI_MODEL":            cfg.DefaultAIModel,
-		"DEFAULT_AI_API_KEY":          cfg.DefaultAIAPIKey,
-		"DEFAULT_AI_SUPPORTS_VISION":  strconv.FormatBool(cfg.DefaultAISupportsVision),
-		"JEV_BASE_URL":                cfg.JEVBaseURL,
-		"JEV_MODEL":                   cfg.JEVModel,
 		"STORAGE_DRIVER":              cfg.StorageDriver,
 		"STORAGE_LOCAL_DIR":           cfg.StorageLocalDir,
 		"STORAGE_PUBLIC_BASE_URL":     cfg.StoragePublicBaseURL,

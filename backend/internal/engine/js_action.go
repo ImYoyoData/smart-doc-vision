@@ -33,6 +33,7 @@ import (
 	"github.com/google/uuid"
 	_ "github.com/jackc/pgx/v5/stdlib"
 
+	"smartdoc-vision/backend/internal/config"
 	"smartdoc-vision/backend/internal/media"
 	"smartdoc-vision/backend/internal/model"
 )
@@ -1107,7 +1108,9 @@ func (r *scriptRun) mysqlDSN(options map[string]any) (string, error) {
 		// "this user requires mysql native password authentication".
 		AllowNativePasswords: true,
 		Params:               map[string]string{"charset": "utf8mb4", "parseTime": "true"},
-		Timeout:              5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second,
+		// Read DATETIME values in the application time zone instead of UTC.
+		Loc:     time.Local,
+		Timeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second,
 	}
 	if tlsMode := stringOption(options, "tls", ""); tlsMode != "" {
 		cfg.TLSConfig = tlsMode
@@ -1135,6 +1138,9 @@ func (r *scriptRun) pgDSN(options map[string]any) (string, error) {
 	query := target.Query()
 	query.Set("sslmode", sslmode)
 	query.Set("connect_timeout", "5")
+	if name := config.LocalTimeZoneName(); name != "" {
+		query.Set("timezone", name)
+	}
 	target.RawQuery = query.Encode()
 	return target.String(), nil
 }

@@ -909,7 +909,7 @@ onMounted(initialize)
 
             <div class="brand-subhead">
               <h3>站点品牌（可选）</h3>
-              <p>留空使用平台默认名称和内置图标；安装后也可以修改 .env 中的 SITE_NAME、SITE_NAME_EN、SITE_LOGO。</p>
+              <p>留空使用平台默认名称和内置图标；安装后可以在「系统配置 → 站点品牌」中随时修改。</p>
             </div>
             <div class="form-grid">
               <label><span class="field-label">网站名称</span><n-input v-model:value="form.site.name" placeholder="留空使用默认：智审图档" maxlength="64" /></label>
@@ -945,7 +945,7 @@ onMounted(initialize)
                 <input ref="logoInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/svg+xml" hidden @change="onLogoFileChange" />
               </div>
             </div>
-            <p class="hint">Logo 留空使用内置图标；上传的图片会压缩后写入 .env 的 SITE_LOGO，安装完成后仍可在「系统配置」中修改。</p>
+            <p class="hint">Logo 留空使用内置图标；上传的图片会压缩后写入 .env 的 SITE_LOGO，安装完成后仍可在「系统配置 → 站点品牌」中修改。</p>
           </template>
 
           <template v-else>

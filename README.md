@@ -134,20 +134,22 @@ CREATE DATABASE "smart-doc-vision" ENCODING 'UTF8';
 - 管理后台固定入口：`http://127.0.0.1:<SERVER_PORT>/admin`，根路径 `/` 会自动跳转。
 - HTTP 监听地址由 `SERVER_HOST`（默认 `0.0.0.0`，即全部网卡）和 `SERVER_PORT`（默认 `8080`）决定。临时改端口或只监听本机时可以不改 `.env`，直接用启动参数覆盖：`./smartdoc-vision -port 9000 -host 127.0.0.1`；命令行参数优先级最高。
 - 编译发布默认 `APP_ENV=production`；本地开发请显式设置 `APP_ENV=development`。安装向导生成的 `.env` 固定为 `production`。
+- **时区由 `APP_TIMEZONE` 控制，默认 `Asia/Shanghai`**，填 `Local` 表示跟随服务器操作系统时区。启动时它会成为进程时区，日志时间、任务/审计时间、报表按天统计以及 MySQL/PostgreSQL 会话时区都以它为准；修改后需要重启。当前生效值可在「系统配置 → 运行环境」查看。
 - 数据库和 Redis 配置全部写在同一个 `.env` 中：`DB_DRIVER=mysql|postgres` 选择数据库类型，连接参数使用 `DB_HOST` / `DB_PORT` / `DB_USER` / `DB_PASSWORD` / `DB_NAME`，也可用完整 `DB_DSN` 覆盖分项配置；旧版 `MYSQL_*` / `MYSQL_DSN` 写法仍然兼容。Redis 可用 `REDIS_ADDR` 或 `REDIS_HOST` + `REDIS_PORT`。
-- **所有 `.env` 配置只在启动时读取，修改后必须重启服务才会生效。** 其中 `DEFAULT_AI_*` / `JEV_*` 只在首次创建模型时使用，已有模型请在后台「模型接入」修改。
+- **所有 `.env` 配置只在启动时读取，修改后必须重启服务才会生效。** 模型参数不再写入 `.env`：通用大模型与 JEV 决策模型统一在后台「模型接入」中配置。旧版 `.env` 里的 `DEFAULT_AI_*` / `JEV_*` 仍会被读取，只在首次创建占位模型时生效，可安全删除。
 - **旧版 `.env` 自动升级**：如果文件中仍是 `MYSQL_HOST` / `MYSQL_DSN` / `ADMIN_USERNAME` / `ADMIN_PASSWORD` 等旧键，程序启动时会自动识别并转换为新的 `DB_*` 格式，原文件备份为 `.env.bak.<时间戳>`，未识别的自定义键会保留在文件末尾。运行期也始终兼容旧键，因此即使文件不可写、转换失败，旧配置仍可正常启动。
 - `.env` 不再包含 `ADMIN_USERNAME` / `ADMIN_PASSWORD`：后台账号保存在数据库中，由安装向导或「账号管理」页面创建和维护。手工部署到全新空库时，可通过系统环境变量 `ADMIN_USERNAME` / `ADMIN_PASSWORD` 提供一次性初始账号；都不提供时会生成随机密码并打印在启动日志中。
 - 如果当前目录及其上级目录没有 `.env`、`config.yml`，也没有数据库/Redis 相关环境变量，程序会以「安装模式」启动，通过 `/admin` 的安装向导生成配置和随机 JWT/MASTER 密钥，不会用默认值连接数据库。
 - `build.ps1` 会把 `.env.example` 复制到 `dist/.env.example`，不再自动生成 `dist/.env`；首次启动会进入安装向导。
 - 旧版 `config.yml` 仅作为兼容兜底读取，但 `.env` 中的同名配置优先；新部署不再需要它。
-- 站点名称与 Logo 通过 `SITE_NAME`、`SITE_NAME_EN`、`SITE_LOGO` 配置，修改后重启生效；`SITE_LOGO` 支持图片 URL、`data:image/...` 或服务器本地图片路径，留空使用内置图标。
+- 站点名称与 Logo 的首选方式是在「系统配置 → 站点品牌」在线修改，无需重启；`.env` 中的 `SITE_NAME`、`SITE_NAME_EN`、`SITE_LOGO` 只作为首次安装的默认值（`SITE_LOGO` 支持图片 URL、`data:image/...` 或服务器本地图片路径）。
 - `SITE_URL` 用于邮件通知中的登录/复核链接，填写外部可访问地址（不带末尾 `/`）；反向代理或容器部署时不要使用默认的 `127.0.0.1`。
 - 超级管理员也可在「系统配置 → 站点品牌」在线修改名称和 Logo，保存后立即生效；运行期配置写入 `data/branding.json`，无需重启。Logo 支持上传、拖入或粘贴 PNG/JPG/WebP/SVG，自动居中裁剪为 1:1 并压缩到 256×256；运行期文件优先于 `.env`，删除该文件可恢复 `.env` 品牌。
 
 `.env` 至少修改：
 
 ```dotenv
+APP_TIMEZONE=Asia/Shanghai
 SERVER_HOST=0.0.0.0
 SERVER_PORT=8080
 
@@ -172,10 +174,9 @@ REDIS_DB=3
 JWT_SECRET=一段足够长的随机字符串
 MASTER_KEY=至少 32 字符的密钥（首次安装后不要修改）
 
-# 站点品牌（可选，重启生效）
+# 站点品牌（可选，重启生效；也可在「系统配置 → 站点品牌」在线修改）
 SITE_NAME=智审图档
 SITE_NAME_EN=SmartDoc Vision
-SITE_LOGO=
 SITE_URL=http://127.0.0.1:8080
 ```
 
@@ -241,7 +242,7 @@ go run ./cmd/server -host 0.0.0.0 -port 9000
 
 安装完成后会生成：
 
-- `.env`：包含数据库、Redis、`JWT_SECRET`、`MASTER_KEY`、站点品牌和存储配置（全中文注释，权限 `0600`）；后台账号不写入该文件；
+- `.env`：包含时区、数据库、Redis、`JWT_SECRET`、`MASTER_KEY`、站点品牌和存储配置（全中文注释，权限 `0600`）；后台账号不写入该文件，模型参数在「模型接入」中配置；
 - `.install.txt`：安装标记，记录安装时间与版本。
 
 安装标记存在时，即使 `.env` 丢失也不会再次进入安装向导，而是提示恢复配置文件，避免误重装覆盖数据。刷新页面即可使用刚设置的管理员账号登录，无需重启进程。如果目录中只有构建模板生成的占位 `.env`，安装器会先将其备份为 `.env.bak.<时间戳>` 再写入新配置；真实配置不会被覆盖。

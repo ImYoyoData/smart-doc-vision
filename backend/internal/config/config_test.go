@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	mysqlDriver "github.com/go-sql-driver/mysql"
 	"github.com/joho/godotenv"
@@ -35,6 +36,70 @@ func TestEnsureMySQLCharset(t *testing.T) {
 	}
 }
 
+func TestEnsureMySQLLocation(t *testing.T) {
+	// A DSN without loc makes the driver read DATETIME columns as UTC, which
+	// shifts every stored timestamp by the zone offset.
+	dsn := ensureMySQLLocation("root:pw@tcp(127.0.0.1:3306)/demo?charset=utf8mb4")
+	parsed, err := mysqlDriver.ParseDSN(dsn)
+	if err != nil {
+		t.Fatalf("invalid DSN: %v (%s)", err, dsn)
+	}
+	if parsed.Loc == nil || parsed.Loc.String() != time.Local.String() {
+		t.Fatalf("expected loc=%s, got %v", time.Local, parsed.Loc)
+	}
+	// An explicit loc is left untouched so operators can override it.
+	explicit := "root:pw@tcp(127.0.0.1:3306)/demo?loc=UTC"
+	if got := ensureMySQLLocation(explicit); got != explicit {
+		t.Fatalf("explicit loc was rewritten: %s", got)
+	}
+}
+
+func TestApplyTimeZone(t *testing.T) {
+	original := time.Local
+	defer func() { time.Local = original }()
+
+	name, err := ApplyTimeZone("UTC")
+	if err != nil {
+		t.Fatalf("UTC should load: %v", err)
+	}
+	if name != "UTC" || time.Local.String() != "UTC" {
+		t.Fatalf("time.Local = %s (reported %s)", time.Local, name)
+	}
+	if _, offset := time.Now().Zone(); offset != 0 {
+		t.Fatalf("expected UTC offset 0, got %d", offset)
+	}
+
+	if _, err := ApplyTimeZone("Asia/Shanghai"); err != nil {
+		t.Fatalf("Asia/Shanghai should load from embedded tzdata: %v", err)
+	}
+	if _, offset := time.Now().In(time.Local).Zone(); offset != 8*3600 {
+		t.Fatalf("expected +08:00, got %d", offset)
+	}
+
+	if _, err := ApplyTimeZone("Mars/Olympus"); err == nil {
+		t.Fatal("unknown zone should fail so Load can fall back")
+	}
+
+	// "Local" keeps the current zone instead of resetting it.
+	if _, err := ApplyTimeZone("Local"); err != nil {
+		t.Fatalf("Local should be accepted: %v", err)
+	}
+	if time.Local.String() != "Asia/Shanghai" {
+		t.Fatalf("Local should keep the applied zone, got %s", time.Local)
+	}
+}
+
+func TestLocalTimeZoneName(t *testing.T) {
+	original := time.Local
+	defer func() { time.Local = original }()
+	if _, err := ApplyTimeZone("Asia/Shanghai"); err != nil {
+		t.Fatal(err)
+	}
+	if got := LocalTimeZoneName(); got != "Asia/Shanghai" {
+		t.Fatalf("LocalTimeZoneName() = %q", got)
+	}
+}
+
 func TestWriteDefaultEnv(t *testing.T) {
 	path := filepath.Join(t.TempDir(), ".env")
 	if err := writeDefaultEnv(path); err != nil {
@@ -51,6 +116,38 @@ func TestWriteDefaultEnv(t *testing.T) {
 	}
 	if _, ok := values["ADMIN_PASSWORD"]; ok {
 		t.Fatal("generated .env must not contain administrator credentials")
+	}
+}
+
+func TestEnvTemplateTrimsOptionalSections(t *testing.T) {
+	template := EnvTemplate(map[string]string{
+		"APP_ENV":             "production",
+		"DB_DRIVER":           DriverMySQL,
+		"STORAGE_DRIVER":      "local",
+		"STORAGE_LOCAL_DIR":   "data/uploads",
+		"DEFAULT_AI_BASE_URL": "https://api.openai.com/v1",
+	})
+	for _, want := range []string{"APP_TIMEZONE=Asia/Shanghai", "STORAGE_LOCAL_DIR=data/uploads", "DB_CHARSET="} {
+		if !strings.Contains(template, want) {
+			t.Fatalf("template missing %q:\n%s", want, template)
+		}
+	}
+	// Model defaults now live in the provider page; a MySQL + local-storage
+	// deployment must not be handed S3 or JEV placeholders to maintain.
+	for _, unwanted := range []string{"DEFAULT_AI_BASE_URL=", "JEV_MODEL=", "STORAGE_S3_BUCKET=", "DB_SSLMODE="} {
+		if strings.Contains(template, unwanted) {
+			t.Fatalf("template should not contain %q:\n%s", unwanted, template)
+		}
+	}
+
+	s3 := EnvTemplate(map[string]string{"DB_DRIVER": DriverPostgres, "STORAGE_DRIVER": "s3"})
+	for _, want := range []string{"DB_SSLMODE=", "STORAGE_S3_BUCKET="} {
+		if !strings.Contains(s3, want) {
+			t.Fatalf("s3/postgres template missing %q:\n%s", want, s3)
+		}
+	}
+	if strings.Contains(s3, "DB_CHARSET=") || strings.Contains(s3, "STORAGE_LOCAL_DIR=") {
+		t.Fatalf("s3/postgres template kept MySQL/local-only keys:\n%s", s3)
 	}
 }
 
