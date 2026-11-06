@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.8.6 - 2026-11-06
+
+### 时区
+
+- 新增 `APP_TIMEZONE` 配置，默认 `Asia/Shanghai`，填 `Local` 表示跟随服务器操作系统时区。启动时将其应用为进程时区，日志时间、任务与审计时间、报表按天统计、数据库会话时区统一以它为准；修改后需重启。
+- 修复日志时间不正确的问题：改为先加载配置（应用时区）再初始化日志文件，启动日志同时打印 `Asia/Shanghai (UTC+08:00)` 便于确认。
+- 修复 MySQL DSN 缺少 `loc` 时驱动按 UTC 读写 `DATETIME` 导致的时间偏移：手工填写的 `DB_DSN` 会自动补齐 `loc`（显式指定则不覆盖），安装向导与脚本动作中的 `mysql.connect` 同步处理。
+- PostgreSQL DSN 增加 `timezone` 参数，安装向导与脚本动作中的 `pg.connect` 同步处理。
+- 修复 Prometheus 指标 `smartdoc_tasks_created_today` 使用 UTC 截断、在 UTC+8 下从 08:00 起算的问题，改为按配置时区的零点统计。
+- 「系统配置 → 运行环境」新增「时区」展示项（含当前 UTC 偏移）。
+
+### 配置精简
+
+- `.env` 模板与安装向导生成内容不再写入 `DEFAULT_AI_BASE_URL` / `DEFAULT_AI_MODEL` / `DEFAULT_AI_API_KEY` / `DEFAULT_AI_SUPPORTS_VISION` / `JEV_BASE_URL` / `JEV_MODEL`：模型统一在「模型接入」中配置；旧 `.env` 中的这些键仍兼容读取，可安全删除。
+- 「系统配置」页移除只读的「默认模型」分组；「文件存储」分组在本地存储下不再展示 S3 与公开访问前缀字段。
+- 数据库专属项按类型输出：MySQL 只写 `DB_CHARSET`，PostgreSQL 只写 `DB_SSLMODE`。
+- 本地存储不再输出整组空的 S3 参数，只有 `STORAGE_DRIVER=s3` 时才生成 S3 段；空值字段回落到与程序一致的默认值，不再生成 `SERVER_PORT=` 之类的空条目。
+- `docker-compose.yml` 移除冗余的 `MYSQL_DSN` 与 AI 默认值变量，改用 `DB_*`；MySQL 容器改用 `--default-time-zone=SYSTEM` 并注入 `TZ`，与后端 `APP_TIMEZONE` 保持一致。
+
+本版本未新增数据库表或字段；`schema_versions` 结构版本保持 `20261101.1`，不会触发结构升级门禁。
+
 ## 1.8.5 - 2026-11-04
 
 ### 配置与部署
