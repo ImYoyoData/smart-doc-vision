@@ -257,6 +257,7 @@ function modelOptionLabel(model: ProviderModel) {
 
 function modelSourceLabel(source?: string) {
   if (source === 'metadata') return '能力来自接口返回'
+  if (source === 'catalog') return '能力来自公开模型目录（按模型 ID 精确匹配）'
   if (source === 'reference') return '能力来自内置参考表，请以官方文档为准'
   return '能力未提供，请手动填写'
 }

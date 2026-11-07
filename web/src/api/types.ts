@@ -161,7 +161,7 @@ export interface ProviderModel {
   vision_known: boolean
   supports_thinking: boolean
   thinking_known: boolean
-  source: 'metadata' | 'reference' | 'unknown' | string
+  source: 'metadata' | 'catalog' | 'reference' | 'unknown' | string
 }
 
 export interface ProviderPreset {

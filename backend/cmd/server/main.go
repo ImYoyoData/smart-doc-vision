@@ -404,6 +404,9 @@ func buildApp(cfg config.Config, db *gorm.DB, cache *redis.Client, cipher *secur
 
 	server := api.NewServer(cfg, db, cache, cipher, eng, tasks, loader)
 	server.RecoverInterruptedTreaties()
+	// Model capability lookups fall back to a public catalog; download it in the
+	// background so the first "fetch models" in the admin UI is instant.
+	api.WarmPublicCatalog()
 
 	closeRuntime := func() {
 		triggerManager.Stop()

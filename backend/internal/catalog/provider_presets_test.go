@@ -69,6 +69,23 @@ func TestLookupModelCapabilityHandlesVendorPrefix(t *testing.T) {
 	}
 }
 
+func TestLookupModelCapabilityPrefixedIDKeepsSpecificMatch(t *testing.T) {
+	// Regression: the full ID starts with the vendor name, so matching it before
+	// the last path segment made the generic `deepseek` rule shadow
+	// `deepseek-v4.1-flash` and report 163K / text-only.
+	prefixed, ok := LookupModelCapability("deepseek-ai/DeepSeek-V4.1-Flash")
+	if !ok {
+		t.Fatal("prefixed DeepSeek ID should resolve")
+	}
+	if prefixed.ContextWindow < 1000000 || !prefixed.SupportsVision {
+		t.Fatalf("prefixed ID must keep the specific V4.1-Flash limits: %+v", prefixed)
+	}
+	bare, _ := LookupModelCapability("DeepSeek-V4.1-Flash")
+	if prefixed != bare {
+		t.Fatalf("prefixed and bare IDs must agree: %+v vs %+v", prefixed, bare)
+	}
+}
+
 func TestLookupModelCapabilityUnknown(t *testing.T) {
 	if _, ok := LookupModelCapability("totally-made-up-model"); ok {
 		t.Fatal("unknown model must not resolve to a reference entry")

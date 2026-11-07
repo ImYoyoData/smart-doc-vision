@@ -1,6 +1,9 @@
 package catalog
 
-import "strings"
+import (
+	"regexp"
+	"strings"
+)
 
 // ModelCapability is a reference description of one model, used when the
 // provider's `/models` endpoint returns no metadata at all (most domestic
@@ -11,104 +14,175 @@ import "strings"
 // labels them as coming from the built-in reference table rather than from the
 // upstream API.
 type ModelCapability struct {
-	// Pattern is matched against the lower-case model ID using the rules below:
-	// an entry with a version suffix wins over a shorter prefix entry.
-	Pattern          string
-	ContextWindow    int
+	// ContextWindow is the total prompt + completion budget in tokens.
+	ContextWindow int
+	// MaxOutputTokens is the largest completion the model accepts.
 	MaxOutputTokens  int
 	SupportsVision   bool
 	SupportsThinking bool
 }
 
-// modelCapabilityTable is ordered from most specific to most generic. Matching
-// walks the list and returns the first entry whose pattern is a prefix of the
-// model ID, so `deepseek-reasoner` must precede `deepseek`.
-var modelCapabilityTable = []ModelCapability{
+type capabilityRule struct {
+	pattern  *regexp.Regexp
+	capacity ModelCapability
+}
+
+func rule(pattern string, contextWindow, maxOutput int, vision, thinking bool) capabilityRule {
+	return capabilityRule{
+		pattern: regexp.MustCompile(pattern),
+		capacity: ModelCapability{
+			ContextWindow: contextWindow, MaxOutputTokens: maxOutput,
+			SupportsVision: vision, SupportsThinking: thinking,
+		},
+	}
+}
+
+// modelCapabilityTable is ordered from most specific to most generic: matching
+// returns the first rule that matches the normalised model ID, so
+// `deepseek-v4` must precede `deepseek` and `glm-4.6v` must precede `glm-4.6`.
+//
+// Numbers follow the vendors' published specifications. Matching is anchored at
+// the start of the ID, so a future `deepseek-v5` never silently inherits v4
+// limits; it falls through to the family rule instead.
+var modelCapabilityTable = []capabilityRule{
 	// ---------- OpenAI ----------
-	{Pattern: "gpt-5", ContextWindow: 400000, MaxOutputTokens: 128000, SupportsVision: true, SupportsThinking: true},
-	{Pattern: "gpt-4.1", ContextWindow: 1047576, MaxOutputTokens: 32768, SupportsVision: true, SupportsThinking: false},
-	{Pattern: "gpt-4o-mini", ContextWindow: 128000, MaxOutputTokens: 16384, SupportsVision: true, SupportsThinking: false},
-	{Pattern: "gpt-4o", ContextWindow: 128000, MaxOutputTokens: 16384, SupportsVision: true, SupportsThinking: false},
-	{Pattern: "gpt-4-turbo", ContextWindow: 128000, MaxOutputTokens: 4096, SupportsVision: true, SupportsThinking: false},
-	{Pattern: "o4-mini", ContextWindow: 200000, MaxOutputTokens: 100000, SupportsVision: true, SupportsThinking: true},
-	{Pattern: "o3", ContextWindow: 200000, MaxOutputTokens: 100000, SupportsVision: true, SupportsThinking: true},
-	{Pattern: "o1", ContextWindow: 200000, MaxOutputTokens: 100000, SupportsVision: true, SupportsThinking: true},
+	rule(`^gpt-6`, 1050000, 128000, true, true),
+	rule(`^gpt-5\.[4-9]`, 1050000, 128000, true, true),
+	rule(`^gpt-5`, 400000, 128000, true, true),
+	rule(`^gpt-4\.1`, 1047576, 32768, true, false),
+	rule(`^gpt-4o-mini`, 128000, 16384, true, false),
+	rule(`^gpt-4o`, 128000, 16384, true, false),
+	rule(`^gpt-4-turbo`, 128000, 4096, true, false),
+	rule(`^o4`, 200000, 100000, true, true),
+	rule(`^o3`, 200000, 100000, true, true),
+	rule(`^o1`, 200000, 100000, true, true),
 
 	// ---------- Anthropic ----------
-	{Pattern: "claude-opus-4", ContextWindow: 200000, MaxOutputTokens: 32000, SupportsVision: true, SupportsThinking: true},
-	{Pattern: "claude-sonnet-4", ContextWindow: 200000, MaxOutputTokens: 64000, SupportsVision: true, SupportsThinking: true},
-	{Pattern: "claude-3-7-sonnet", ContextWindow: 200000, MaxOutputTokens: 64000, SupportsVision: true, SupportsThinking: true},
-	{Pattern: "claude-3-5-sonnet", ContextWindow: 200000, MaxOutputTokens: 8192, SupportsVision: true, SupportsThinking: false},
-	{Pattern: "claude-3-5-haiku", ContextWindow: 200000, MaxOutputTokens: 8192, SupportsVision: true, SupportsThinking: false},
-	{Pattern: "claude", ContextWindow: 200000, MaxOutputTokens: 8192, SupportsVision: true, SupportsThinking: false},
+	rule(`^claude-(?:opus|sonnet|haiku|fable)-5`, 1000000, 128000, true, true),
+	rule(`^claude-(?:opus|sonnet)-4`, 200000, 64000, true, true),
+	rule(`^claude-3-7-sonnet`, 200000, 64000, true, true),
+	rule(`^claude`, 200000, 8192, true, false),
 
 	// ---------- DeepSeek ----------
-	{Pattern: "deepseek-reasoner", ContextWindow: 65536, MaxOutputTokens: 65536, SupportsVision: false, SupportsThinking: true},
-	{Pattern: "deepseek-v3.2", ContextWindow: 163840, MaxOutputTokens: 65536, SupportsVision: false, SupportsThinking: true},
-	{Pattern: "deepseek-v3.1", ContextWindow: 163840, MaxOutputTokens: 32768, SupportsVision: false, SupportsThinking: true},
-	{Pattern: "deepseek-vl", ContextWindow: 32768, MaxOutputTokens: 4096, SupportsVision: true, SupportsThinking: false},
-	{Pattern: "deepseek", ContextWindow: 65536, MaxOutputTokens: 8192, SupportsVision: false, SupportsThinking: false},
+	// V4.x is a 1M-context family; the flash variants also accept images.
+	rule(`^deepseek-v4\.1-flash`, 1048576, 943718, true, true),
+	rule(`^deepseek-v4-flash-vision`, 1048576, 943717, true, true),
+	rule(`^deepseek-v4-flash`, 1048576, 943717, false, true),
+	rule(`^deepseek-v4-pro`, 1048576, 384000, false, true),
+	rule(`^deepseek-v4`, 1048576, 131072, false, true),
+	rule(`^deepseek-v3\.2`, 163840, 147456, false, true),
+	rule(`^deepseek-v3\.1`, 163840, 147456, false, true),
+	rule(`^deepseek-r2`, 163840, 65536, false, true),
+	rule(`^deepseek-reasoner`, 163840, 32768, false, true),
+	rule(`^deepseek-vl`, 32768, 4096, true, false),
+	rule(`^deepseek`, 163840, 16384, false, false),
 
 	// ---------- 通义千问 ----------
-	{Pattern: "qwen3-vl", ContextWindow: 262144, MaxOutputTokens: 32768, SupportsVision: true, SupportsThinking: true},
-	{Pattern: "qwen3-max", ContextWindow: 262144, MaxOutputTokens: 32768, SupportsVision: false, SupportsThinking: true},
-	{Pattern: "qwen3-coder", ContextWindow: 262144, MaxOutputTokens: 65536, SupportsVision: false, SupportsThinking: false},
-	{Pattern: "qwen3", ContextWindow: 131072, MaxOutputTokens: 16384, SupportsVision: false, SupportsThinking: true},
-	{Pattern: "qwen2.5-vl", ContextWindow: 131072, MaxOutputTokens: 8192, SupportsVision: true, SupportsThinking: false},
-	{Pattern: "qwen-max", ContextWindow: 131072, MaxOutputTokens: 8192, SupportsVision: false, SupportsThinking: false},
-	{Pattern: "qwen-plus", ContextWindow: 131072, MaxOutputTokens: 8192, SupportsVision: false, SupportsThinking: false},
-	{Pattern: "qwen-turbo", ContextWindow: 131072, MaxOutputTokens: 8192, SupportsVision: false, SupportsThinking: false},
-	{Pattern: "qwen-vl", ContextWindow: 131072, MaxOutputTokens: 8192, SupportsVision: true, SupportsThinking: false},
-	{Pattern: "qwen", ContextWindow: 131072, MaxOutputTokens: 8192, SupportsVision: false, SupportsThinking: false},
+	rule(`^qwen3\.8-max`, 1000000, 131072, true, true),
+	rule(`^qwen3\.8`, 1000000, 131072, true, true),
+	rule(`^qwen3\.7-max`, 1000000, 131072, false, true),
+	rule(`^qwen3\.7`, 1000000, 131072, true, true),
+	rule(`^qwen3\.6`, 262144, 65536, true, true),
+	rule(`^qwen3\.5`, 262144, 65536, true, true),
+	rule(`^qwen3-vl`, 262144, 32768, true, true),
+	rule(`^qwen3-max`, 262144, 32768, false, true),
+	rule(`^qwen3-coder`, 262144, 65536, false, false),
+	rule(`^qwen3`, 262144, 16384, false, true),
+	rule(`^qwen2\.5-vl`, 131072, 8192, true, false),
+	rule(`^qwen-max`, 131072, 8192, false, false),
+	rule(`^qwen-plus`, 1000000, 32768, false, false),
+	rule(`^qwen-turbo`, 131072, 8192, false, false),
+	rule(`^qwen-vl`, 131072, 8192, true, false),
+	rule(`^qwen`, 131072, 8192, false, false),
 
 	// ---------- 智谱 GLM ----------
-	{Pattern: "glm-4.6v", ContextWindow: 131072, MaxOutputTokens: 16384, SupportsVision: true, SupportsThinking: true},
-	{Pattern: "glm-4.6", ContextWindow: 204800, MaxOutputTokens: 131072, SupportsVision: false, SupportsThinking: true},
-	{Pattern: "glm-4.5v", ContextWindow: 65536, MaxOutputTokens: 16384, SupportsVision: true, SupportsThinking: true},
-	{Pattern: "glm-4.5", ContextWindow: 131072, MaxOutputTokens: 98304, SupportsVision: false, SupportsThinking: true},
-	{Pattern: "glm-4", ContextWindow: 131072, MaxOutputTokens: 4096, SupportsVision: false, SupportsThinking: false},
+	rule(`^glm-5\.3-flashx`, 1048576, 131072, true, true),
+	rule(`^glm-5\.3`, 1048576, 131072, false, true),
+	rule(`^glm-5v`, 202752, 131072, true, true),
+	rule(`^glm-5`, 204800, 131072, false, true),
+	rule(`^glm-4\.7-flash`, 200000, 117964, false, true),
+	rule(`^glm-4\.7`, 204800, 131072, false, true),
+	rule(`^glm-4\.6v`, 131072, 32768, true, true),
+	rule(`^glm-4\.6`, 204800, 131072, false, true),
+	rule(`^glm-4\.5v`, 65536, 16384, true, true),
+	rule(`^glm-4\.5`, 131072, 98304, false, true),
+	rule(`^glm-4`, 131072, 4096, false, false),
 
 	// ---------- Kimi ----------
-	{Pattern: "kimi-k2", ContextWindow: 262144, MaxOutputTokens: 98304, SupportsVision: false, SupportsThinking: true},
-	{Pattern: "kimi-latest", ContextWindow: 262144, MaxOutputTokens: 98304, SupportsVision: true, SupportsThinking: false},
-	{Pattern: "moonshot-v1-128k", ContextWindow: 131072, MaxOutputTokens: 4096, SupportsVision: false, SupportsThinking: false},
-	{Pattern: "moonshot-v1-32k", ContextWindow: 32768, MaxOutputTokens: 4096, SupportsVision: false, SupportsThinking: false},
-	{Pattern: "moonshot-v1-8k", ContextWindow: 8192, MaxOutputTokens: 4096, SupportsVision: false, SupportsThinking: false},
+	rule(`^kimi-k3\.1`, 1048576, 943718, true, true),
+	rule(`^kimi-k3`, 1048576, 943718, true, true),
+	rule(`^kimi-k2\.7-code`, 262144, 235929, true, true),
+	rule(`^kimi-k2\.6`, 262144, 235929, true, true),
+	rule(`^kimi-k2\.5`, 262144, 235929, true, true),
+	rule(`^kimi-k2-thinking`, 262144, 98304, false, true),
+	rule(`^kimi-k2`, 262144, 98304, false, false),
+	rule(`^kimi-latest`, 1048576, 943718, true, false),
+	rule(`^kimi`, 262144, 98304, false, false),
+	rule(`^moonshot-v1-128k`, 131072, 4096, false, false),
+	rule(`^moonshot-v1-32k`, 32768, 4096, false, false),
+	rule(`^moonshot-v1-8k`, 8192, 4096, false, false),
 
 	// ---------- 豆包 / 火山方舟 ----------
-	{Pattern: "doubao-1.5-vision", ContextWindow: 131072, MaxOutputTokens: 16384, SupportsVision: true, SupportsThinking: false},
-	{Pattern: "doubao-seed-1.6-vision", ContextWindow: 256000, MaxOutputTokens: 32768, SupportsVision: true, SupportsThinking: true},
-	{Pattern: "doubao-seed-1.6", ContextWindow: 256000, MaxOutputTokens: 32768, SupportsVision: true, SupportsThinking: true},
-	{Pattern: "doubao-seed", ContextWindow: 256000, MaxOutputTokens: 16384, SupportsVision: true, SupportsThinking: true},
-	{Pattern: "doubao", ContextWindow: 131072, MaxOutputTokens: 8192, SupportsVision: false, SupportsThinking: false},
+	rule(`^seed-2`, 262144, 131072, true, true),
+	rule(`^seed-1\.6`, 262144, 32768, true, true),
+	rule(`^doubao-seed-2`, 262144, 131072, true, true),
+	rule(`^doubao-seed-1\.6-vision`, 262144, 32768, true, true),
+	rule(`^doubao-seed-1\.6`, 262144, 32768, true, true),
+	rule(`^doubao-seed`, 262144, 16384, true, true),
+	rule(`^doubao-1\.5-vision`, 131072, 16384, true, false),
+	rule(`^doubao`, 131072, 8192, false, false),
 
-	// ---------- 混元 ----------
-	{Pattern: "hunyuan-t1", ContextWindow: 131072, MaxOutputTokens: 16384, SupportsVision: false, SupportsThinking: true},
-	{Pattern: "hunyuan-vision", ContextWindow: 131072, MaxOutputTokens: 8192, SupportsVision: true, SupportsThinking: false},
-	{Pattern: "hunyuan", ContextWindow: 131072, MaxOutputTokens: 8192, SupportsVision: false, SupportsThinking: false},
+	// ---------- 腾讯混元 ----------
+	rule(`^hy4`, 1048576, 65536, true, true),
+	rule(`^hy3`, 262144, 128000, false, true),
+	rule(`^hunyuan-t1`, 131072, 16384, false, true),
+	rule(`^hunyuan-vision`, 131072, 8192, true, false),
+	rule(`^hunyuan`, 131072, 8192, false, false),
 
-	// ---------- 文心千帆 ----------
-	{Pattern: "ernie-4.5", ContextWindow: 131072, MaxOutputTokens: 8192, SupportsVision: false, SupportsThinking: true},
-	{Pattern: "ernie-4.0-8k", ContextWindow: 8192, MaxOutputTokens: 4096, SupportsVision: false, SupportsThinking: false},
-	{Pattern: "ernie", ContextWindow: 8192, MaxOutputTokens: 4096, SupportsVision: false, SupportsThinking: false},
+	// ---------- 百度文心 ----------
+	rule(`^ernie-4\.5`, 131072, 8192, false, true),
+	rule(`^ernie`, 8192, 4096, false, false),
 
 	// ---------- MiniMax ----------
-	{Pattern: "minimax-m", ContextWindow: 204800, MaxOutputTokens: 65536, SupportsVision: false, SupportsThinking: true},
-	{Pattern: "abab", ContextWindow: 245760, MaxOutputTokens: 8192, SupportsVision: false, SupportsThinking: false},
+	rule(`^minimax-m3\.1`, 1048576, 524288, true, true),
+	rule(`^minimax-m3`, 1048576, 512000, true, true),
+	rule(`^minimax-m2\.7`, 204800, 176947, false, true),
+	rule(`^minimax-m2\.5`, 204800, 58982, false, true),
+	rule(`^minimax-m1`, 1000000, 40000, false, true),
+	rule(`^minimax-m`, 204800, 65536, false, true),
+	rule(`^abab`, 245760, 8192, false, false),
 
 	// ---------- 小米 MiMo ----------
-	{Pattern: "mimo-v2", ContextWindow: 1000000, MaxOutputTokens: 65536, SupportsVision: true, SupportsThinking: true},
-	{Pattern: "mimo", ContextWindow: 262144, MaxOutputTokens: 16384, SupportsVision: false, SupportsThinking: true},
+	rule(`^mimo-v2\.6`, 1050000, 235929, true, true),
+	rule(`^mimo-v2\.5`, 1050000, 235929, true, true),
+	rule(`^mimo-v2`, 1000000, 65536, true, true),
+	rule(`^mimo`, 262144, 16384, false, true),
 
 	// ---------- 讯飞星火 ----------
-	{Pattern: "4.0ultra", ContextWindow: 32768, MaxOutputTokens: 8192, SupportsVision: false, SupportsThinking: false},
-	{Pattern: "generalv3.5", ContextWindow: 32768, MaxOutputTokens: 8192, SupportsVision: false, SupportsThinking: false},
-	{Pattern: "spark", ContextWindow: 32768, MaxOutputTokens: 8192, SupportsVision: false, SupportsThinking: false},
+	rule(`^4\.0ultra`, 32768, 8192, false, false),
+	rule(`^generalv3\.5`, 32768, 8192, false, false),
+	rule(`^spark`, 32768, 8192, false, false),
+
+	// ---------- 阶跃星辰 ----------
+	rule(`^step-3`, 262144, 230400, true, true),
+	rule(`^step`, 262144, 65536, true, true),
+
+	// ---------- 其他常见聚合模型 ----------
+	rule(`^grok-4`, 500000, 450000, true, true),
+	rule(`^gemini-3`, 1048576, 65536, true, true),
+	rule(`^gemini`, 1048576, 65536, true, true),
+	rule(`^mistral-large`, 1048576, 262144, true, true),
+	rule(`^mistral`, 262144, 209715, true, true),
+	rule(`^llama-4`, 524288, 32768, true, false),
+	rule(`^llama-3`, 131072, 32768, false, false),
+	rule(`^ling-3`, 1000000, 262144, false, true),
 }
 
 // LookupModelCapability returns the reference capability for a model ID. The
-// model ID may carry a vendor prefix such as `deepseek/deepseek-chat` or
-// `Qwen/Qwen3-...`; both the full ID and the last path segment are tried.
+// model ID may carry a vendor prefix such as `deepseek-ai/DeepSeek-V4.1-Flash`
+// or `Qwen/Qwen3-...`. The last path segment is tried first: the full ID also
+// starts with the family name, so matching it first would let the generic
+// `deepseek` rule win over the specific `deepseek-v4.1-flash` one.
 func LookupModelCapability(modelID string) (ModelCapability, bool) {
 	id := strings.ToLower(strings.TrimSpace(modelID))
 	if id == "" {
@@ -116,12 +190,12 @@ func LookupModelCapability(modelID string) (ModelCapability, bool) {
 	}
 	candidates := []string{id}
 	if index := strings.LastIndex(id, "/"); index >= 0 && index+1 < len(id) {
-		candidates = append(candidates, id[index+1:])
+		candidates = []string{id[index+1:], id}
 	}
 	for _, candidate := range candidates {
 		for _, entry := range modelCapabilityTable {
-			if strings.HasPrefix(candidate, entry.Pattern) {
-				return entry, true
+			if entry.pattern.MatchString(candidate) {
+				return entry.capacity, true
 			}
 		}
 	}

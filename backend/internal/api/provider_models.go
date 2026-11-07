@@ -172,6 +172,9 @@ func fetchProviderModels(ctx context.Context, kind, baseURL, apiKey string, head
 			continue
 		}
 		seen[item.ID] = true
+		// Vendors that return only bare IDs get their limits from the public
+		// catalog before falling back to the built-in table.
+		enrichProviderModel(ctx, &item)
 		items = append(items, item)
 	}
 	if len(items) == 0 {
@@ -260,8 +263,15 @@ func parseProviderModel(row map[string]any) providerModelItem {
 	if item.ContextWindowKnown || item.MaxOutputKnown || item.VisionKnown || item.ThinkingKnown {
 		item.Source = "metadata"
 	}
-	applyReferenceCapabilities(&item)
 	return item
+}
+
+// enrichProviderModel fills the fields the vendor left out. The exact-ID public
+// catalog is tried first because it describes that specific model, and only
+// then the built-in family table. Provider metadata is never overwritten.
+func enrichProviderModel(ctx context.Context, item *providerModelItem) {
+	enrichFromPublicCatalog(ctx, item)
+	applyReferenceCapabilities(item)
 }
 
 // applyReferenceCapabilities fills the gaps with the built-in table so a
@@ -295,8 +305,10 @@ func applyReferenceCapabilities(item *providerModelItem) {
 		filled = true
 	}
 	if filled {
-		// Keep the stronger source when the provider already described the model.
-		if item.Source != "metadata" {
+		// Never downgrade a stronger source: provider metadata beats the public
+		// catalog, and the catalog describes the exact model while the built-in
+		// table only knows its family.
+		if item.Source == "unknown" || item.Source == "" {
 			item.Source = "reference"
 		}
 	}
