@@ -16,7 +16,7 @@ const tour = useTour()
 const offering = ref(false)
 
 function openTour() {
-  if (props.tourKey) tour.start(props.tourKey, true)
+  if (props.tourKey) tour.start(props.tourKey)
 }
 
 function acceptOffer() {
@@ -26,13 +26,16 @@ function acceptOffer() {
 
 // First visit to this page (and never seen): show a small inline prompt instead
 // of popping the tour open behind the user's back. The offer is remembered, so
-// it never asks twice.
+// it never asks twice. The delay lets the automatic basic tour claim the screen
+// first when this is the very first visit.
 onMounted(() => {
   if (!props.tourKey) return
-  if (tour.state.active) return
-  if (!tour.shouldOffer(props.tourKey)) return
-  tour.markOffered(props.tourKey)
-  offering.value = true
+  window.setTimeout(() => {
+    if (tour.state.active) return
+    if (!tour.shouldOffer(props.tourKey!)) return
+    tour.markOffered(props.tourKey!)
+    offering.value = true
+  }, 1600)
 })
 </script>
 

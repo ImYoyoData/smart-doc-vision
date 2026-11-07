@@ -215,7 +215,9 @@ onBeforeUnmount(() => {
 .tour-root {
   position: fixed;
   inset: 0;
-  z-index: 4000;
+  /* Above the watermark (9000), otherwise the watermark tiles sit on top of the
+     spotlight and card and make the instructions hard to read. */
+  z-index: 9500;
   pointer-events: none;
 }
 

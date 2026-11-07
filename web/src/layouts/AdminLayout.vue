@@ -641,7 +641,7 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
             type="button"
             title="引导帮助"
             aria-label="引导帮助"
-            @click="tour.start('basic', true)"
+            @click="tour.start('basic')"
           >
             <SchoolOutline />
           </button>

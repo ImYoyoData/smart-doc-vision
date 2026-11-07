@@ -34,8 +34,6 @@ const state = reactive({
   index: 0,
   rect: null as TourRect | null,
   voiceEnabled: storageGet(VOICE_PREF_KEY) !== '0',
-  /** Set when the user explicitly asks to replay, so "seen" is refreshed only after finishing. */
-  replay: false,
 })
 
 const tour = ref<TourDefinition | null>(null)
@@ -154,13 +152,12 @@ async function applyStep() {
   }, 260)
 }
 
-function start(key: string, replay = false) {
+function start(key: string) {
   const definition = getTour(key)
   if (!definition || !definition.steps.length) return
   tour.value = definition
   state.tourKey = key
   state.index = 0
-  state.replay = replay
   state.active = true
   void applyStep()
 }
