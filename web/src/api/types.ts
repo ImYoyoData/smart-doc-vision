@@ -161,7 +161,23 @@ export interface ProviderModel {
   vision_known: boolean
   supports_thinking: boolean
   thinking_known: boolean
-  source: 'metadata' | 'unknown' | string
+  source: 'metadata' | 'reference' | 'unknown' | string
+}
+
+export interface ProviderPreset {
+  key: string
+  name: string
+  kind: string
+  base_url: string
+  model: string
+  supports_vision: boolean
+  max_images: number
+  max_tokens: number
+  context_window: number
+  note: string
+  models_url?: string
+  doc_url?: string
+  tags?: string[]
 }
 
 export interface ProviderUsageSummary {

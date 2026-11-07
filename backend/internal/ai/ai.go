@@ -64,9 +64,11 @@ func imageLabel(img model.MediaItem, index int) string {
 	return fmt.Sprintf("图片 %d", index+1)
 }
 
-// MaxOutputTokensLimit is a safety ceiling only. Individual providers still
-// reject values above what their selected model actually supports.
-const MaxOutputTokensLimit = 200000
+// MaxOutputTokensLimit is only an absurdity guard against a mistyped value; it
+// is deliberately above every current model's real limit. Each provider still
+// rejects values above what the selected model supports, so the configured
+// value should come from the model's own specification.
+const MaxOutputTokensLimit = 2000000
 
 // TreatyPlaceholder can appear in an audit review prompt. It is replaced by
 // the compiled content of every READY treaty document at review time.
@@ -126,10 +128,12 @@ func truncatePromptRunes(value string, limit int, suffix string) string {
 	return string(runes[:limit]) + suffix
 }
 
-// ApplyCustomHeaders adds provider-defined headers (for example a session ID
-// required by a proxy) without letting them replace the protocol's auth headers.
-func ApplyCustomHeaders(req *http.Request, headers map[string]string) {
-	hasSession := req.Header.Get("x-opencode-session") != ""
+// ApplyCustomHeaders adds provider-defined headers without letting them replace
+// the protocol's auth headers, and always attaches the conversation ID header.
+// The ID comes from the explicit custom header when one is configured, then
+// from the context (one chat keeps one ID), then from a fresh UUID.
+func ApplyCustomHeaders(ctx context.Context, req *http.Request, headers map[string]string) {
+	sessionID := ""
 	for key, value := range headers {
 		key = strings.TrimSpace(key)
 		value = strings.TrimSpace(value)
@@ -140,36 +144,44 @@ func ApplyCustomHeaders(req *http.Request, headers map[string]string) {
 		case "authorization", "x-api-key", "content-type":
 			continue
 		}
-		if strings.EqualFold(key, "x-opencode-session") {
-			hasSession = true
+		if strings.EqualFold(key, SessionHeader) || strings.EqualFold(key, legacySessionHeader) {
+			if !isRandomPlaceholder(value) {
+				sessionID = value
+			}
+			continue
 		}
-		if strings.EqualFold(value, "{{random}}") || strings.EqualFold(value, "auto") {
+		if isRandomPlaceholder(value) {
 			value = uuid.NewString()
 		}
 		req.Header.Set(key, value)
 	}
-	// Some OpenCode-compatible gateways require a per-request session header.
-	// Unknown headers are harmless for other providers, so attach one by default
-	// and let an explicit custom header override it.
-	if !hasSession {
-		req.Header.Set("x-opencode-session", uuid.NewString())
+	if sessionID == "" {
+		sessionID = SessionID(ctx)
 	}
+	if sessionID == "" {
+		sessionID = NewSessionID()
+	}
+	req.Header.Set(SessionHeader, sessionID)
 }
 
-// WithRandomSessionHeader returns a copy of the provider whose gateway session
-// header is a fresh UUID. Health probes must never reuse a fixed session ID.
+// WithRandomSessionHeader returns a copy of the provider whose configured
+// session header is dropped, so a health probe never reuses a fixed chat ID.
 func WithRandomSessionHeader(provider model.AIProvider) model.AIProvider {
 	cfg := ParseConfig(provider)
 	if cfg.Headers == nil {
-		cfg.Headers = map[string]string{}
+		return provider
 	}
+	changed := false
 	for key := range cfg.Headers {
-		if strings.EqualFold(key, "x-opencode-session") {
+		if strings.EqualFold(key, SessionHeader) || strings.EqualFold(key, legacySessionHeader) {
 			delete(cfg.Headers, key)
+			changed = true
 			break
 		}
 	}
-	cfg.Headers["x-opencode-session"] = uuid.NewString()
+	if !changed {
+		return provider
+	}
 	if raw, err := json.Marshal(cfg); err == nil {
 		provider.ConfigJSON = model.JSONText(raw)
 	}

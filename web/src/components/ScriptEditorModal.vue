@@ -28,6 +28,7 @@ import {
   WarningOutline,
 } from '@vicons/ionicons5'
 import { providerApi, scriptApi } from '@/api'
+import { useAiSession } from '@/composables/useAiSession'
 import type { Provider, ScriptSimulationResult } from '@/api/types'
 import VoiceInputButton from '@/components/VoiceInputButton.vue'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -88,6 +89,7 @@ interface AiMessage {
 }
 
 const aiOpen = ref(false)
+const { sessionId: aiSessionId, startNewSession: startAiSession } = useAiSession()
 const aiMessages = ref<AiMessage[]>([])
 const aiTools = ref<AiTool[]>([])
 const aiInput = ref('')
@@ -672,6 +674,8 @@ async function loadProviders(force = false) {
 async function openAi() {
   aiOpen.value = true
   aiError.value = ''
+  // Opening the AI panel starts a conversation; keep one ID until it is reset.
+  startAiSession()
   await loadProviders(true)
 }
 
@@ -848,6 +852,7 @@ async function sendAi() {
       current_script: props.script,
       reasoning: aiReasoning.value === 'auto' ? undefined : aiReasoning.value,
       messages: aiMessages.value.map((message) => ({ role: message.role, content: message.content })),
+      session_id: aiSessionId.value,
     }, {
       signal: controller.signal,
       onEvent: (event, data) => {

@@ -32,7 +32,7 @@ import { useInitialLoad } from '@/composables/useInitialLoad'
 import StatusTag from '@/components/StatusTag.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import { providerApi } from '@/api'
-import type { Provider, ProviderModel, ProviderUsageLog, ProviderUsageSummary } from '@/api/types'
+import type { Provider, ProviderModel, ProviderPreset, ProviderUsageLog, ProviderUsageSummary } from '@/api/types'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 const workspace = useWorkspaceStore()
@@ -53,6 +53,9 @@ const providers = ref<Provider[]>([])
 const modelOptions = ref<ProviderModel[]>([])
 const modelsLoading = ref(false)
 const modelsError = ref('')
+const presets = ref<ProviderPreset[]>([])
+const presetsLoading = ref(false)
+const presetKey = ref<string | null>(null)
 
 const form = reactive({
   name: '',
@@ -253,7 +256,9 @@ function modelOptionLabel(model: ProviderModel) {
 }
 
 function modelSourceLabel(source?: string) {
-  return source === 'metadata' ? '接口返回' : '能力未提供，请手动填写'
+  if (source === 'metadata') return '能力来自接口返回'
+  if (source === 'reference') return '能力来自内置参考表，请以官方文档为准'
+  return '能力未提供，请手动填写'
 }
 
 function parseProviderHeaders(text: string) {
@@ -282,6 +287,45 @@ function applySelectedModel() {
   if (!model.thinking_known || !model.supports_thinking) form.preferReasoning = false
   form.contextWindow = model.context_window_known && model.context_window > 0 ? model.context_window : null
   form.maxTokens = model.max_output_known && model.max_output_tokens > 0 ? model.max_output_tokens : null
+}
+
+const presetOptions = computed(() => presets.value.map((item) => ({
+  label: item.name,
+  value: item.key,
+})))
+
+// Applying a preset fills the protocol, endpoint and a starting model. Fields the
+// administrator already edited on a fresh form are simply overwritten because a
+// preset choice is an explicit "start from this vendor" action.
+function applyPreset(key: string | null) {
+  const preset = presets.value.find((item) => item.key === key)
+  if (!preset) return
+  form.kind = preset.kind
+  form.baseUrl = preset.base_url
+  form.model = preset.model
+  if (!form.name || form.name === '通用大模型' || form.name === 'JEV 决策模型') form.name = preset.name
+  form.supportsVision = preset.supports_vision
+  form.supportsThinking = false
+  form.preferReasoning = false
+  form.contextWindow = preset.context_window > 0 ? preset.context_window : null
+  form.maxTokens = preset.max_tokens > 0 ? preset.max_tokens : null
+  form.maxImages = preset.max_images > 0 ? preset.max_images : 0
+  modelOptions.value = []
+  modelsError.value = ''
+}
+
+async function loadPresets() {
+  if (presets.value.length || presetsLoading.value) return
+  presetsLoading.value = true
+  try {
+    const data = await providerApi.presets()
+    presets.value = data.items
+  } catch {
+    // Presets are a convenience; the form still works without them.
+    presets.value = []
+  } finally {
+    presetsLoading.value = false
+  }
 }
 
 const kindDefaults: Record<string, {
@@ -347,6 +391,7 @@ function resetForm() {
   modelsError.value = ''
   modelsLoading.value = false
   errorText.value = ''
+  presetKey.value = null
   editing.value = null
 }
 
@@ -382,6 +427,7 @@ function openCreate() {
   }
   form.status = 'DISABLED'
   modalShow.value = true
+  void loadPresets()
 }
 
 function openEdit(provider: Provider) {
@@ -902,6 +948,31 @@ onMounted(load)
         </div>
 
         <div class="modal-body">
+          <div v-if="!editing" class="preset-row">
+            <div class="preset-label">
+              <strong>快速选择供应商</strong>
+              <small>自动填入协议、BaseURL 和起始模型，之后仍可修改</small>
+            </div>
+            <n-select
+              v-model:value="presetKey"
+              clearable
+              filterable
+              :loading="presetsLoading"
+              :options="presetOptions"
+              placeholder="选择后自动填入"
+              @update:value="applyPreset"
+            />
+            <div v-if="presetKey && presets.find((item) => item.key === presetKey)" class="preset-note">
+              <span>{{ presets.find((item) => item.key === presetKey)?.note }}</span>
+              <a
+                v-if="presets.find((item) => item.key === presetKey)?.doc_url"
+                :href="presets.find((item) => item.key === presetKey)?.doc_url"
+                target="_blank"
+                rel="noopener"
+              >官方文档</a>
+            </div>
+          </div>
+
           <div class="kind-selector">
             <button
               type="button"
@@ -1057,9 +1128,9 @@ onMounted(load)
               v-model:value="form.headersText"
               type="textarea"
               :autosize="{ minRows: 2, maxRows: 4 }"
-              placeholder="x-opencode-session: {{random}}"
+              placeholder="X-Session-Id: {{random}}"
             />
-            <div class="form-hint">系统会默认附带 <code>x-opencode-session</code> 随机会话 ID；如需固定值或补充其他 Header，可按每行一个填写。测试连接会强制使用随机值，且不会覆盖 Authorization / x-api-key。</div>
+            <div class="form-hint">每次 AI 对话都会自动附带 <code>X-Session-Id</code>：同一对话内固定，新对话自动换新值。如需固定值或补充其他 Header，可按每行一个填写；测试连接会强制使用随机值，且不会覆盖 Authorization / x-api-key。</div>
           </div>
 
           <div class="field">
@@ -1115,7 +1186,7 @@ onMounted(load)
                   <strong>最大输出 Token</strong>
                   <span>按所选模型规格填写，JEV 无需设置</span>
                 </div>
-                <n-input-number v-model:value="form.maxTokens" :min="0" :max="200000" :step="1000" size="small" style="width: 120px" />
+                <n-input-number v-model:value="form.maxTokens" :min="0" :max="2000000" :step="1000" size="small" style="width: 120px" />
               </div>
               <div class="switch-field">
                 <div>
@@ -2000,6 +2071,57 @@ onMounted(load)
   max-height: min(70vh, 660px);
   overflow-y: auto;
   padding: 20px 26px;
+}
+
+.preset-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--brand-border);
+  border-radius: 10px;
+  background: var(--brand-softer);
+  flex-wrap: wrap;
+}
+
+.preset-label {
+  min-width: 150px;
+  flex: 1;
+}
+
+.preset-label strong {
+  display: block;
+  color: var(--ink);
+  font-size: 11.5px;
+  font-weight: 620;
+}
+
+.preset-label small {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 9.5px;
+}
+
+.preset-row :deep(.n-select) {
+  width: 230px;
+  flex: none;
+}
+
+.preset-note {
+  display: flex;
+  width: 100%;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 9.5px;
+  line-height: 1.6;
+}
+
+.preset-note a {
+  color: var(--brand);
+  flex: none;
 }
 
 .kind-selector {

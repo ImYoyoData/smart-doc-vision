@@ -287,6 +287,9 @@ func (e *Engine) worker(n int) {
 func (e *Engine) process(taskID uint64) {
 	ctx, cancel := context.WithTimeout(e.ctx, 2*time.Minute)
 	defer cancel()
+	// Every attempt of one task — including failover retries — shares this
+	// generated chat ID, so a gateway can group them as one review.
+	ctx = ai.WithSessionID(ctx, ai.NewSessionID())
 
 	now := time.Now()
 	res := e.db.Model(&model.Task{}).

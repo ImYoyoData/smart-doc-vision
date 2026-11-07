@@ -28,6 +28,7 @@ type auditAssistantRequest struct {
 	ProviderID    uint64             `json:"provider_id"`
 	Messages      []assistantMessage `json:"messages"`
 	CurrentConfig map[string]any     `json:"current_config"`
+	SessionID     string             `json:"session_id"`
 }
 
 type assistantDraft struct {
@@ -239,7 +240,7 @@ func (s *Server) handleAuditAssistant(c *gin.Context, stream bool) {
 
 	emit(assistantStep{ID: "thinking", Label: "调用大模型思考", Status: "running"})
 	started := time.Now()
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 600*time.Second)
+	ctx, cancel := context.WithTimeout(sessionContext(c, req.SessionID), 600*time.Second)
 	defer cancel()
 	result, err := ai.Chat(ctx, ai.ChatRequest{
 		Provider: *provider, APIKey: key, System: systemPrompt,

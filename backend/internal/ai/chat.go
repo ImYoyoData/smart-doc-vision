@@ -218,7 +218,7 @@ func callOpenAI(ctx context.Context, req ChatRequest, useReasoning bool) ([]byte
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+req.APIKey)
-	ApplyCustomHeaders(httpReq, ParseConfig(req.Provider).Headers)
+	ApplyCustomHeaders(ctx, httpReq, ParseConfig(req.Provider).Headers)
 	client := chatHTTPClient
 	resp, err := client.Do(httpReq)
 	if err != nil {
@@ -298,7 +298,7 @@ func chatAnthropic(ctx context.Context, req ChatRequest) (*ChatResult, error) {
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("x-api-key", req.APIKey)
 	httpReq.Header.Set("anthropic-version", "2023-06-01")
-	ApplyCustomHeaders(httpReq, ParseConfig(req.Provider).Headers)
+	ApplyCustomHeaders(ctx, httpReq, ParseConfig(req.Provider).Headers)
 	client := chatHTTPClient
 	resp, err := client.Do(httpReq)
 	if err != nil {

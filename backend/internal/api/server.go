@@ -172,6 +172,7 @@ func (s *Server) Router() *gin.Engine {
 			auth.DELETE("/projects/:id/credentials/:credentialId", s.deleteCredential)
 
 			auth.GET("/providers", s.listProviders)
+			auth.GET("/providers/presets", s.providerPresets)
 			auth.POST("/providers", s.createProvider)
 			auth.POST("/providers/models", s.listProviderModels)
 			auth.GET("/providers/:id", s.getProvider)

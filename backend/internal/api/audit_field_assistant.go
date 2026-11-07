@@ -29,6 +29,7 @@ type auditFieldAssistantRequest struct {
 	Instruction string         `json:"instruction"`
 	Current     string         `json:"current"`
 	Context     map[string]any `json:"context"`
+	SessionID   string         `json:"session_id"`
 }
 
 // auditFieldAssistant generates one audit field (rules or review prompt) from
@@ -106,7 +107,7 @@ func (s *Server) auditFieldAssistant(c *gin.Context) {
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 600*time.Second)
+	ctx, cancel := context.WithTimeout(sessionContext(c, req.SessionID), 600*time.Second)
 	defer cancel()
 	started := time.Now()
 	result, err := ai.Chat(ctx, ai.ChatRequest{

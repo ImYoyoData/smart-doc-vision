@@ -21,6 +21,7 @@ type logsAssistantRequest struct {
 	Messages   []assistantMessage `json:"messages"`
 	Filters    *logsAssistantUI   `json:"filters"`
 	Reasoning  string             `json:"reasoning"`
+	SessionID  string             `json:"session_id"`
 }
 
 type logsAssistantUI struct {
@@ -300,7 +301,7 @@ func (s *Server) handleLogsAssistant(c *gin.Context, stream bool) {
 
 	state := &logsToolState{user: user}
 	tools := logsAssistantTools()
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 120*time.Second)
+	ctx, cancel := context.WithTimeout(sessionContext(c, req.SessionID), 120*time.Second)
 	defer cancel()
 	var final *ai.ChatResult
 	usage := assistantUsageSummary{}

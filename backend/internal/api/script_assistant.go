@@ -23,6 +23,7 @@ type scriptAssistantRequest struct {
 	CurrentScript string             `json:"current_script"`
 	Reasoning     string             `json:"reasoning"`
 	Messages      []assistantMessage `json:"messages"`
+	SessionID     string             `json:"session_id"`
 }
 
 // scriptAssistantContextWindow is the context budget shown by the editor's
@@ -133,7 +134,7 @@ func (s *Server) scriptAssistantStream(c *gin.Context) {
 	emit(assistantStep{ID: "provider", Label: "选择通用大模型", Status: "done", Detail: provider.Name + " · " + provider.Model})
 	emit(assistantStep{ID: "thinking", Label: "AI 正在读取脚本", Status: "running"})
 
-	ctx, cancel := context.WithTimeout(c.Request.Context(), 600*time.Second)
+	ctx, cancel := context.WithTimeout(sessionContext(c, req.SessionID), 600*time.Second)
 	defer cancel()
 	started := time.Now()
 	state := &scriptAgentState{script: normalizeScript(req.CurrentScript)}

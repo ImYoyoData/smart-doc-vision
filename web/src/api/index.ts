@@ -24,6 +24,7 @@ import type {
   Project,
   Provider,
   ProviderModel,
+  ProviderPreset,
   ProviderUsageLog,
   ProviderUsageSummary,
   ProjectSecret,
@@ -104,6 +105,7 @@ export const credentialApi = {
 
 export const providerApi = {
   list: (params?: Record<string, unknown>) => get<{ items: Provider[]; total: number }>('/providers', params),
+  presets: () => get<{ items: ProviderPreset[] }>('/providers/presets'),
   get: (id: number) => get<Provider>(`/providers/${id}`),
   usage: (id: number, params?: Record<string, unknown>) =>
     get<{ items: ProviderUsageLog[]; total: number; summary: ProviderUsageSummary; kind: string; model: string }>(

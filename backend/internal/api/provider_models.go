@@ -45,6 +45,13 @@ type providerModelItem struct {
 // listProviderModels asks the upstream provider for its model catalog and
 // enriches each entry with context/output/vision/thinking capabilities so the
 // admin page can pick a model instead of typing an ID from memory.
+// providerPresets returns the built-in vendor list so the add-provider dialog
+// can prefill protocol, endpoint and a starting model instead of asking the
+// administrator to look each URL up.
+func (s *Server) providerPresets(c *gin.Context) {
+	ok(c, gin.H{"items": catalog.ProviderPresets()})
+}
+
 func (s *Server) listProviderModels(c *gin.Context) {
 	user := currentUser(c)
 	if !s.hasPermission(user.Role, "provider:write") {
@@ -132,7 +139,7 @@ func fetchProviderModels(ctx context.Context, kind, baseURL, apiKey string, head
 	} else {
 		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
 	}
-	ai.ApplyCustomHeaders(httpReq, headers)
+	ai.ApplyCustomHeaders(ctx, httpReq, headers)
 	client := httpx.Client(30 * time.Second)
 	resp, err := client.Do(httpReq)
 	if err != nil {
@@ -253,7 +260,46 @@ func parseProviderModel(row map[string]any) providerModelItem {
 	if item.ContextWindowKnown || item.MaxOutputKnown || item.VisionKnown || item.ThinkingKnown {
 		item.Source = "metadata"
 	}
+	applyReferenceCapabilities(&item)
 	return item
+}
+
+// applyReferenceCapabilities fills the gaps with the built-in table so a
+// vendor that only returns bare model IDs still gives the administrator usable
+// context/output/vision/thinking values. Only unknown fields are filled, and
+// the result is labelled `reference` so the UI can say it is not authoritative.
+func applyReferenceCapabilities(item *providerModelItem) {
+	reference, ok := catalog.LookupModelCapability(item.ID)
+	if !ok {
+		return
+	}
+	filled := false
+	if !item.ContextWindowKnown && reference.ContextWindow > 0 {
+		item.ContextWindow = reference.ContextWindow
+		item.ContextWindowKnown = true
+		filled = true
+	}
+	if !item.MaxOutputKnown && reference.MaxOutputTokens > 0 {
+		item.MaxOutputTokens = reference.MaxOutputTokens
+		item.MaxOutputKnown = true
+		filled = true
+	}
+	if !item.VisionKnown {
+		item.SupportsVision = reference.SupportsVision
+		item.VisionKnown = true
+		filled = true
+	}
+	if !item.ThinkingKnown {
+		item.SupportsThinking = reference.SupportsThinking
+		item.ThinkingKnown = true
+		filled = true
+	}
+	if filled {
+		// Keep the stronger source when the provider already described the model.
+		if item.Source != "metadata" {
+			item.Source = "reference"
+		}
+	}
 }
 
 func firstStringValue(values map[string]any, keys ...string) string {

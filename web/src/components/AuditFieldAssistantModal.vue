@@ -5,6 +5,7 @@ import { CloseOutline, SparklesOutline } from '@vicons/ionicons5'
 import AiContextUsage from '@/components/AiContextUsage.vue'
 import VoiceInputButton from '@/components/VoiceInputButton.vue'
 import { auditApi } from '@/api'
+import { useAiSession } from '@/composables/useAiSession'
 import type { AssistantUsage, AuditFieldAssistantResult } from '@/api/types'
 
 const props = defineProps<{
@@ -29,6 +30,7 @@ const busy = ref(false)
 const error = ref('')
 const result = ref<AuditFieldAssistantResult | null>(null)
 const usage = ref<AssistantUsage | null>(null)
+const { sessionId, startNewSession } = useAiSession()
 let requestSeq = 0
 
 const isRules = computed(() => props.field === 'rules')
@@ -74,6 +76,7 @@ watch(
     error.value = ''
     result.value = null
     usage.value = null
+    startNewSession()
     providerId.value = pickProvider(props.initialProviderId)
     nextTick(() => instructionRef.value?.focus())
   },
@@ -142,6 +145,7 @@ async function generate() {
       instruction: text,
       current,
       context: props.context,
+      session_id: sessionId.value,
     })
     if (seq !== requestSeq) return
     result.value = data

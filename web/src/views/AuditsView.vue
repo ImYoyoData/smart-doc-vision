@@ -54,6 +54,7 @@ import AiContextUsage from '@/components/AiContextUsage.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import PageSkeleton from '@/components/PageSkeleton.vue'
 import { useInitialLoad } from '@/composables/useInitialLoad'
+import { useAiSession } from '@/composables/useAiSession'
 import StatusTag from '@/components/StatusTag.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import TaskSubmitModal from '@/components/TaskSubmitModal.vue'
@@ -156,6 +157,7 @@ const fieldAssistantField = ref<'rules' | 'review_prompt'>('rules')
 const fieldAssistantCurrent = ref('')
 const fieldAssistantProviderId = ref<number | null>(null)
 const fieldAssistantContext = ref<Record<string, unknown>>({})
+const { sessionId: assistantSessionId, startNewSession: startAssistantSession } = useAiSession()
 let assistantAbort: AbortController | null = null
 
 interface AssistantImage {
@@ -1717,6 +1719,8 @@ async function startAssistant(mode: 'create' | 'edit', audit?: Audit) {
   assistantError.value = ''
   assistantInput.value = ''
   assistantImages.value = []
+  // A new chat gets a new session ID; the ID stays stable for this conversation.
+  startAssistantSession()
   assistantAbort?.abort()
   assistantAbort = null
   if (mode === 'create') {
@@ -2004,6 +2008,7 @@ async function sendAssistant() {
         images: item.images || [],
       })),
       current_config: buildAssistantCurrentConfig(),
+      session_id: assistantSessionId.value,
     }, {
       signal: controller.signal,
       onEvent: (event, data) => {

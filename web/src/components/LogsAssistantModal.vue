@@ -11,6 +11,7 @@ import DOMPurify from 'dompurify'
 import AiContextUsage from '@/components/AiContextUsage.vue'
 import VoiceInputButton from '@/components/VoiceInputButton.vue'
 import { logApi, providerApi } from '@/api'
+import { useAiSession } from '@/composables/useAiSession'
 import type { AssistantUsage, LogsAssistantFilter, Provider } from '@/api/types'
 
 type ChatRole = 'user' | 'assistant'
@@ -49,6 +50,7 @@ const visible = computed({
   set: (value: boolean) => emit('update:show', value),
 })
 
+const { sessionId, startNewSession } = useAiSession()
 const messages = ref<ChatMessage[]>([])
 const input = ref('')
 const loading = ref(false)
@@ -134,8 +136,12 @@ async function loadProviders() {
 
 watch(
   () => props.show,
-  (value) => {
-    if (value) void loadProviders()
+  (value, previous) => {
+    if (value && !previous) {
+      // Reopening the drawer starts a fresh chat with its own session ID.
+      startNewSession()
+      void loadProviders()
+    }
   },
 )
 
@@ -153,6 +159,8 @@ function close() {
 
 function clearChat() {
   if (loading.value) return
+  // A cleared conversation is a new chat, so it gets its own session ID.
+  startNewSession()
   messages.value = []
   errorText.value = ''
   contextTokens.value = 0
@@ -224,6 +232,7 @@ async function send(forced?: string) {
       reasoning: reasoning.value,
       messages: [...history, { role: 'user', content: prompt }],
       filters: props.filters,
+      session_id: sessionId.value,
     }, {
       onEvent: (event, data) => {
         const payload = data as Record<string, any>
