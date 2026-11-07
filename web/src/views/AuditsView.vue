@@ -2247,6 +2247,7 @@ onMounted(async () => {
     <PageHeader
       eyebrow="AUDIT FLOWS"
       title="审核配置"
+      tour-key="audits"
       subtitle="把媒体类型、模型、审核要求与规则阈值编排成可复用的审核流程。"
     >
       <template #actions>

@@ -349,6 +349,7 @@ onMounted(load)
     <PageHeader
       eyebrow="NOTIFICATION CHANNELS"
       title="通知渠道"
+      tour-key="notifications"
       subtitle="配置邮件等通知发送账号；后续会按渠道类型扩展更多通知方式。"
     >
       <template #actions>

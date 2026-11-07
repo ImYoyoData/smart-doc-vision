@@ -326,6 +326,7 @@ onMounted(load)
     <PageHeader
       eyebrow="AUDIT TRAIL"
       title="审计日志"
+      tour-key="logs"
       subtitle="记录登录、配置变更、模型测试、任务流转与人工复核等全部敏感操作。"
     >
       <template #actions>

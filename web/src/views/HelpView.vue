@@ -322,6 +322,7 @@ if not hmac.compare_digest(expected, actual):
     <PageHeader
       eyebrow="INTEGRATION GUIDE"
       title="对接文档"
+      tour-key="help"
       subtitle="项目级鉴权、三种触发方式、任务参数、WebSocket 协议、回调签名与 MySQL 边界说明。"
     >
       <template #actions>

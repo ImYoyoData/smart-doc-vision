@@ -209,7 +209,7 @@ async function logout() {
 
 <template>
   <div class="page profile-page">
-    <PageHeader eyebrow="MY ACCOUNT" title="个人中心" subtitle="查看账号身份、项目范围并修改登录密码。">
+    <PageHeader eyebrow="MY ACCOUNT" title="个人中心" subtitle="查看账号身份、项目范围并修改登录密码。" tour-key="profile">
       <template #actions>
         <n-button secondary @click="router.push({ name: 'help' })">
           <template #icon><HelpCircleOutline /></template>

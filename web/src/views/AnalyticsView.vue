@@ -338,6 +338,7 @@ onMounted(async () => {
     <PageHeader
       eyebrow="ANALYTICS"
       title="数据报表"
+      tour-key="analytics"
       subtitle="按项目、审核配置与时间范围分析审核量、通过率、未通过原因、错误与延迟分布。"
     >
       <template #actions>

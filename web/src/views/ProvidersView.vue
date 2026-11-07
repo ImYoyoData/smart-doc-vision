@@ -705,6 +705,7 @@ onMounted(load)
     <PageHeader
       eyebrow="MODEL GATEWAY"
       title="模型接入"
+      tour-key="providers"
       subtitle="统一管理通用大模型与 JEV 决策模型。通用大模型是一个业务分类，OpenAI 兼容 / Anthropic 只是两种 API 协议。"
     >
       <template #actions>

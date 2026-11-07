@@ -298,6 +298,7 @@ onMounted(async () => {
     <PageHeader
       eyebrow="HUMAN REVIEW"
       title="人工复核工作台"
+      tour-key="reviews"
       subtitle="模型无法确定的图档会进入这里。复核结论将触发对应结果路由并回调业务方。"
     >
       <template #actions>

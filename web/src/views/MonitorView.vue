@@ -278,6 +278,7 @@ onBeforeUnmount(() => {
     <PageHeader
       eyebrow="SYSTEM MONITOR"
       title="运行监控"
+      tour-key="monitor"
       subtitle="查看服务进程内存、协程与线程、请求吞吐、并发数和项目 Worker 队列；采样保留 24 小时。"
     >
       <template #actions>

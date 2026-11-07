@@ -195,6 +195,7 @@ onMounted(load)
       eyebrow="INBOX"
       title="站内消息"
       subtitle="待议复核与系统通知会在这里汇总；打开消息详情后自动标记为已读。"
+      tour-key="messages"
     >
       <template #actions>
         <n-button secondary @click="openSettings">

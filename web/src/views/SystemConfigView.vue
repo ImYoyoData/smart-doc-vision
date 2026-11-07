@@ -247,6 +247,7 @@ onMounted(() => {
     <PageHeader
       eyebrow="SYSTEM CONFIG"
       title="系统配置"
+      tour-key="system-config"
       subtitle="只读查看当前进程启动时加载的配置；密码和密钥字段已脱敏。"
     >
       <template #actions>

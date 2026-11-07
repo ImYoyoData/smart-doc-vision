@@ -39,6 +39,7 @@ import {
   PersonCircleOutline,
   ReceiptOutline,
   ScanOutline,
+  SchoolOutline,
   SettingsOutline,
   ShieldCheckmarkOutline,
   SpeedometerOutline,
@@ -47,7 +48,9 @@ import {
 } from '@vicons/ionicons5'
 import BrandMark from '@/components/BrandMark.vue'
 import MessageDetailModal from '@/components/MessageDetailModal.vue'
+import TourOverlay from '@/components/TourOverlay.vue'
 import UpdateModal from '@/components/UpdateModal.vue'
+import { useTour } from '@/composables/useTour'
 import { useAuthStore } from '@/stores/auth'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { useSiteStore } from '@/stores/site'
@@ -68,6 +71,7 @@ const review = useReviewStore()
 const watermarkPreview = useWatermarkPreviewStore()
 const theme = useThemeStore()
 const update = useUpdateStore()
+const tour = useTour()
 const sidebarOpen = ref(false)
 const SIDEBAR_COLLAPSED_KEY = 'sdv:sidebar-collapsed'
 const sidebarCollapsed = ref(localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1')
@@ -414,6 +418,12 @@ onMounted(() => {
   mobileMedia.addEventListener('change', handleMobileChange)
   reviewTimer = setInterval(() => review.refresh(workspace.currentProjectId), 30000)
   messageTimer = setInterval(() => loadMessages(true), 30000)
+  // First visit in this browser: run the basic tour once, after the layout has
+  // painted so every spotlight target exists.
+  if (tour.shouldAutoStartBasic()) {
+    tour.markAutoStartHandled()
+    window.setTimeout(() => tour.start('basic'), 900)
+  }
 })
 onBeforeUnmount(() => {
   window.removeEventListener('sdv:messages-updated', handleMessagesUpdated)
@@ -627,6 +637,15 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
             <HelpCircleOutline />
           </button>
           <button
+            class="icon-btn topbar-tour"
+            type="button"
+            title="引导帮助"
+            aria-label="引导帮助"
+            @click="tour.start('basic', true)"
+          >
+            <SchoolOutline />
+          </button>
+          <button
             class="theme-toggle"
             type="button"
             :title="theme.isDark ? '切换到浅色主题' : '切换到深色主题'"
@@ -665,6 +684,7 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
       @action="goMessageAction"
     />
     <UpdateModal />
+    <TourOverlay />
   </div>
 </template>
 
@@ -1172,14 +1192,20 @@ watch(() => workspace.currentProjectId, (id) => review.refresh(id))
 }
 
 
-.topbar-help {
+.topbar-help,
+.topbar-tour {
   width: 31px;
   height: 31px;
 }
 
-.topbar-help :deep(svg) {
+.topbar-help :deep(svg),
+.topbar-tour :deep(svg) {
   width: 16px;
   height: 16px;
+}
+
+.topbar-tour {
+  color: var(--brand-strong);
 }
 
 .theme-toggle {

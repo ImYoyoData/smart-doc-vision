@@ -389,6 +389,7 @@ onMounted(load)
     <PageHeader
       eyebrow="RECYCLE BIN"
       title="回收站"
+      tour-key="recycle"
       subtitle="项目与审核配置删除后进入回收站，保留期内可恢复；到期自动永久清理，超级管理员也可立即永久删除。"
     >
       <template #actions>

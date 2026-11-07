@@ -393,6 +393,7 @@ onMounted(load)
     <PageHeader
       eyebrow="ACCESS CONTROL"
       title="用户与权限"
+      tour-key="users"
       subtitle="创建后台账号、分配角色、设定项目数据范围，并查看角色对应的菜单与功能权限。"
     >
       <template #actions>

@@ -293,6 +293,7 @@ onMounted(async () => {
     <PageHeader
       eyebrow="PROJECTS"
       title="项目空间"
+      tour-key="projects"
       subtitle="项目是配置、模型、审核任务与数据权限的隔离边界，每个项目拥有独立的运行上下文。"
     >
       <template #actions>

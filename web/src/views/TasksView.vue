@@ -551,6 +551,7 @@ onBeforeUnmount(() => {
     <PageHeader
       eyebrow="AUDIT TASKS"
       title="审核任务"
+      tour-key="tasks"
       subtitle="查看每一次图档审核的状态、结论、规则命中与完整链路事件。"
     >
       <template #actions>

@@ -162,6 +162,7 @@ onMounted(async () => {
     <PageHeader
       eyebrow="WORKBENCH"
       title="审核工作台"
+      tour-key="dashboard"
       subtitle="聚焦今天要处理的任务：人工复核、最近任务、审核配置与模型状态。"
     >
       <template #actions>

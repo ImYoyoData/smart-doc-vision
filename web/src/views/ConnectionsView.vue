@@ -212,6 +212,7 @@ onMounted(() => {
     <PageHeader
       eyebrow="DATA CONNECTIONS"
       title="数据连接"
+      tour-key="connections"
       subtitle="项目级 Redis 连接，供审核触发和结果动作复用。平台自身缓存使用的 Redis 与这里配置的业务 Redis 相互独立。"
     >
       <template #actions>

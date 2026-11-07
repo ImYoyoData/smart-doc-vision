@@ -239,6 +239,7 @@ onMounted(load)
     <PageHeader
       eyebrow="ACCESS CREDENTIALS"
       title="接入凭证"
+      tour-key="credentials"
       subtitle="为开放 API 与 WebSocket 管理独立 AppKey，并按审核配置精确授权访问范围。"
     >
       <template #actions>
