@@ -24,6 +24,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import PageSkeleton from '@/components/PageSkeleton.vue'
 import { useInitialLoad } from '@/composables/useInitialLoad'
 import EmptyState from '@/components/EmptyState.vue'
+import TourPrompt from '@/components/TourPrompt.vue'
 import { redisConnectionApi } from '@/api'
 import type { RedisConnection } from '@/api/types'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -323,11 +324,12 @@ onMounted(() => {
           </div>
         </div>
         <div class="modal-body">
-          <div class="field">
+          <TourPrompt tour-key="connection-form" label="数据连接" />
+          <div class="field" data-tour="connection-name">
             <label>连接名称 <span class="required">*</span></label>
             <n-input v-model:value="form.name" placeholder="例如 业务 Redis - 合同档案" maxlength="64" />
           </div>
-          <div class="field">
+          <div class="field" data-tour="connection-addr">
             <label>Redis 地址 <span class="required">*</span></label>
             <n-input v-model:value="form.addr" placeholder="127.0.0.1:6379" class="mono-input" />
             <div class="form-hint">host:port；不写端口时默认 6379。</div>
@@ -337,7 +339,7 @@ onMounted(() => {
             <n-input-number v-model:value="form.db" :min="0" :max="255" style="width: 180px" />
             <div class="form-hint">连接的默认 DB（0~255）；审核触发源和结果动作仍可单独覆盖。</div>
           </div>
-          <div class="two-col">
+          <div class="two-col" data-tour="connection-auth">
             <div class="field">
               <label>用户名</label>
               <n-input v-model:value="form.username" placeholder="可选，Redis 6 ACL 用户" />
@@ -380,7 +382,7 @@ onMounted(() => {
           </div>
           <div v-if="errorText" class="modal-error">{{ errorText }}</div>
         </div>
-        <div class="modal-footer">
+        <div class="modal-footer" data-tour="connection-footer">
           <n-button :disabled="saving" @click="modalShow = false">取消</n-button>
           <n-button type="primary" :loading="saving" @click="save">保存连接</n-button>
         </div>

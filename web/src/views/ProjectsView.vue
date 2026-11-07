@@ -33,6 +33,7 @@ import PageSkeleton from '@/components/PageSkeleton.vue'
 import { useInitialLoad } from '@/composables/useInitialLoad'
 import StatusTag from '@/components/StatusTag.vue'
 import EmptyState from '@/components/EmptyState.vue'
+import TourPrompt from '@/components/TourPrompt.vue'
 import ProjectSecretsModal from '@/components/ProjectSecretsModal.vue'
 import { projectApi } from '@/api'
 import { copyText } from '@/utils/clipboard'
@@ -445,11 +446,12 @@ onMounted(async () => {
           </div>
         </div>
         <div class="modal-body">
+          <TourPrompt tour-key="project-form" label="项目空间" />
           <div class="field">
             <label>项目名称 <span class="required">*</span></label>
             <n-input v-model:value="form.name" placeholder="例如 建设工程档案审核" maxlength="64" show-count />
           </div>
-          <div class="two-col">
+          <div class="two-col" data-tour="project-basic">
             <div class="field">
               <label>项目编码 <span v-if="!editing" class="required">*</span></label>
               <n-input v-model:value="form.code" :disabled="Boolean(editing)" placeholder="archive-prod" class="mono-input" />
@@ -479,7 +481,7 @@ onMounted(async () => {
               show-count
             />
           </div>
-          <div class="two-col">
+          <div class="two-col" data-tour="project-limits">
             <div class="field">
               <label>回收站保留天数</label>
               <n-input-number v-model:value="form.retentionDays" :min="7" :max="365" style="width: 100%" />
@@ -552,7 +554,7 @@ onMounted(async () => {
           </div>
           <div v-if="errorText" class="modal-error">{{ errorText }}</div>
         </div>
-        <div class="modal-footer">
+        <div class="modal-footer" data-tour="project-footer">
           <n-button :disabled="saving" @click="modalShow = false">取消</n-button>
           <n-button type="primary" :loading="saving" @click="save">{{ editing ? '保存修改' : '创建项目' }}</n-button>
         </div>

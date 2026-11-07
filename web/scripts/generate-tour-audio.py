@@ -40,7 +40,10 @@ THROTTLE_SECONDS = 2.2
 def parse_tours() -> dict[str, list[str]]:
     source = TOURS_TS.read_text(encoding="utf-8")
     tours: dict[str, list[str]] = {}
-    for key, body in re.findall(r"key: '([a-z-]+)',\s*title: '[^']*',\s*steps: \[(.*?)\n    \],", source, re.S):
+    # Blocks are indented differently for page tours and form tours, so accept
+    # any closing indentation between 2 and 4 spaces.
+    pattern = r"key: '([a-z-]+)',\s*title: '[^']*',\s*steps: \[(.*?)\n\s{2,4}\],"
+    for key, body in re.findall(pattern, source, re.S):
         tours[key] = re.findall(r"body: '([^']*)'", body)
     if not tours:
         raise SystemExit(f"no tours found in {TOURS_TS}")

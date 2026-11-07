@@ -13,6 +13,7 @@ import {
 import { CloseOutline, CloudUploadOutline, FlashOutline, HelpCircleOutline, ImagesOutline, TextOutline, WarningOutline } from '@vicons/ionicons5'
 import { auditApi, taskApi } from '@/api'
 import type { Audit, Task } from '@/api/types'
+import TourPrompt from '@/components/TourPrompt.vue'
 
 const props = defineProps<{
   show: boolean
@@ -254,7 +255,8 @@ async function submit() {
       </div>
 
       <div class="modal-body">
-        <div class="field">
+        <TourPrompt tour-key="task-submit" label="审核任务提交" :delay="600" />
+        <div class="field" data-tour="submit-audit">
           <label>审核配置 <span class="required">*</span></label>
           <n-select
             v-model:value="form.auditId"
@@ -285,7 +287,7 @@ async function submit() {
           <div class="form-hint">可选，项目内唯一。填写后以它作为幂等标识，结果回调和按 request_id 查询都使用它。</div>
         </div>
 
-        <div class="field">
+        <div class="field" data-tour="submit-content">
           <label><TextOutline class="label-icon" /> 文档文本</label>
           <n-input
             v-model:value="form.text"
@@ -332,7 +334,7 @@ async function submit() {
           </div>
         </div>
 
-        <div class="two-col">
+        <div class="two-col" data-tour="submit-callback">
           <div class="field">
             <label>
               回调地址
@@ -361,7 +363,7 @@ async function submit() {
 
         <div v-if="errorText" class="form-error">{{ errorText }}</div>
 
-        <div class="modal-actions">
+        <div class="modal-actions" data-tour="submit-actions">
           <n-space>
             <n-button :disabled="submitting" @click="close">取消</n-button>
             <n-button type="primary" :loading="submitting" @click="submit">

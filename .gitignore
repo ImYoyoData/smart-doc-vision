@@ -45,3 +45,7 @@ gui-test-screenshots/
 
 # vite cache
 web/.vite/
+
+# python
+__pycache__/
+*.pyc

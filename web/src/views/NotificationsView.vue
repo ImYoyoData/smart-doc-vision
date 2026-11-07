@@ -28,6 +28,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import PageSkeleton from '@/components/PageSkeleton.vue'
 import { useInitialLoad } from '@/composables/useInitialLoad'
 import EmptyState from '@/components/EmptyState.vue'
+import TourPrompt from '@/components/TourPrompt.vue'
 import StatusTag from '@/components/StatusTag.vue'
 import { notificationApi } from '@/api'
 import type { NotificationChannel } from '@/api/types'
@@ -496,7 +497,8 @@ onMounted(load)
           </div>
         </div>
         <div class="modal-body">
-          <div class="two-col">
+          <TourPrompt tour-key="channel-form" label="通知渠道" />
+          <div class="two-col" data-tour="channel-basic">
             <div class="field">
               <label>渠道名称 <span class="required">*</span></label>
               <n-input v-model:value="form.name" placeholder="例如 业务通知邮箱" maxlength="64" />
@@ -516,7 +518,7 @@ onMounted(load)
               <n-select :value="form.security" :options="securityOptions" @update:value="onSecurityChange" />
             </div>
           </div>
-          <div class="two-col">
+          <div class="two-col" data-tour="channel-smtp">
             <div class="field">
               <label>SMTP 主机 <span class="required">*</span></label>
               <n-input v-model:value="form.host" placeholder="smtp.qq.com" class="mono-input" />
@@ -567,7 +569,7 @@ onMounted(load)
           </div>
           <div v-if="errorText" class="modal-error">{{ errorText }}</div>
         </div>
-        <div class="modal-footer">
+        <div class="modal-footer" data-tour="channel-footer">
           <n-button :disabled="saving" @click="modalShow = false">取消</n-button>
           <n-button type="primary" :loading="saving" @click="save">{{ editing ? '保存修改' : '创建渠道' }}</n-button>
         </div>

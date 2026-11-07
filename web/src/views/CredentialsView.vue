@@ -19,6 +19,7 @@ import { useInitialLoad } from '@/composables/useInitialLoad'
 import StatusTag from '@/components/StatusTag.vue'
 import CopyButton from '@/components/CopyButton.vue'
 import EmptyState from '@/components/EmptyState.vue'
+import TourPrompt from '@/components/TourPrompt.vue'
 import { auditApi, credentialApi } from '@/api'
 import type { APICredential, Audit, CredentialScope } from '@/api/types'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -402,11 +403,12 @@ onMounted(load)
           </div>
         </div>
         <div class="modal-body">
-          <div class="field">
+          <TourPrompt tour-key="credential-form" label="接入凭证" />
+          <div class="field" data-tour="credential-name">
             <label>凭证名称 <span class="required">*</span></label>
             <n-input v-model:value="form.name" placeholder="例如 业务系统 A · 生产" maxlength="64" />
           </div>
-          <div class="field">
+          <div class="field" data-tour="credential-scope">
             <label>允许访问的审核配置 <span class="required">*</span></label>
             <n-select
               v-model:value="form.audit_ids"
@@ -424,7 +426,7 @@ onMounted(load)
           </div>
           <div v-if="errorText" class="modal-error">{{ errorText }}</div>
         </div>
-        <div class="modal-footer">
+        <div class="modal-footer" data-tour="credential-footer">
           <n-button :disabled="saving" @click="modalShow = false">取消</n-button>
           <n-button type="primary" :loading="saving" @click="save">{{ editing ? '保存授权' : '创建凭证' }}</n-button>
         </div>

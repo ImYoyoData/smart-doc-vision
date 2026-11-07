@@ -57,6 +57,7 @@ import { useInitialLoad } from '@/composables/useInitialLoad'
 import { useAiSession } from '@/composables/useAiSession'
 import StatusTag from '@/components/StatusTag.vue'
 import EmptyState from '@/components/EmptyState.vue'
+import TourPrompt from '@/components/TourPrompt.vue'
 import TaskSubmitModal from '@/components/TaskSubmitModal.vue'
 import AuditIntegrationDrawer from '@/components/AuditIntegrationDrawer.vue'
 import AuditFieldAssistantModal from '@/components/AuditFieldAssistantModal.vue'
@@ -2456,7 +2457,8 @@ onMounted(async () => {
           </div>
         </div>
         <div class="modal-body">
-          <div class="two-col">
+          <TourPrompt tour-key="audit-form" label="审核配置" />
+          <div class="two-col" data-tour="audit-basic">
             <div class="field">
               <label>审核名称 <span class="required">*</span></label>
               <n-input v-model:value="form.name" placeholder="例如 工程档案智能审核" />
@@ -2470,7 +2472,7 @@ onMounted(async () => {
             <label>说明</label>
             <n-input v-model:value="form.description" placeholder="这条审核流程适用的业务场景" maxlength="255" />
           </div>
-          <div class="mode-picker" :class="{ classify: isClassifyMode, classifier: form.decisionMode === 'CLASSIFY_ONLY' }">
+          <div class="mode-picker" data-tour="audit-mode" :class="{ classify: isClassifyMode, classifier: form.decisionMode === 'CLASSIFY_ONLY' }">
             <div>
               <strong><SparklesOutline /> 审核类型</strong>
               <span v-if="form.decisionMode === 'CLASSIFY_ONLY'">模型只返回分类类型编码；成功审核一律 PASS，类型写入结果的 category 字段，不做驳回判定。</span>
@@ -2485,7 +2487,7 @@ onMounted(async () => {
               @update:value="setDecisionMode"
             />
           </div>
-          <div class="two-col">
+          <div class="two-col" data-tour="audit-provider">
             <div class="field">
               <label>模型供应商 <span class="required">*</span></label>
               <n-select v-model:value="form.providerId" :options="providerOptions" placeholder="选择用于审核的模型" />
@@ -2513,7 +2515,7 @@ onMounted(async () => {
               />
             </div>
           </div>
-          <div class="config-sections">
+          <div class="config-sections" data-tour="audit-sections">
             <div class="config-sections-head">
               <strong>详细配置</strong>
               <span>按需打开独立弹窗编辑，主表单只保留摘要</span>
@@ -2581,7 +2583,7 @@ onMounted(async () => {
           </div>
           <div v-if="errorText" class="modal-error">{{ errorText }}</div>
         </div>
-        <div class="modal-footer">
+        <div class="modal-footer" data-tour="audit-footer">
           <n-button v-if="editing && auth.can('audit:write')" secondary :disabled="!hasGeneralProvider" @click="startAssistant('edit', editing)">
             <template #icon><SparklesOutline /></template>
             AI 帮我修改

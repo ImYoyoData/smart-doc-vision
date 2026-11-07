@@ -31,6 +31,7 @@ import PageSkeleton from '@/components/PageSkeleton.vue'
 import { useInitialLoad } from '@/composables/useInitialLoad'
 import StatusTag from '@/components/StatusTag.vue'
 import EmptyState from '@/components/EmptyState.vue'
+import TourPrompt from '@/components/TourPrompt.vue'
 import { providerApi } from '@/api'
 import type { Provider, ProviderModel, ProviderPreset, ProviderUsageLog, ProviderUsageSummary } from '@/api/types'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -950,7 +951,8 @@ onMounted(load)
         </div>
 
         <div class="modal-body">
-          <div v-if="!editing" class="preset-row">
+          <TourPrompt tour-key="provider-form" label="模型接入" />
+          <div v-if="!editing" class="preset-row" data-tour="provider-preset">
             <div class="preset-label">
               <strong>快速选择供应商</strong>
               <small>自动填入协议、BaseURL 和起始模型，之后仍可修改</small>
@@ -975,7 +977,7 @@ onMounted(load)
             </div>
           </div>
 
-          <div class="kind-selector">
+          <div class="kind-selector" data-tour="provider-kind">
             <button
               type="button"
               class="kind-card"
@@ -1073,7 +1075,7 @@ onMounted(load)
 
           <div class="field">
             <label>模型 ID <span class="required">*</span></label>
-            <div class="model-picker">
+            <div class="model-picker" data-tour="provider-model">
               <n-select
                 v-if="modelOptions.length"
                 v-model:value="form.model"
@@ -1145,7 +1147,7 @@ onMounted(load)
             />
           </div>
 
-          <div class="config-panel">
+          <div class="config-panel" data-tour="provider-params">
             <div class="config-title">推理参数</div>
             <div class="config-grid">
               <div class="switch-field">
@@ -1203,7 +1205,7 @@ onMounted(load)
           <div v-if="errorText" class="modal-error">{{ errorText }}</div>
         </div>
 
-        <div class="modal-footer">
+        <div class="modal-footer" data-tour="provider-footer">
           <div v-if="activeProvider" class="test-hint">上次测试：{{ activeProvider.last_test_message || '—' }}</div>
           <div class="footer-buttons">
             <n-button :disabled="saving" @click="modalShow = false">取消</n-button>

@@ -27,6 +27,7 @@ import PageSkeleton from '@/components/PageSkeleton.vue'
 import { useInitialLoad } from '@/composables/useInitialLoad'
 import StatusTag from '@/components/StatusTag.vue'
 import EmptyState from '@/components/EmptyState.vue'
+import TourPrompt from '@/components/TourPrompt.vue'
 import { auditApi, userApi } from '@/api'
 import type { Audit, RoleDefinition, User } from '@/api/types'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -582,7 +583,8 @@ onMounted(load)
           </div>
         </div>
         <div class="modal-body">
-          <div class="two-col">
+          <TourPrompt tour-key="user-form" label="后台账号" />
+          <div class="two-col" data-tour="user-basic">
             <div class="field">
               <label>登录账号 <span v-if="!editing" class="required">*</span></label>
               <n-input v-model:value="form.username" :disabled="Boolean(editing)" placeholder="zhangsan" />
@@ -597,7 +599,7 @@ onMounted(load)
             <n-input v-model:value="form.email" placeholder="name@example.com" />
             <div class="form-hint">用于账号联系与通知，可留空。</div>
           </div>
-          <div class="two-col">
+          <div class="two-col" data-tour="user-security">
             <div class="field">
               <label>{{ editing ? '重置密码（留空不修改）' : '初始密码' }} <span v-if="!editing" class="required">*</span></label>
               <n-input v-model:value="form.password" type="password" show-password-on="click" placeholder="至少 10 位，含字母和数字" />
@@ -624,7 +626,7 @@ onMounted(load)
               />
             </div>
           </div>
-          <div v-if="form.role !== 'SUPER_ADMIN'" class="field">
+          <div v-if="form.role !== 'SUPER_ADMIN'" class="field" data-tour="user-scope">
             <label>审核配置范围</label>
             <n-select
               v-model:value="form.audit_ids"
@@ -665,7 +667,7 @@ onMounted(load)
           </div>
           <div v-if="errorText" class="modal-error">{{ errorText }}</div>
         </div>
-        <div class="modal-footer">
+        <div class="modal-footer" data-tour="user-footer">
           <n-button :disabled="saving" @click="modalShow = false">取消</n-button>
           <n-button type="primary" :loading="saving" @click="save">{{ editing ? '保存账号' : '创建账号' }}</n-button>
         </div>
@@ -683,7 +685,8 @@ onMounted(load)
           <span class="modal-icon"><ShieldCheckmarkOutline /></span>
         </div>
         <div class="modal-body">
-          <div class="two-col">
+          <TourPrompt tour-key="role-form" label="角色权限" />
+          <div class="two-col" data-tour="role-basic">
             <div class="field">
               <label>角色编码 <span v-if="!editingRole" class="required">*</span></label>
               <n-input v-model:value="roleForm.code" :disabled="Boolean(editingRole)" placeholder="ARCHIVE_OPERATOR" />
@@ -697,7 +700,7 @@ onMounted(load)
             <label>角色说明</label>
             <n-input v-model:value="roleForm.description" placeholder="说明该角色的使用场景与边界" />
           </div>
-          <div class="role-editor-grid">
+          <div class="role-editor-grid" data-tour="role-permissions">
             <div class="field">
               <label>可见菜单 <span class="optional">至少一项</span></label>
               <div class="check-panel">
@@ -728,7 +731,7 @@ onMounted(load)
           <p class="role-tip">运行监控依赖「查看运行监控」权限；只勾选菜单而未勾选权限时，接口仍会拒绝访问。</p>
           <div v-if="roleError" class="modal-error">{{ roleError }}</div>
         </div>
-        <div class="modal-footer">
+        <div class="modal-footer" data-tour="role-footer">
           <n-button :disabled="roleSaving" @click="roleModalShow = false">取消</n-button>
           <n-button type="primary" :loading="roleSaving" @click="saveRole">{{ editingRole ? '保存角色' : '创建角色' }}</n-button>
         </div>
