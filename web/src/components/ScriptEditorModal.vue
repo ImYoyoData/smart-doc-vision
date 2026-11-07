@@ -32,6 +32,7 @@ import { useAiSession } from '@/composables/useAiSession'
 import type { Provider, ScriptSimulationResult } from '@/api/types'
 import VoiceInputButton from '@/components/VoiceInputButton.vue'
 import { useWorkspaceStore } from '@/stores/workspace'
+import TourPrompt from '@/components/TourPrompt.vue'
 
 const props = defineProps<{
   show: boolean
@@ -1033,7 +1034,7 @@ function applyVoiceInput(text: string) {
         </div>
       </div>
 
-      <div class="script-editor-toolbar">
+      <div class="script-editor-toolbar" data-tour="script-toolbar">
         <div class="editor-file-tab">
           <span v-if="scriptDirty" class="editor-modified-dot" title="脚本有未保存修改" />
           <span class="editor-lang">JS</span>
@@ -1047,6 +1048,7 @@ function applyVoiceInput(text: string) {
         </div>
       </div>
 
+      <TourPrompt v-if="!aiOpen" tour-key="script-editor" label="结果脚本编辑器" :delay="600" />
       <div class="script-editor-body">
         <div ref="editorHost" class="script-editor-host" />
 

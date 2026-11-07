@@ -324,7 +324,7 @@ onMounted(async () => {
       </div>
     </div>
 
-    <div class="review-layout">
+    <div class="review-layout" data-tour="review-layout">
       <aside class="panel review-queue">
         <div class="queue-head">
           <div>

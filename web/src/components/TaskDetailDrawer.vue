@@ -36,6 +36,7 @@ import ReviewContext from './ReviewContext.vue'
 import { taskApi } from '@/api'
 import type { Task, TaskDetail, TaskEvent } from '@/api/types'
 import { REVIEW_REASON_OPTIONS } from '@/constants/reviewReasons'
+import TourPrompt from '@/components/TourPrompt.vue'
 
 const props = defineProps<{
   show: boolean
@@ -234,7 +235,8 @@ watch(
 
       <n-spin :show="loading">
         <div v-if="task" class="detail-wrap">
-          <section class="result-hero" :class="task.result.toLowerCase()">
+          <TourPrompt tour-key="task-detail" label="任务详情" :delay="500" />
+          <section class="result-hero" :class="task.result.toLowerCase()" data-tour="detail-hero">
             <div class="hero-top">
               <div class="hero-badge">
                 <CheckmarkCircleOutline v-if="task.result === 'PASS'" />
@@ -276,7 +278,7 @@ watch(
             </div>
           </section>
 
-          <div class="meta-grid">
+          <div class="meta-grid" data-tour="detail-meta">
             <div><span>业务键</span><strong class="mono">{{ task.biz_key || '—' }}</strong></div>
             <div><span>request_id</span><strong class="mono">{{ task.request_id || '—' }}</strong></div>
             <div><span>项目 / 审核</span><strong>{{ task.project_name || '—' }} · {{ task.audit_name || '—' }}</strong></div>
@@ -286,7 +288,7 @@ watch(
             <div><span>完成时间</span><strong>{{ formatTime(task.finished_at) }}</strong></div>
           </div>
 
-          <section class="detail-section">
+          <section class="detail-section" data-tour="detail-reasons">
             <h3 class="section-label">审核依据</h3>
             <div class="tag-row">
               <span v-for="label in task.result_detail?.labels || task.model_result?.labels || []" :key="label" class="soft-tag">{{ label }}</span>

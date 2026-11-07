@@ -5,6 +5,7 @@ import { NButton, NInput, NInputNumber, NModal, NSelect, NSwitch, NTag, useMessa
 import { auditApi, redisConnectionApi } from '@/api'
 import type { RedisConnection, TriggerSource, TriggerUpdate } from '@/api/types'
 import { useWorkspaceStore } from '@/stores/workspace'
+import TourPrompt from '@/components/TourPrompt.vue'
 
 const props = defineProps<{ show: boolean; trigger: TriggerSource | null }>()
 const emit = defineEmits<{
@@ -217,7 +218,8 @@ function formatTime(value?: string | null): string {
       </header>
 
       <div class="modal-body">
-        <div class="two-col">
+        <TourPrompt tour-key="trigger-form" label="触发方式" :delay="500" />
+        <div class="two-col" data-tour="trigger-basic">
           <div class="field">
             <label>触发源名称</label>
             <n-input v-model:value="form.name" size="small" placeholder="例如：业务系统 Redis 队列" />
@@ -237,7 +239,7 @@ function formatTime(value?: string | null): string {
             当前暂停原因：{{ pauseReasonLabel(props.trigger.pause_reason) }}
             <template v-if="props.trigger.auto_paused">（平台自动暂停）</template>
           </div>
-          <div class="field">
+          <div class="field" data-tour="trigger-connection">
             <label>Redis 连接 <span>只能选择当前项目已启用且测试成功的连接</span></label>
             <n-select
               :value="form.redisConnectionId"
@@ -264,7 +266,7 @@ function formatTime(value?: string | null): string {
               <n-select v-model:value="form.startPosition" :options="startPositionOptions" size="small" />
             </div>
           </div>
-          <div class="field">
+          <div class="field" data-tour="trigger-stream">
             <label>Stream <span>要监听的队列名</span></label>
             <n-input v-model:value="form.stream" size="small" placeholder="例如 sdv:archive:contract" class="mono-input" />
           </div>

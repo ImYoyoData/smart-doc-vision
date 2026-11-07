@@ -2283,7 +2283,7 @@ onMounted(async () => {
     </PageHeader>
     <PageSkeleton v-if="showSkeleton" variant="cards" />
 
-    <div class="audit-summary">
+    <div class="audit-summary" data-tour="audits-summary">
       <div>
         <span>已启用流程</span>
         <strong :class="{ 'summary-loading': !summaryLoaded }">{{ summaryLoaded ? activeCount : '—' }}</strong>
@@ -2309,7 +2309,7 @@ onMounted(async () => {
       </p>
     </div>
 
-    <div class="audit-toolbar">
+    <div class="audit-toolbar" data-tour="audits-toolbar">
       <n-input v-model:value="search" placeholder="搜索审核名称或编码" clearable class="search-input">
         <template #prefix><SearchOutline /></template>
       </n-input>
@@ -2330,7 +2330,7 @@ onMounted(async () => {
       <span class="result-count">已显示 {{ filtered.length }} / 共 {{ auditTotal }} 条</span>
     </div>
 
-    <div v-if="filtered.length" class="audit-list fade-list">
+    <div v-if="filtered.length" class="audit-list fade-list" data-tour="audits-list">
       <article v-for="audit in filtered" :key="audit.id" class="audit-card">
         <div class="audit-card-head">
           <div class="audit-side" :class="{ active: audit.status === 'ACTIVE' }">
@@ -2607,7 +2607,8 @@ onMounted(async () => {
           </div>
         </div>
         <div class="submodal-body">
-          <div class="field">
+          <TourPrompt tour-key="audit-prompt" label="审核要求" />
+          <div class="field" data-tour="prompt-actions">
             <div class="field-label-row">
               <label>审核要求 Prompt</label>
               <div class="prompt-actions">
@@ -2634,6 +2635,7 @@ onMounted(async () => {
             </div>
             <n-input
               v-model:value="form.reviewPrompt"
+              data-tour="prompt-text"
               type="textarea"
               :autosize="{ minRows: 12, maxRows: 24 }"
               placeholder="告诉模型该审核什么、什么情况通过/驳回/转人工"
@@ -2677,7 +2679,8 @@ onMounted(async () => {
             hidden
             @change="handleTreatyFiles"
           />
-          <div class="treaty-banner">
+          <TourPrompt tour-key="audit-treaty" label="审核条约" />
+          <div class="treaty-banner" data-tour="treaty-banner">
             <ShieldCheckmarkOutline />
             <div>
               <strong>审核条约在服务器后台解析，关闭网页不会中断</strong>
@@ -2692,7 +2695,7 @@ onMounted(async () => {
             <p v-else>请先保存审核配置，之后即可添加审核条约；解析任务会在服务器后台执行，关闭网页不会中断。</p>
           </div>
 
-          <div v-else class="treaty-table-wrap">
+          <div v-else class="treaty-table-wrap" data-tour="treaty-table">
             <n-data-table
               :columns="treatyColumns"
               :data="treatyDocs"
@@ -2790,7 +2793,8 @@ onMounted(async () => {
           </div>
         </div>
         <div class="submodal-body">
-          <div class="category-panel in-modal">
+          <TourPrompt tour-key="audit-category" label="分类类型" />
+          <div class="category-panel in-modal" data-tour="category-panel">
             <div class="category-head">
               <div>
                 <strong>{{ form.decisionMode === 'CLASSIFY_ONLY' ? '可返回的分类类型' : '分类与终审结论映射' }}</strong>
@@ -2868,7 +2872,8 @@ onMounted(async () => {
           </div>
         </div>
         <div class="submodal-body">
-          <div class="rule-editor-toolbar">
+          <TourPrompt tour-key="audit-rules" label="规则组" />
+          <div class="rule-editor-toolbar" data-tour="rules-toolbar">
             <div class="rule-template-pick">
               <span>规则模板</span>
               <n-select
@@ -2898,6 +2903,7 @@ onMounted(async () => {
           </p>
           <RuleGroupsEditor
             v-model="form.rulesText"
+            data-tour="rules-editor"
             @change="form.rulesPreset = 'custom'"
           />
         </div>
@@ -2920,7 +2926,8 @@ onMounted(async () => {
           </div>
         </div>
         <div class="submodal-body">
-          <ResultRoutesEditor v-model="form.routesText" :audit-id="editing?.id || 0" />
+          <TourPrompt tour-key="audit-routes" label="结果动作回调" />
+          <ResultRoutesEditor v-model="form.routesText" :audit-id="editing?.id || 0" data-tour="routes-editor" />
         </div>
         <div class="modal-footer">
           <n-button type="primary" @click="routeModalShow = false">完成</n-button>
@@ -2941,7 +2948,8 @@ onMounted(async () => {
           </div>
         </div>
         <div class="submodal-body">
-          <div class="two-col">
+          <TourPrompt tour-key="audit-policy" label="运行策略" />
+          <div class="two-col" data-tour="policy-basic">
             <div class="field">
               <label>默认结论</label>
               <n-select
@@ -2979,7 +2987,7 @@ onMounted(async () => {
                 REVIEW 结论的任务直接完成，不进入本平台待议复核队列；请在「结果动作回调」中配置通知，由业务系统自行人工复核。
               </div>
             </div>
-            <div class="field">
+            <div class="field" data-tour="policy-dedupe">
               <label>去重窗口（秒，0 表示不去重）</label>
               <n-input-number v-model:value="form.dedupeWindowSec" :min="0" :max="604800" :step="3600" style="width: 100%" />
               <div class="form-hint">当前：{{ formatDedupe(form.dedupeWindowSec) }}</div>

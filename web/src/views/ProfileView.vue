@@ -223,7 +223,7 @@ async function logout() {
     </PageHeader>
 
     <div class="profile-grid">
-      <section class="panel identity-panel">
+      <section class="panel identity-panel" data-tour="profile-identity">
         <div class="profile-avatar"><PersonOutline /></div>
         <h2>{{ auth.displayName }}</h2>
         <span class="profile-username mono">@{{ auth.user?.username }}</span>
@@ -275,7 +275,7 @@ async function logout() {
         </div>
       </section>
 
-      <section class="panel security-panel">
+      <section class="panel security-panel" data-tour="profile-password">
         <div class="panel-head">
           <div><h3 class="panel-title">修改登录密码</h3><p class="panel-subtitle">密码至少 10 位，包含字母和数字；修改后当前会话保持有效</p></div>
           <span class="lock-icon"><LockClosedOutline /></span>
@@ -290,7 +290,7 @@ async function logout() {
       </section>
     </div>
 
-    <section class="panel mfa-panel">
+    <section class="panel mfa-panel" data-tour="profile-mfa">
       <div class="panel-head">
         <div>
           <h3 class="panel-title">两步验证（TOTP）</h3>

@@ -69,10 +69,31 @@ const pageTours: Record<string, TourDefinition> = {
     key: 'dashboard',
     title: '仪表盘引导',
     steps: [
-      { target: '.filter-bar', title: '筛选条件', body: '在这里选择项目和审核配置，仪表盘的所有数据都会按筛选条件实时更新。' },
-      { target: '.hero', title: '今日概览', body: '顶部展示今天提交量、通过率与待处理数量，帮助你快速判断当前工作量。' },
-      { target: '.metric-grid', title: '关键指标', body: '通过、驳回、待复核、失败等指标卡片，点击可以跳转到对应的任务列表。' },
-      { target: '.ops-grid', title: '待复核队列与最近任务', body: '左侧按等待时间列出待人工复核的任务，右侧显示最近提交及结论，方便快速跟进。' },
+      {
+        target: '[data-tour="dash-filter"]',
+        title: '筛选条件',
+        body: '先在这里选择项目和审核配置。仪表盘顶部概览、指标卡和下方两个队列都会按筛选条件实时重算；切换项目时其他页面的数据范围也会一起切换。',
+      },
+      {
+        target: '[data-tour="dash-hero"]',
+        title: '今日概览',
+        body: '这块展示今天的提交量、通过率、待复核数量和平均耗时，用来快速判断今天的工作量是否正常。数字只统计今天零点到现在。',
+      },
+      {
+        target: '.review-alert',
+        title: '待复核提醒',
+        body: '有待人工复核的任务时，这里会出现提醒条。点「进入复核工作台」直接跳到复核队列，按等待时间从早到晚处理。',
+      },
+      {
+        target: '[data-tour="dash-metrics"]',
+        title: '关键指标',
+        body: '通过、驳回、待复核、执行失败四张卡片。点击卡片会跳到对应状态的任务列表，方便核对具体是哪些任务。',
+      },
+      {
+        target: '[data-tour="dash-ops"]',
+        title: '待复核队列与最近任务',
+        body: '左侧按等待时间升序列出待人工复核的任务，点击任意一条进入复核详情；右侧展示最近提交的任务及其结论，用来确认最新的审核是否按预期工作。',
+      },
     ],
   },
   analytics: {
@@ -88,35 +109,95 @@ const pageTours: Record<string, TourDefinition> = {
     key: 'reviews',
     title: '待议复核引导',
     steps: [
-      { target: '.review-banner', title: '复核提醒', body: '这里显示等待复核的总量和按审核配置的分布，点击标签可以快速筛选。' },
-      { target: '.review-queue', title: '复核队列', body: '左侧队列按进入时间升序排列，支持按审核配置、状态和日期筛选。' },
-      { target: '.review-analysis', title: '模型判定依据', body: '右侧展示模型给出的结论、风险分、命中规则和原始输入，帮助你判断是否改判。' },
-      { target: '.review-action-bar', title: '提交复核结论', body: '选择通过、驳回或继续转人工并填写说明，提交后会触发结果路由并回调业务方。' },
+      {
+        target: '.review-banner',
+        title: '复核提醒与筛选',
+        body: '顶部显示当前等待复核的总量，以及按审核配置的分布。点击某个审核配置的标签，可以只看这条流程转来的任务。',
+      },
+      {
+        target: '.review-queue',
+        title: '复核队列',
+        body: '左侧队列按进入时间升序排列，最早等待的排在最前。支持按审核配置、结论状态和日期范围筛选，处理完当前任务后会自动选中下一条。',
+      },
+      {
+        target: '.review-analysis',
+        title: '模型判定依据',
+        body: '右侧展示模型给出的结论、风险分、分类结果、命中规则和原因。请先核对这里的依据再改判，避免仅凭直觉覆盖模型判断。',
+      },
+      {
+        target: '.review-action-bar',
+        title: '提交复核结论',
+        body: '选择通过、驳回或继续转人工，并填写复核说明。提交后会触发结果路由、推送回调和站内通知；复核记录会写入审计日志，可在任务详情里追溯。',
+      },
     ],
   },
   tasks: {
     key: 'tasks',
     title: '审核任务引导',
     steps: [
-      { target: '.task-toolbar', title: '筛选与搜索', body: '按项目、审核配置、状态、结论、来源和时间筛选任务，也可以直接搜索任务号或业务键。' },
-      { target: '.data-table-wrap', title: '任务列表', body: '每一行是一条审核任务。点击任务可以查看输入内容、模型原始返回、规则命中过程和事件时间线。' },
+      {
+        target: '[data-tour="tasks-toolbar"]',
+        title: '筛选、搜索与列设置',
+        body: '按审核配置、状态、结论、来源和时间范围筛选，也可以直接搜索任务号、业务键或 request_id。右侧的列设置可以隐藏不关心的字段，筛选组合还能保存为常用视图。',
+      },
+      {
+        target: '[data-tour="tasks-table"]',
+        title: '任务列表',
+        body: '每一行是一条审核任务，展示提交时间、结论、风险分、命中的模型与耗时。点开任意一行会打开详情抽屉，能看到模型原始返回、规则命中过程、输入内容和完整事件时间线。',
+      },
+      {
+        title: '发起审核与导出',
+        body: '右上角「发起审核」可以直接在后台提交一次任务用于联调；列表支持按当前筛选条件导出 CSV，导出前请确认筛选范围，避免导出过多数据。',
+      },
     ],
   },
   audits: {
     key: 'audits',
     title: '审核配置引导',
     steps: [
-      { target: '.audit-summary', title: '配置概览', body: '展示启用中的审核配置、分类器数量与今日调用量，帮助你掌握整体运行情况。' },
-      { target: '.audit-toolbar', title: '搜索与新建', body: '搜索审核名称或编码；点「新建审核配置」可以从模板开始，也可以让 AI 配置助手根据描述生成草稿。' },
-      { target: '.audit-list', title: '配置卡片', body: '每张卡片是一套审核流程：媒体类型、绑定的模型、审核要求、规则阈值与触发方式都在这里维护。' },
+      {
+        target: '[data-tour="audits-summary"]',
+        title: '配置概览',
+        body: '展示启用中的审核配置数量、分类器数量与今日调用量。这里有数字说明审核链路正在运行；长期为 0 说明还没有业务方调用。',
+      },
+      {
+        target: '[data-tour="audits-toolbar"]',
+        title: '搜索与新建',
+        body: '按审核名称或编码搜索。点「新建审核配置」从零开始或套用模板；也可以打开 AI 配置助手，用自然语言描述需求，由模型生成完整草稿后人工确认。',
+      },
+      {
+        target: '[data-tour="audits-list"]',
+        title: '配置卡片',
+        body: '每张卡片是一套完整的审核流程：媒体类型、绑定的模型、审核要求、条约、规则组、结果动作和触发方式。卡片上的状态开关决定它能否被任务和开放 API 使用。',
+      },
+      {
+        title: '接入与复制',
+        body: '卡片菜单里可以打开「接入指南」，查看这条流程的三种接入方式和签名说明；「复制」会连同规则、路由和提示词一起复制出一份草稿，适合快速搭建相似流程。',
+      },
     ],
   },
   providers: {
     key: 'providers',
     title: '模型接入引导',
     steps: [
-      { target: '.provider-summary', title: '状态概览', body: '按已启用、可用、不可用和已停用筛选模型，右侧可以一键测试全部已启用连接。' },
-      { target: '.provider-grid', title: '模型卡片', body: '每张卡片展示协议、上下文、能力与请求用量。编辑时可以重新获取模型列表，自动带入上下文与最大输出。' },
+      {
+        target: '[data-tour="providers-summary"]',
+        title: '状态概览与批量测试',
+        body: '按已启用、可用、不可用和已停用筛选。右侧「测试已启用连接」会并发测试当前筛选出的全部启用模型，适合在更换密钥或调整网络后确认整体可用性。',
+      },
+      {
+        target: '[data-tour="providers-grid"]',
+        title: '模型卡片',
+        body: '每张卡片展示协议、模型 ID、上下文、图片与思考能力、优先级和累计请求量。审核绑定的模型始终最先调用，失败后同项目其他启用模型按优先级依次回落。',
+      },
+      {
+        title: '新增与编辑',
+        body: '点「新增模型接入」可以先用「快速选择供应商」自动填好协议、BaseURL 和主流模型，再填 API Key 并点「获取模型」带入真实能力参数。新接入默认停用，测试通过后再启用。',
+      },
+      {
+        title: '熔断与恢复',
+        body: '连续失败的模型会进入熔断冷却，卡片上会显示剩余时间。后台每 30 秒自动探测到期模型，手动「测试连接」成功也会立即清除熔断。',
+      },
     ],
   },
   users: {
@@ -209,7 +290,21 @@ const pageTours: Record<string, TourDefinition> = {
     key: 'profile',
     title: '个人中心引导',
     steps: [
-      { target: '.page-head', title: '个人中心', body: '这里查看账号身份与项目范围，并可以修改登录密码、管理两步验证。' },
+      {
+        target: '[data-tour="profile-identity"]',
+        title: '账号身份与项目范围',
+        body: '这里显示登录账号、显示名称、角色和可以访问的项目范围。角色决定菜单与操作权限，项目范围决定能查看哪些项目、审核配置和任务。',
+      },
+      {
+        target: '[data-tour="profile-password"]',
+        title: '修改登录密码',
+        body: '密码至少 10 位且包含字母和数字。修改后当前会话保持有效，其他已登录会话会在令牌过期后失效。',
+      },
+      {
+        target: '[data-tour="profile-mfa"]',
+        title: '两步验证',
+        body: '启用后登录需要再输入身份验证器生成的 6 位动态验证码，登录页也可以直接用验证器登录。手机丢失时请联系超级管理员重置。',
+      },
     ],
   },
 }
@@ -418,6 +513,182 @@ const formTours: Record<string, TourDefinition> = {
         target: '[data-tour="role-footer"]',
         title: '保存角色',
         body: '保存后可以在账号编辑里选择这个角色。改动角色权限会立即影响所有使用该角色的账号。',
+      },
+    ],
+  },
+  'audit-prompt': {
+    key: 'audit-prompt',
+    title: '审核要求引导',
+    steps: [
+      {
+        target: '[data-tour="prompt-actions"]',
+        title: '插入条约与 AI 优化',
+        body: '「插入条约占位符」会把已生效的审核条约插到光标位置，用 {{AUDIT_TREATY}} 指定准确落点；「AI 优化提示词」会根据你的描述改写当前要求，结果需要你确认后才会写回。',
+      },
+      {
+        target: '[data-tour="prompt-text"]',
+        title: '填写审核要求',
+        body: '写清楚要审核什么、什么情况通过、什么情况驳回、什么情况转人工。这段文字会作为通用模型的审核 Prompt，也会作为 JEV 的审核要求一并发送。',
+      },
+    ],
+  },
+  'audit-treaty': {
+    key: 'audit-treaty',
+    title: '审核条约引导',
+    steps: [
+      {
+        target: '[data-tour="treaty-banner"]',
+        title: '条约如何生效',
+        body: '上传的条约由服务器后台解析，关闭网页不会中断。解析成功后条约会自动追加到审核要求里，也可以在前面用占位符指定插入位置。只有解析成功的条约才参与判定。',
+      },
+      {
+        target: '[data-tour="treaty-table"]',
+        title: '条约列表',
+        body: '表格展示每份条约的解析状态、字符数和生效情况。解析失败时可以查看失败原因并重新解析；失效的条约不会影响审核，但会保留在列表里方便排查。',
+      },
+      {
+        title: '格式与限制',
+        body: '支持 TXT、Markdown、DOCX，旧版 .doc 请先另存为 .docx，单文件不超过 20MB，每个审核配置最多 30 份。条约内容过长会自动截断，建议只保留与判定直接相关的条款。',
+      },
+    ],
+  },
+  'audit-category': {
+    key: 'audit-category',
+    title: '分类类型引导',
+    steps: [
+      {
+        target: '[data-tour="category-panel"]',
+        title: '分类与映射',
+        body: '每一行是一个分类：编码会写入结果的 category 字段，说明是给模型看的判定依据。复核模式下每个分类还要指定映射结论；纯分类器模式下成功审核固定为通过，映射结论不生效。',
+      },
+      {
+        title: '导入导出',
+        body: '支持 CSV（code,name,description,result）和 JSON 数组导入，适合从现有分类表批量迁移；导出可用于备份或交给业务方确认。导入只影响当前审核配置。',
+      },
+    ],
+  },
+  'audit-rules': {
+    key: 'audit-rules',
+    title: '规则组引导',
+    steps: [
+      {
+        target: '[data-tour="rules-toolbar"]',
+        title: '模板与 AI 生成',
+        body: '先选一个规则模板可以快速得到可用的阈值组合；「AI 生成规则」会根据你的描述产出规则 JSON，生成后仍需人工核对阈值是否符合业务预期。',
+      },
+      {
+        target: '[data-tour="rules-editor"]',
+        title: '规则组与条件',
+        body: '规则组按优先级从上到下执行。每个条件可以是风险分、分类、标签或输入字段的比较；命中后可以选择继续执行后续规则或立即停止。全部未命中时使用运行策略里的默认结论。',
+      },
+    ],
+  },
+  'audit-routes': {
+    key: 'audit-routes',
+    title: '结果动作引导',
+    steps: [
+      {
+        target: '[data-tour="routes-editor"]',
+        title: '按结论配置动作',
+        body: '分别给通过、驳回、转人工配置要执行的动作：HTTP 回调、Redis Stream 推送、写回业务数据库或运行 JS 脚本。没有配置动作时只写入平台结果，不会通知业务方。',
+      },
+      {
+        title: '执行模式与失败处理',
+        body: '「顺序执行」会按顺序跑完全部动作，「首个成功即停止」适合主备通道。失败处理决定某个动作失败时是继续下一个还是直接转人工；回调失败会按退避策略重试三次。',
+      },
+    ],
+  },
+  'audit-policy': {
+    key: 'audit-policy',
+    title: '运行策略引导',
+    steps: [
+      {
+        target: '[data-tour="policy-basic"]',
+        title: '默认结论与兜底',
+        body: '默认结论是规则未命中时的结果；模型失败兜底决定所有模型都调用失败时按通过、驳回还是转人工处理。生产环境一般建议转人工，避免把故障当成放行。',
+      },
+      {
+        target: '[data-tour="policy-dedupe"]',
+        title: '人工复核与去重',
+        body: '人工复核方式决定转人工的任务在平台内处理还是推给外部系统。去重窗口用于拦截重复提交：相同业务键加相同内容在窗口内会直接复用原任务，填 0 表示不去重。',
+      },
+    ],
+  },
+  'trigger-form': {
+    key: 'trigger-form',
+    title: '触发方式引导',
+    steps: [
+      {
+        target: '[data-tour="trigger-basic"]',
+        title: '名称、状态与优先级',
+        body: '触发源名称用于区分不同业务队列；状态决定是否立即开始监听；优先级只影响列表展示顺序，不影响消息处理。',
+      },
+      {
+        target: '[data-tour="trigger-connection"]',
+        title: '选择 Redis 连接',
+        body: '只能选择当前项目里已启用且测试成功的连接。没有可用连接时请先到「数据连接」新建并测试，否则触发源无法启动。',
+      },
+      {
+        target: '[data-tour="trigger-stream"]',
+        title: 'Stream 与消费组',
+        body: 'Stream 是要监听的队列名。消费组用于多实例分摊消费，同一组内每条消息只会被一个实例处理；消费起点决定首次启动时从哪里开始读，批量大小和最大在途数控制吞吐与并发。',
+      },
+    ],
+  },
+  'task-detail': {
+    key: 'task-detail',
+    title: '任务详情引导',
+    steps: [
+      {
+        target: '[data-tour="detail-hero"]',
+        title: '审核结论',
+        body: '顶部展示最终结论、风险分、命中的模型和耗时。结论可能来自模型判定、规则覆盖或人工复核，来源会在这里标明。',
+      },
+      {
+        target: '[data-tour="detail-meta"]',
+        title: '任务元信息',
+        body: '业务键用于业务关联和去重，request_id 用于幂等与结果查询。排查问题时把这两个值提供给业务方，可以快速定位到同一次提交。',
+      },
+      {
+        target: '[data-tour="detail-reasons"]',
+        title: '审核依据',
+        body: '这里列出模型给出的标签、原因和分类结果，下方还有规则命中过程与完整事件时间线。改判或复盘时以这些原始记录为准。',
+      },
+    ],
+  },
+  'integration-guide': {
+    key: 'integration-guide',
+    title: '接入指南引导',
+    steps: [
+      {
+        target: '[data-tour="guide-identity"]',
+        title: '项目与审核编码',
+        body: '顶部显示这条流程所属的项目编码与审核编码。调用开放 API 时这两个值都要填在路径里，编码复制按钮可以直接取用。',
+      },
+      {
+        target: '[data-tour="guide-tabs"]',
+        title: '三种接入方式',
+        body: '这里可以切换开放 API、Redis Stream 与 WebSocket 三种接入方式。每种方式都给出可直接复制的请求示例、字段说明和结果查询方法。',
+      },
+      {
+        target: '[data-tour="guide-credential"]',
+        title: '接入凭证',
+        body: '调用需要项目下的 AppKey 与 AppSecret，并按审核配置授权。没有凭证时到「接入凭证」创建；回调验签使用凭证的 AppSecret 计算 HMAC-SHA256。',
+      },
+    ],
+  },
+  'script-editor': {
+    key: 'script-editor',
+    title: '结果脚本引导',
+    steps: [
+      {
+        target: '[data-tour="script-toolbar"]',
+        title: '编辑器工具栏',
+        body: '上方可以切换脚本模板、格式化和查看执行日志。脚本在沙箱中运行，内存、超时、HTTP 次数与返回体积都受项目限制约束。',
+      },
+      {
+        title: 'AI 生成脚本',
+        body: '点右上角「AI」可以用自然语言描述要做什么，模型会读取当前脚本并生成修改建议，确认后才会写入编辑器。也可以用模拟运行验证脚本在给定结论下的行为。',
       },
     ],
   },

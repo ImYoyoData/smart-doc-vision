@@ -750,7 +750,7 @@ onMounted(load)
     </div>
 
     <template v-else>
-      <div v-if="providers.length" class="provider-summary">
+      <div v-if="providers.length" class="provider-summary" data-tour="providers-summary">
         <div class="summary-chips">
           <span class="summary-title">状态概览</span>
           <button
@@ -793,7 +793,7 @@ onMounted(load)
         </div>
       </div>
 
-      <div v-if="filteredProviders.length" class="provider-grid fade-list">
+      <div v-if="filteredProviders.length" class="provider-grid fade-list" data-tour="providers-grid">
         <article
           v-for="provider in filteredProviders"
           :key="provider.id"

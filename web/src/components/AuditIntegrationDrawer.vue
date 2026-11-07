@@ -44,6 +44,7 @@ import {
 } from '@/utils/integrationPrompt'
 import { useAuthStore } from '@/stores/auth'
 import type { IntegrationGuide, RedisConnection, TriggerSource } from '@/api/types'
+import TourPrompt from '@/components/TourPrompt.vue'
 
 const props = defineProps<{
   show: boolean
@@ -451,7 +452,8 @@ watch(
 
       <n-spin :show="loading">
         <div v-if="guide" class="guide-body">
-          <div class="audit-identity">
+          <TourPrompt tour-key="integration-guide" label="审核接入指南" :delay="500" />
+          <div class="audit-identity" data-tour="guide-identity">
             <div class="identity-icon"><ShieldCheckmarkOutline /></div>
             <div class="identity-copy">
               <h2>{{ guide.audit.name }}</h2>
@@ -465,7 +467,7 @@ watch(
             </n-button>
           </div>
 
-          <div class="guide-tabs">
+          <div class="guide-tabs" data-tour="guide-tabs">
             <button
               v-for="tab in tabs"
               :key="tab.key"
@@ -519,7 +521,7 @@ watch(
               </div>
             </div>
 
-            <h3 class="guide-section-title">接入凭证</h3>
+            <h3 class="guide-section-title" data-tour="guide-credential">接入凭证</h3>
             <div class="credential-card">
               <template v-if="selectedCredential">
                 <div class="credential-row">

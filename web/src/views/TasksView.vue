@@ -566,7 +566,7 @@ onBeforeUnmount(() => {
     </PageHeader>
 
     <section class="panel">
-      <div class="task-toolbar">
+      <div class="task-toolbar" data-tour="tasks-toolbar">
         <n-input
           v-model:value="keyword"
           placeholder="任务号 / 业务键 / request_id"
@@ -661,7 +661,7 @@ onBeforeUnmount(() => {
         <span class="total-badge">共 <strong>{{ total }}</strong> 条任务</span>
       </div>
 
-      <div v-if="tasks.length" class="data-table-wrap">
+      <div v-if="tasks.length" class="data-table-wrap" data-tour="tasks-table">
         <n-data-table
           :columns="taskColumns"
           :data="tasks"

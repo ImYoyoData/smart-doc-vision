@@ -185,14 +185,14 @@ onMounted(async () => {
     </PageHeader>
     <PageSkeleton v-if="showSkeleton" variant="dashboard" />
 
-    <section class="filter-bar">
+    <section class="filter-bar" data-tour="dash-filter">
       <div class="filter-item"><span>项目</span><n-select v-model:value="projectFilter" :options="projectOptions" style="width: 195px" /></div>
       <div class="filter-item"><span>审核配置</span><n-select v-model:value="auditFilter" :options="auditOptions" filterable style="width: 225px" /></div>
       <span class="filter-note">今日运营视图 · 详细图表请前往数据报表</span>
       <n-button text type="primary" class="report-link" @click="goReport">打开数据报表 <ArrowForwardOutline /></n-button>
     </section>
 
-    <section class="hero">
+    <section class="hero" data-tour="dash-hero">
       <div class="hero-main">
         <div class="hero-kicker"><span></span>TODAY</div>
         <h2>今日已处理 <strong>{{ formatCompactNumber(todayTotal) }}</strong> 份图档</h2>
@@ -214,7 +214,7 @@ onMounted(async () => {
       <button class="review-alert-btn" type="button" @click="goReview">进入复核工作台 <ArrowForwardOutline /></button>
     </section>
 
-    <div class="metric-grid">
+    <div class="metric-grid" data-tour="dash-metrics">
       <MetricCard label="今日任务" :value="formatCompactNumber(todayTotal)" hint="今日提交并受理" tone="blue" :loading="loading">
         <template #icon><ScanOutline /></template>
       </MetricCard>
@@ -229,7 +229,7 @@ onMounted(async () => {
       </MetricCard>
     </div>
 
-    <div class="ops-grid">
+    <div class="ops-grid" data-tour="dash-ops">
       <section class="panel review-panel">
         <div class="panel-head">
           <div><h3 class="panel-title">待人工复核队列</h3><p class="panel-subtitle">按等待时间升序，复核后自动回调业务方</p></div>
