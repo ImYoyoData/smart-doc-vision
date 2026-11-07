@@ -45,7 +45,7 @@ func TestBuildUpdateCheckClassifiesAssets(t *testing.T) {
 			{Name: "SHA256SUMS.txt", Size: 14, BrowserDownloadURL: "https://example.com/sums"},
 		},
 	}
-	info := buildUpdateCheck("1.6.0", release, published)
+	info := buildUpdateCheck("1.6.0", []githubRelease{release}, published)
 	if info.CurrentVersion != "1.6.0" || info.LatestVersion != "1.7.0" || !info.HasUpdate {
 		t.Fatalf("unexpected version result: %+v", info)
 	}
@@ -68,41 +68,79 @@ func TestBuildUpdateCheckClassifiesAssets(t *testing.T) {
 }
 
 func TestBuildUpdateCheckHasNoUpdateForSameVersion(t *testing.T) {
-	info := buildUpdateCheck("1.7.0", githubRelease{TagName: "v1.7.0"}, time.Now())
+	info := buildUpdateCheck("1.7.0", []githubRelease{{TagName: "v1.7.0"}}, time.Now())
 	if info.HasUpdate {
 		t.Fatalf("same version must not be reported as an update: %+v", info)
 	}
+	if len(info.Releases) != 0 {
+		t.Fatalf("no release newer than the running version should be listed: %+v", info.Releases)
+	}
 }
 
-func TestFetchLatestRelease(t *testing.T) {
+func TestBuildUpdateCheckListsSkippedReleases(t *testing.T) {
+	// Installed 1.6.0, newest 1.8.0: the dialog must show 1.8.0 and 1.7.0 so the
+	// operator sees everything gained, not just the newest entry.
+	releases := []githubRelease{
+		{TagName: "v1.8.0", Name: "v1.8.0", Body: "- 新增 A"},
+		{TagName: "v1.7.0", Name: "v1.7.0", Body: "- 修复 B\n- 改进 C"},
+		{TagName: "v1.6.0", Name: "v1.6.0", Body: "- 已安装"},
+		{TagName: "v1.5.0", Name: "v1.5.0", Body: "- 更旧"},
+	}
+	info := buildUpdateCheck("1.6.0", releases, time.Now())
+	if info.LatestVersion != "1.8.0" || !info.HasUpdate {
+		t.Fatalf("unexpected latest version: %+v", info)
+	}
+	if len(info.Releases) != 2 {
+		t.Fatalf("expected only the two newer releases, got %d: %+v", len(info.Releases), info.Releases)
+	}
+	if info.Releases[0].Version != "1.8.0" || info.Releases[1].Version != "1.7.0" {
+		t.Fatalf("releases must be newest-first: %+v", info.Releases)
+	}
+	if info.Releases[1].Notes == "" {
+		t.Fatal("each release must keep its own notes so the UI can attribute items to a version")
+	}
+}
+
+func TestBuildUpdateCheckWithoutReleases(t *testing.T) {
+	info := buildUpdateCheck("1.8.0", nil, time.Now())
+	if info.LatestVersion != "" || info.HasUpdate || len(info.Releases) != 0 {
+		t.Fatalf("empty release list must not look like an update: %+v", info)
+	}
+}
+
+func TestFetchReleasesSkipsDrafts(t *testing.T) {
 	var gotUserAgent, gotAccept string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotUserAgent = r.Header.Get("User-Agent")
 		gotAccept = r.Header.Get("Accept")
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprint(w, `{"tag_name":"v1.7.0","name":"Release","html_url":"https://example.com/release","published_at":"2026-10-30T10:00:00Z","assets":[]}`)
+		_, _ = fmt.Fprint(w, `[
+			{"tag_name":"v1.8.0","name":"Release","html_url":"https://example.com/r8","published_at":"2026-10-30T10:00:00Z"},
+			{"tag_name":"v1.7.0","name":"Draft","draft":true},
+			{"tag_name":"","name":"No tag"}
+		]`)
 	}))
 	defer server.Close()
 
-	release, err := fetchLatestRelease(context.Background(), server.URL, server.Client())
+	releases, err := fetchReleases(context.Background(), server.URL, server.Client())
 	if err != nil {
-		t.Fatalf("fetch release: %v", err)
+		t.Fatalf("fetch releases: %v", err)
 	}
-	if release.TagName != "v1.7.0" || release.HTMLURL != "https://example.com/release" {
-		t.Fatalf("unexpected release: %+v", release)
+	if len(releases) != 1 || releases[0].TagName != "v1.8.0" || releases[0].HTMLURL != "https://example.com/r8" {
+		t.Fatalf("unexpected releases: %+v", releases)
 	}
 	if gotUserAgent == "" || gotAccept != "application/vnd.github+json" {
 		t.Fatalf("unexpected request headers: user-agent=%q accept=%q", gotUserAgent, gotAccept)
 	}
 }
 
-func TestFetchLatestReleaseRejectsBadStatus(t *testing.T) {
+func TestFetchReleasesRejectsBadStatus(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "rate limited", http.StatusForbidden)
 	}))
 	defer server.Close()
 
-	if _, err := fetchLatestRelease(context.Background(), server.URL, server.Client()); err == nil {
+	if _, err := fetchReleases(context.Background(), server.URL, server.Client()); err == nil {
 		t.Fatal("expected an error for a non-200 GitHub response")
 	}
 }

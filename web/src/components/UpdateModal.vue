@@ -37,12 +37,77 @@ const primaryAssets = computed(() =>
   ),
 )
 
-const notesHtml = computed(() => {
-  const notes = update.info?.notes?.trim()
-  if (!notes) return ''
-  const html = marked.parse(notes, { breaks: true, gfm: true })
-  return DOMPurify.sanitize(typeof html === 'string' ? html : '')
+interface ReleaseGroup {
+  version: string
+  name: string
+  url: string
+  published_at: string
+  prerelease: boolean
+  html: string
+  count: number
+}
+
+// Each item gets its own version tag so a reader can tell at a glance which
+// release introduced it, instead of having to scroll back to a group header.
+function tagReleaseItems(html: string, version: string): { html: string; count: number } {
+  const document = new DOMParser().parseFromString(html, 'text/html')
+  // The release body starts with "# SmartDoc Vision vX.Y.Z"; the dialog already
+  // shows the version, so drop the duplicate heading.
+  const firstHeading = document.body.querySelector('h1')
+  if (firstHeading && /smartdoc/i.test(firstHeading.textContent || '')) firstHeading.remove()
+
+  let count = 0
+  const chip = () => {
+    const span = document.createElement('span')
+    span.className = 'note-version'
+    span.textContent = version ? `v${version}` : '更新'
+    return span
+  }
+  document.body.querySelectorAll('li').forEach((item) => {
+    item.appendChild(chip())
+    count += 1
+  })
+  return { html: DOMPurify.sanitize(document.body.innerHTML), count }
+}
+
+const releaseGroups = computed<ReleaseGroup[]>(() => {
+  const list = update.info?.releases || []
+  if (list.length) {
+    return list.map((release) => {
+      const tagged = tagReleaseItems(
+        marked.parse(release.notes || '', { breaks: true, gfm: true }) as string,
+        release.version,
+      )
+      return {
+        version: release.version,
+        name: release.name,
+        url: release.url,
+        published_at: release.published_at,
+        prerelease: release.prerelease,
+        html: tagged.html,
+        count: tagged.count,
+      }
+    })
+  }
+  // Older backends only return the newest release body.
+  const fallback = update.info?.notes?.trim()
+  if (!fallback || !update.info) return []
+  const tagged = tagReleaseItems(
+    marked.parse(fallback, { breaks: true, gfm: true }) as string,
+    update.info.latest_version,
+  )
+  return [{
+    version: update.info.latest_version,
+    name: update.info.release_name,
+    url: update.info.release_url,
+    published_at: update.info.published_at,
+    prerelease: false,
+    html: tagged.html,
+    count: tagged.count,
+  }]
 })
+
+const totalChanges = computed(() => releaseGroups.value.reduce((sum, group) => sum + group.count, 0))
 
 const releaseURL = computed(() => {
   if (update.info?.release_url) return update.info.release_url
@@ -131,7 +196,28 @@ function close() {
           </div>
 
           <template v-if="update.hasUpdate">
-            <div v-if="notesHtml" class="release-notes markdown-body" v-html="notesHtml"></div>
+            <div v-if="releaseGroups.length" class="release-summary">
+              <strong>
+                跨越 {{ releaseGroups.length }} 个版本<template v-if="totalChanges > 0"> · 共 {{ totalChanges }} 项变更</template>
+              </strong>
+              <span>v{{ update.info.current_version }} → v{{ update.info.latest_version }}</span>
+            </div>
+            <div v-if="releaseGroups.length" class="release-groups">
+              <section v-for="group in releaseGroups" :key="group.version" class="release-group">
+                <header class="release-group-head">
+                  <span class="release-version">v{{ group.version }}</span>
+                  <span v-if="group.prerelease" class="release-flag">预发布</span>
+                  <span class="release-group-date">{{ formatTime(group.published_at) }}</span>
+                  <a v-if="group.url" :href="group.url" target="_blank" rel="noopener noreferrer">Release</a>
+                </header>
+                <div
+                  v-if="group.html"
+                  class="release-notes markdown-body"
+                  v-html="group.html"
+                ></div>
+                <p v-else class="release-group-empty">该版本没有附带更新说明。</p>
+              </section>
+            </div>
             <p v-else class="update-copy">该版本没有附带更新说明，可前往 GitHub Release 查看详情。</p>
 
             <div v-if="primaryAssets.length" class="download-grid">
@@ -431,17 +517,108 @@ function close() {
   white-space: nowrap;
 }
 
-.release-notes {
-  max-height: 230px;
-  overflow-y: auto;
+.release-summary {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
   margin-top: 14px;
-  padding: 14px 16px;
+  padding: 0 2px;
+}
+
+.release-summary strong {
+  color: var(--ink);
+  font-size: 11.5px;
+  font-weight: 620;
+}
+
+.release-summary span {
+  color: var(--muted-light);
+  font-family: var(--mono);
+  font-size: 9.5px;
+}
+
+.release-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.release-group {
   border: 1px solid var(--border);
   border-radius: 11px;
   background: var(--card);
+  overflow: hidden;
+}
+
+.release-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-soft);
+}
+
+.release-version {
+  padding: 1px 7px;
+  border-radius: 99px;
+  background: var(--brand-soft);
+  color: var(--brand-strong);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.release-flag {
+  padding: 1px 6px;
+  border-radius: 99px;
+  background: var(--surface-strong);
+  color: var(--muted);
+  font-size: 8.5px;
+}
+
+.release-group-date {
+  color: var(--muted-light);
+  font-size: 9.5px;
+}
+
+.release-group-head a {
+  margin-left: auto;
+  color: var(--brand);
+  font-size: 9.5px;
+  text-decoration: none;
+}
+
+.release-group-empty {
+  margin: 0;
+  padding: 10px 12px;
+  color: var(--muted-light);
+  font-size: 10.5px;
+}
+
+.release-notes {
+  max-height: 230px;
+  overflow-y: auto;
+  padding: 12px 14px;
   color: var(--text);
   font-size: 11.5px;
   line-height: 1.75;
+}
+
+.release-notes :deep(.note-version) {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--surface-strong);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 8.5px;
+  line-height: 1.5;
+  vertical-align: middle;
+  white-space: nowrap;
 }
 
 .release-notes :deep(h1),

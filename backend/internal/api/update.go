@@ -20,10 +20,14 @@ import (
 
 const (
 	updateRepository = "ImYoyoData/smart-doc-vision"
-	updateAPIURL     = "https://api.github.com/repos/" + updateRepository + "/releases/latest"
-	updateRepoURL    = "https://github.com/" + updateRepository
-	updateCacheKey   = "sdv:update:latest-release"
-	updateCacheTTL   = 6 * time.Hour
+	// The list endpoint is used instead of /releases/latest so the dialog can
+	// show every release between the installed version and the newest one.
+	updateAPIURL   = "https://api.github.com/repos/" + updateRepository + "/releases?per_page=30"
+	updateRepoURL  = "https://github.com/" + updateRepository
+	updateCacheKey = "sdv:update:releases"
+	updateCacheTTL = 6 * time.Hour
+	// updateReleaseKeep bounds how many releases are kept in the cache entry.
+	updateReleaseKeep = 30
 )
 
 var updateHTTPClient = httpx.Client(8 * time.Second)
@@ -34,6 +38,8 @@ type githubRelease struct {
 	HTMLURL     string               `json:"html_url"`
 	Body        string               `json:"body"`
 	PublishedAt time.Time            `json:"published_at"`
+	Draft       bool                 `json:"draft"`
+	Prerelease  bool                 `json:"prerelease"`
 	Assets      []githubReleaseAsset `json:"assets"`
 }
 
@@ -43,9 +49,21 @@ type githubReleaseAsset struct {
 	BrowserDownloadURL string `json:"browser_download_url"`
 }
 
-type cachedUpdateRelease struct {
-	Release   githubRelease `json:"release"`
-	FetchedAt time.Time     `json:"fetched_at"`
+type cachedUpdateReleases struct {
+	Releases  []githubRelease `json:"releases"`
+	FetchedAt time.Time       `json:"fetched_at"`
+}
+
+// updateReleaseNote is one release in the "what changed since your version"
+// list. Notes keeps the raw Markdown body; the UI renders it inside the
+// release's own card.
+type updateReleaseNote struct {
+	Version     string `json:"version"`
+	Name        string `json:"name"`
+	URL         string `json:"url"`
+	PublishedAt string `json:"published_at"`
+	Notes       string `json:"notes"`
+	Prerelease  bool   `json:"prerelease"`
 }
 
 type updateAsset struct {
@@ -62,11 +80,15 @@ type updateCheck struct {
 	ReleaseName    string        `json:"release_name"`
 	ReleaseURL     string        `json:"release_url"`
 	PublishedAt    string        `json:"published_at"`
-	Notes          string        `json:"notes"`
-	Assets         []updateAsset `json:"assets"`
-	ChecksumsURL   string        `json:"checksums_url"`
-	RepoURL        string        `json:"repo_url"`
-	CheckedAt      string        `json:"checked_at"`
+	// Notes is the newest release body; kept for clients that only read one.
+	Notes string `json:"notes"`
+	// Releases lists every release newer than the running version, newest first.
+	Releases     []updateReleaseNote `json:"releases"`
+	// Assets are the download files of the newest release only.
+	Assets       []updateAsset       `json:"assets"`
+	ChecksumsURL string              `json:"checksums_url"`
+	RepoURL      string              `json:"repo_url"`
+	CheckedAt    string              `json:"checked_at"`
 }
 
 // systemUpdate checks the public GitHub release feed. It never downloads or
@@ -81,13 +103,13 @@ func (s *Server) systemUpdate(c *gin.Context) {
 	defer cancel()
 
 	refresh := c.Query("refresh") == "1"
-	release, err := s.latestUpdateRelease(ctx, refresh)
+	cached, err := s.latestUpdateReleases(ctx, refresh)
 	if err != nil {
 		log.Printf("update check failed: %v", err)
 		fail(c, http.StatusBadGateway, "UPDATE_CHECK_FAILED", "无法连接 GitHub 获取最新版本，请稍后重试", nil)
 		return
 	}
-	ok(c, buildUpdateCheck(appversion.Version, release.Release, release.FetchedAt))
+	ok(c, buildUpdateCheck(appversion.Version, cached.Releases, cached.FetchedAt))
 }
 
 func (s *Server) updateAutoCheck(c *gin.Context) {
@@ -111,37 +133,40 @@ func (s *Server) updateAutoCheck(c *gin.Context) {
 	ok(c, gin.H{"enabled": *req.Enabled})
 }
 
-func (s *Server) latestUpdateRelease(ctx context.Context, refresh bool) (cachedUpdateRelease, error) {
+func (s *Server) latestUpdateReleases(ctx context.Context, refresh bool) (cachedUpdateReleases, error) {
 	if !refresh {
 		if cached, found := s.readUpdateCache(ctx); found {
 			return cached, nil
 		}
 	}
-	release, err := fetchLatestRelease(ctx, updateAPIURL, updateHTTPClient)
+	releases, err := fetchReleases(ctx, updateAPIURL, updateHTTPClient)
 	if err != nil {
-		return cachedUpdateRelease{}, err
+		return cachedUpdateReleases{}, err
 	}
-	cached := cachedUpdateRelease{Release: *release, FetchedAt: time.Now().UTC()}
+	cached := cachedUpdateReleases{Releases: releases, FetchedAt: time.Now().UTC()}
 	s.writeUpdateCache(ctx, cached)
 	return cached, nil
 }
 
-func (s *Server) readUpdateCache(ctx context.Context) (cachedUpdateRelease, bool) {
+func (s *Server) readUpdateCache(ctx context.Context) (cachedUpdateReleases, bool) {
 	if s.redis == nil {
-		return cachedUpdateRelease{}, false
+		return cachedUpdateReleases{}, false
 	}
 	raw, err := s.redis.Get(ctx, updateCacheKey).Bytes()
 	if err != nil {
-		return cachedUpdateRelease{}, false
+		return cachedUpdateReleases{}, false
 	}
-	var cached cachedUpdateRelease
-	if err := json.Unmarshal(raw, &cached); err != nil || strings.TrimSpace(cached.Release.TagName) == "" {
-		return cachedUpdateRelease{}, false
+	var cached cachedUpdateReleases
+	if err := json.Unmarshal(raw, &cached); err != nil || len(cached.Releases) == 0 {
+		return cachedUpdateReleases{}, false
+	}
+	if strings.TrimSpace(cached.Releases[0].TagName) == "" {
+		return cachedUpdateReleases{}, false
 	}
 	return cached, true
 }
 
-func (s *Server) writeUpdateCache(ctx context.Context, cached cachedUpdateRelease) {
+func (s *Server) writeUpdateCache(ctx context.Context, cached cachedUpdateReleases) {
 	if s.redis == nil {
 		return
 	}
@@ -154,7 +179,9 @@ func (s *Server) writeUpdateCache(ctx context.Context, cached cachedUpdateReleas
 	}
 }
 
-func fetchLatestRelease(ctx context.Context, apiURL string, client *http.Client) (*githubRelease, error) {
+// fetchReleases reads the release list, skipping drafts and prereleases so the
+// dialog never offers a build the maintainer has not published yet.
+func fetchReleases(ctx context.Context, apiURL string, client *http.Client) ([]githubRelease, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
 	if err != nil {
 		return nil, err
@@ -171,28 +198,79 @@ func fetchLatestRelease(ctx context.Context, apiURL string, client *http.Client)
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("github release api returned %d", resp.StatusCode)
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if err != nil {
 		return nil, err
 	}
-	var release githubRelease
-	if err := json.Unmarshal(body, &release); err != nil {
+	var listed []githubRelease
+	if err := json.Unmarshal(body, &listed); err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(release.TagName) == "" {
-		return nil, fmt.Errorf("github release has no tag")
+	releases := make([]githubRelease, 0, len(listed))
+	for _, release := range listed {
+		if release.Draft || strings.TrimSpace(release.TagName) == "" {
+			continue
+		}
+		if strings.TrimSpace(release.HTMLURL) == "" {
+			release.HTMLURL = updateRepoURL + "/releases/tag/" + release.TagName
+		}
+		releases = append(releases, release)
+		if len(releases) >= updateReleaseKeep {
+			break
+		}
 	}
-	if strings.TrimSpace(release.HTMLURL) == "" {
-		release.HTMLURL = updateRepoURL + "/releases/tag/" + release.TagName
+	if len(releases) == 0 {
+		return nil, fmt.Errorf("github release list is empty")
 	}
-	return &release, nil
+	return releases, nil
 }
 
-func buildUpdateCheck(current string, release githubRelease, fetchedAt time.Time) updateCheck {
-	latest := normalizeVersion(release.TagName)
-	assets := make([]updateAsset, 0, len(release.Assets))
+// buildUpdateCheck turns the release list into the dialog payload. Releases
+// newer than the running version are returned newest-first so the dialog can
+// show everything the operator is about to gain, not just the newest entry.
+func buildUpdateCheck(current string, releases []githubRelease, fetchedAt time.Time) updateCheck {
+	currentVersion := normalizeVersion(current)
+	notes := make([]updateReleaseNote, 0, len(releases))
+	for _, release := range releases {
+		if compareVersions(current, normalizeVersion(release.TagName)) >= 0 {
+			continue
+		}
+		notes = append(notes, updateReleaseNote{
+			Version:     normalizeVersion(release.TagName),
+			Name:        strings.TrimSpace(release.Name),
+			URL:         release.HTMLURL,
+			PublishedAt: formatUpdateTime(release.PublishedAt),
+			Notes:       release.Body,
+			Prerelease:  release.Prerelease,
+		})
+	}
+
+	latestRelease := githubRelease{}
+	if len(releases) > 0 {
+		latestRelease = releases[0]
+	}
+	assets, checksumsURL := collectUpdateAssets(latestRelease.Assets)
+	latest := normalizeVersion(latestRelease.TagName)
+	return updateCheck{
+		CurrentVersion: currentVersion,
+		LatestVersion:  latest,
+		HasUpdate:      compareVersions(current, latest) < 0,
+		ReleaseName:    strings.TrimSpace(latestRelease.Name),
+		ReleaseURL:     latestRelease.HTMLURL,
+		PublishedAt:    formatUpdateTime(latestRelease.PublishedAt),
+		Notes:          latestRelease.Body,
+		Releases:       notes,
+		Assets:         assets,
+		ChecksumsURL:   checksumsURL,
+		RepoURL:        updateRepoURL,
+		CheckedAt:      formatUpdateTime(fetchedAt),
+	}
+}
+
+func collectUpdateAssets(list []githubReleaseAsset) ([]updateAsset, string) {
+	assets := make([]updateAsset, 0, len(list))
 	checksumsURL := ""
-	for _, asset := range release.Assets {
+	for _, asset := range list {
 		name := strings.TrimSpace(asset.Name)
 		url := strings.TrimSpace(asset.BrowserDownloadURL)
 		if name == "" || url == "" {
@@ -209,19 +287,7 @@ func buildUpdateCheck(current string, release githubRelease, fetchedAt time.Time
 			Kind: kind,
 		})
 	}
-	return updateCheck{
-		CurrentVersion: normalizeVersion(current),
-		LatestVersion:  latest,
-		HasUpdate:      compareVersions(current, latest) < 0,
-		ReleaseName:    strings.TrimSpace(release.Name),
-		ReleaseURL:     release.HTMLURL,
-		PublishedAt:    formatUpdateTime(release.PublishedAt),
-		Notes:          release.Body,
-		Assets:         assets,
-		ChecksumsURL:   checksumsURL,
-		RepoURL:        updateRepoURL,
-		CheckedAt:      formatUpdateTime(fetchedAt),
-	}
+	return assets, checksumsURL
 }
 
 func classifyUpdateAsset(name string) string {

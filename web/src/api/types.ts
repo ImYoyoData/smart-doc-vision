@@ -432,6 +432,15 @@ export interface UpdateAsset {
   kind: string
 }
 
+export interface UpdateReleaseNote {
+  version: string
+  name: string
+  url: string
+  published_at: string
+  notes: string
+  prerelease: boolean
+}
+
 export interface UpdateCheck {
   current_version: string
   latest_version: string
@@ -440,6 +449,7 @@ export interface UpdateCheck {
   release_url: string
   published_at: string
   notes: string
+  releases: UpdateReleaseNote[]
   assets: UpdateAsset[]
   checksums_url: string
   repo_url: string
