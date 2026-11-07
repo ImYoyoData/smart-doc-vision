@@ -41,22 +41,6 @@ func SessionID(ctx context.Context) string {
 // NewSessionID returns a fresh random conversation ID.
 func NewSessionID() string { return uuid.NewString() }
 
-// headerSessionID resolves the ID to send: the caller-provided one first, then
-// the one tagged on the context, then a fresh UUID.
-func headerSessionID(ctx context.Context, explicit map[string]string) string {
-	for key, value := range explicit {
-		if strings.EqualFold(strings.TrimSpace(key), SessionHeader) || strings.EqualFold(strings.TrimSpace(key), legacySessionHeader) {
-			if trimmed := strings.TrimSpace(value); trimmed != "" && !isRandomPlaceholder(trimmed) {
-				return trimmed
-			}
-		}
-	}
-	if id := SessionID(ctx); id != "" {
-		return id
-	}
-	return NewSessionID()
-}
-
 func isRandomPlaceholder(value string) bool {
 	return strings.EqualFold(value, "{{random}}") || strings.EqualFold(value, "auto")
 }

@@ -309,7 +309,7 @@ function applyPreset(key: string | null) {
   form.preferReasoning = false
   form.contextWindow = preset.context_window > 0 ? preset.context_window : null
   form.maxTokens = preset.max_tokens > 0 ? preset.max_tokens : null
-  form.maxImages = preset.max_images > 0 ? preset.max_images : 0
+  form.maxImages = preset.max_images > 0 ? preset.max_images : 6
   modelOptions.value = []
   modelsError.value = ''
 }
