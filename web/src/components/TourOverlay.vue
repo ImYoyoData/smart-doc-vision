@@ -5,6 +5,7 @@ import {
   ChevronBackOutline,
   ChevronForwardOutline,
   CloseOutline,
+  RefreshOutline,
   VolumeHighOutline,
   VolumeMuteOutline,
 } from '@vicons/ionicons5'
@@ -128,7 +129,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   window.removeEventListener('resize', onViewportChange)
   window.removeEventListener('keydown', onKeydown)
-  tour.cancelSpeech()
+  tour.stopNarration()
 })
 </script>
 
@@ -154,14 +155,25 @@ onBeforeUnmount(() => {
           <button
             type="button"
             class="tour-voice-btn"
-            :class="{ off: !tour.state.voiceEnabled }"
+            :class="{ off: !tour.state.voiceEnabled, playing: tour.audio.playing }"
             :title="tour.state.voiceEnabled ? '关闭语音讲解' : '开启语音讲解'"
             @click="tour.setVoice(!tour.state.voiceEnabled)"
           >
             <VolumeHighOutline v-if="tour.state.voiceEnabled" />
             <VolumeMuteOutline v-else />
           </button>
-          <span>{{ tour.state.voiceEnabled ? '语音讲解已开启' : '语音讲解已关闭' }}</span>
+          <span class="tour-voice-label">
+            {{ tour.state.voiceEnabled ? (tour.audio.playing ? '正在播放语音讲解…' : '语音讲解已开启') : '语音讲解已关闭' }}
+          </span>
+          <button
+            v-if="tour.state.voiceEnabled"
+            type="button"
+            class="tour-replay"
+            title="重新播放本步语音"
+            @click="tour.replayNarration()"
+          >
+            <RefreshOutline />
+          </button>
           <n-switch
             size="small"
             :value="tour.state.voiceEnabled"
@@ -319,6 +331,46 @@ onBeforeUnmount(() => {
 
 .tour-voice :deep(.n-switch) {
   margin-left: auto;
+}
+
+.tour-voice-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tour-replay {
+  display: flex;
+  width: 22px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted, #5b6b82);
+  cursor: pointer;
+  flex: none;
+}
+
+.tour-replay:hover {
+  background: var(--surface-hover, #f1f4f9);
+  color: var(--brand, #2b6cf6);
+}
+
+.tour-replay :deep(svg) {
+  width: 13px;
+  height: 13px;
+}
+
+.tour-replay + :deep(.n-switch) {
+  margin-left: 0;
+}
+
+.tour-voice-btn.playing {
+  box-shadow: 0 0 0 3px var(--brand-soft, rgba(43, 108, 246, 0.1));
 }
 
 .tour-voice-btn {
