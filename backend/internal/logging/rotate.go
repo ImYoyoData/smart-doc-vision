@@ -20,8 +20,8 @@ const (
 
 // rollingFile writes a single log stream to <dir>/<prefix>.log and rotates it
 // when the date changes or the file would exceed maxBytes. Rotated files are
-// compressed with zstd at the highest level in the background, and only the
-// newest keep archives are retained.
+// compressed with zstd in the background, and only the newest keep archives
+// are retained.
 type rollingFile struct {
 	dir    string
 	prefix string
@@ -214,7 +214,7 @@ func (w *rollingFile) compressLoop() {
 		w.queueMu.Unlock()
 
 		for _, path := range batch {
-			if err := compressFile(path); err != nil {
+			if err := w.compressFile(path); err != nil {
 				fmt.Fprintf(os.Stderr, "logging: compress %s: %v\n", path, err)
 				continue
 			}
@@ -224,9 +224,10 @@ func (w *rollingFile) compressLoop() {
 	}
 }
 
-// compressFile writes path+".zst" using the strongest zstd level and leaves
-// the source in place on failure.
-func compressFile(path string) error {
+// compressFile streams path into path+".zst" and leaves the source in place on
+// failure. Its encoder lives only for the duration of the call: zstd keeps
+// match tables worth several MB, and an idle server should not hold them.
+func (w *rollingFile) compressFile(path string) error {
 	src, err := os.Open(path)
 	if err != nil {
 		return err
@@ -239,8 +240,10 @@ func compressFile(path string) error {
 		return err
 	}
 	encoder, err := zstd.NewWriter(dst,
-		zstd.WithEncoderLevel(zstd.SpeedBestCompression),
+		zstd.WithEncoderLevel(zstd.SpeedDefault),
 		zstd.WithEncoderConcurrency(1),
+		zstd.WithWindowSize(1<<20),
+		zstd.WithLowerEncoderMem(true),
 	)
 	if err != nil {
 		dst.Close()

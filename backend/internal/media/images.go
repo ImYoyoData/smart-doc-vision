@@ -17,6 +17,8 @@ import (
 	"time"
 
 	xdraw "golang.org/x/image/draw"
+
+	"smartdoc-vision/backend/internal/httpx"
 )
 
 const maxDownloadBytes = 20 << 20
@@ -37,7 +39,8 @@ func NewFetcher(allowPrivate bool) *Fetcher {
 	return &Fetcher{
 		AllowPrivate: allowPrivate,
 		Client: &http.Client{
-			Timeout: 25 * time.Second,
+			Timeout:   25 * time.Second,
+			Transport: httpx.Transport(),
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
 				if len(via) >= 3 {
 					return errors.New("too many redirects")
@@ -163,7 +166,7 @@ func (f *Fetcher) client() *http.Client {
 	if f.Client != nil {
 		return f.Client
 	}
-	return &http.Client{Timeout: 25 * time.Second}
+	return httpx.Client(25 * time.Second)
 }
 
 func ValidateOutboundURL(raw string) error {

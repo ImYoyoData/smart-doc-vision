@@ -124,6 +124,12 @@ func main() {
 		log.Printf("config: using %s", cfg.EnvFile)
 	}
 
+	// A soft memory limit scales GC effort with the live heap: the process can
+	// still grow under load, but an idle instance stops hoarding unused pages.
+	if limit := metrics.ConfigureMemory(); limit > 0 {
+		log.Printf("runtime: soft memory limit %d MB (GOMEMLIMIT unset)", limit>>20)
+	}
+
 	state := install.Detect(cfg)
 	switcher := &handlerSwitcher{}
 	var installer *api.InstallerServer
@@ -391,6 +397,10 @@ func buildApp(cfg config.Config, db *gorm.DB, cache *redis.Client, cipher *secur
 	monitorCtx, monitorCancel := context.WithCancel(context.Background())
 	metrics.AttachRedis(cache)
 	metrics.StartSampler(monitorCtx)
+	// Let the idle reclaimer see audit work as well as HTTP requests, so it
+	// only returns memory to the OS when nothing is running.
+	metrics.SetIdleProbe(eng.Busy)
+	metrics.StartIdleReclaimer(monitorCtx)
 
 	server := api.NewServer(cfg, db, cache, cipher, eng, tasks, loader)
 	server.RecoverInterruptedTreaties()

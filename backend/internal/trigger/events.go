@@ -18,6 +18,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"smartdoc-vision/backend/internal/httpx"
 	"smartdoc-vision/backend/internal/media"
 	"smartdoc-vision/backend/internal/model"
 )
@@ -137,7 +138,7 @@ func sendTriggerHTTP(ctx context.Context, target string, headers map[string]stri
 	for key, value := range headers {
 		req.Header.Set(key, value)
 	}
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := httpx.Client(10 * time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return err

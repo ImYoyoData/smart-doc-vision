@@ -34,6 +34,7 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"smartdoc-vision/backend/internal/config"
+	"smartdoc-vision/backend/internal/httpx"
 	"smartdoc-vision/backend/internal/media"
 	"smartdoc-vision/backend/internal/model"
 )
@@ -731,7 +732,8 @@ func (r *scriptRun) nativeHTTPRequest(realm *moejs.Realm, _ moejs.Value, args []
 		}
 	}
 	client := &http.Client{
-		Timeout: time.Duration(timeoutMS) * time.Millisecond,
+		Timeout:   time.Duration(timeoutMS) * time.Millisecond,
+		Transport: httpx.Transport(),
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= 5 {
 				return fmt.Errorf("重定向次数过多")

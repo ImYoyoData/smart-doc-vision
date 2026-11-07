@@ -39,8 +39,11 @@ type sample struct {
 	heapAlloc      uint64
 	heapInuse      uint64
 	heapSys        uint64
+	heapIdle       uint64
+	heapReleased   uint64
 	stackInuse     uint64
 	sys            uint64
+	rss            uint64
 	pauseTotal     uint64
 	goroutines     int
 	threads        int
@@ -122,9 +125,12 @@ type Current struct {
 	NumCPU                int     `json:"num_cpu"`
 	HeapAllocMB           float64 `json:"heap_alloc_mb"`
 	HeapInuseMB           float64 `json:"heap_inuse_mb"`
+	HeapIdleMB            float64 `json:"heap_idle_mb"`
+	HeapReleasedMB        float64 `json:"heap_released_mb"`
 	HeapSysMB             float64 `json:"heap_sys_mb"`
 	StackInuseMB          float64 `json:"stack_inuse_mb"`
 	SysMB                 float64 `json:"sys_mb"`
+	RSSMB                 float64 `json:"rss_mb"`
 	GCCount               uint32  `json:"gc_count"`
 	GCPauseTotalMS        float64 `json:"gc_pause_total_ms"`
 	InFlight              int64   `json:"in_flight"`
@@ -146,6 +152,7 @@ type Point struct {
 	HeapAllocMB    float64 `json:"heap_alloc_mb"`
 	HeapSysMB      float64 `json:"heap_sys_mb"`
 	SysMB          float64 `json:"sys_mb"`
+	RSSMB          float64 `json:"rss_mb"`
 	Goroutines     int     `json:"goroutines"`
 	Threads        int     `json:"threads"`
 	InFlight       int64   `json:"in_flight"`
@@ -238,11 +245,14 @@ func Snapshot() Current {
 		Threads:               threadCount(),
 		GOMAXPROCS:            runtime.GOMAXPROCS(0),
 		NumCPU:                runtime.NumCPU(),
-		HeapAllocMB:           toMB(sampled.heapAlloc),
-		HeapInuseMB:           toMB(sampled.heapInuse),
-		HeapSysMB:             toMB(sampled.heapSys),
-		StackInuseMB:          toMB(sampled.stackInuse),
-		SysMB:                 toMB(sampled.sys),
+			HeapAllocMB:           toMB(sampled.heapAlloc),
+			HeapInuseMB:           toMB(sampled.heapInuse),
+			HeapIdleMB:            toMB(sampled.heapIdle),
+			HeapReleasedMB:        toMB(sampled.heapReleased),
+			HeapSysMB:             toMB(sampled.heapSys),
+			StackInuseMB:          toMB(sampled.stackInuse),
+			SysMB:                 toMB(sampled.sys),
+			RSSMB:                 residentMB(sampled),
 		GCCount:               sampled.gcCount,
 		GCPauseTotalMS:        float64(sampled.pauseTotal) / float64(time.Millisecond),
 		InFlight:              inFlight.Load(),
@@ -318,6 +328,9 @@ func aggregateSamples(snapshot []sample, since, now time.Time, maxPoints int) []
 		item.point.HeapAllocMB = toMB(current.heapAlloc)
 		item.point.HeapSysMB = toMB(current.heapSys)
 		item.point.SysMB = toMB(current.sys)
+		// Samples written before RSS was collected have no resident value;
+		// fall back to Sys so old history does not plot a drop to zero.
+		item.point.RSSMB = residentMB(current)
 		item.point.Goroutines = current.goroutines
 		item.point.Threads = current.threads
 		item.point.InFlight = current.inFlight
@@ -362,6 +375,7 @@ func aggregateSamples(snapshot []sample, since, now time.Time, maxPoints int) []
 			HeapAllocMB:    carry.HeapAllocMB,
 			HeapSysMB:      carry.HeapSysMB,
 			SysMB:          carry.SysMB,
+			RSSMB:          carry.RSSMB,
 			Goroutines:     carry.Goroutines,
 			Threads:        carry.Threads,
 			InFlight:       carry.InFlight,
@@ -371,6 +385,15 @@ func aggregateSamples(snapshot []sample, since, now time.Time, maxPoints int) []
 		points = append(points, point)
 	}
 	return points
+}
+
+// residentMB prefers the OS working set and falls back to MemStats.Sys, which
+// older samples (and unsupported platforms) only have.
+func residentMB(entry sample) float64 {
+	if entry.rss > 0 {
+		return toMB(entry.rss)
+	}
+	return toMB(entry.sys)
 }
 
 func capture() {
@@ -383,8 +406,11 @@ func capture() {
 		heapAlloc:      mem.HeapAlloc,
 		heapInuse:      mem.HeapInuse,
 		heapSys:        mem.HeapSys,
+		heapIdle:       mem.HeapIdle,
+		heapReleased:   mem.HeapReleased,
 		stackInuse:     mem.StackInuse,
 		sys:            mem.Sys,
+		rss:            readProcessRSS(),
 		pauseTotal:     mem.PauseTotalNs,
 		goroutines:     runtime.NumGoroutine(),
 		threads:        threadCount(),
@@ -411,8 +437,11 @@ type redisSample struct {
 	HeapAlloc      uint64  `json:"ha"`
 	HeapInuse      uint64  `json:"hi"`
 	HeapSys        uint64  `json:"hs"`
+	HeapIdle       uint64  `json:"hid"`
+	HeapReleased   uint64  `json:"hr"`
 	StackInuse     uint64  `json:"si"`
 	Sys            uint64  `json:"s"`
+	RSS            uint64  `json:"rss"`
 	PauseTotal     uint64  `json:"pt"`
 	Goroutines     int     `json:"g"`
 	Threads        int     `json:"th"`
@@ -432,7 +461,8 @@ func toRedisSample(entry sample) redisSample {
 	return redisSample{
 		Instance: entry.instance, At: entry.at.UnixMilli(),
 		HeapAlloc: entry.heapAlloc, HeapInuse: entry.heapInuse,
-		HeapSys: entry.heapSys, StackInuse: entry.stackInuse, Sys: entry.sys,
+		HeapSys: entry.heapSys, HeapIdle: entry.heapIdle, HeapReleased: entry.heapReleased,
+		StackInuse: entry.stackInuse, Sys: entry.sys, RSS: entry.rss,
 		PauseTotal: entry.pauseTotal, Goroutines: entry.goroutines, Threads: entry.threads,
 		InFlight: entry.inFlight, Requests: entry.requests, Errors: entry.errors,
 		LatencyNanos: entry.latencyNanos, GCCount: entry.gcCount,
@@ -446,7 +476,8 @@ func fromRedisSample(stored redisSample) sample {
 	return sample{
 		instance: stored.Instance, at: time.UnixMilli(stored.At),
 		heapAlloc: stored.HeapAlloc, heapInuse: stored.HeapInuse,
-		heapSys: stored.HeapSys, stackInuse: stored.StackInuse, sys: stored.Sys,
+		heapSys: stored.HeapSys, heapIdle: stored.HeapIdle, heapReleased: stored.HeapReleased,
+		stackInuse: stored.StackInuse, sys: stored.Sys, rss: stored.RSS,
 		pauseTotal: stored.PauseTotal, goroutines: stored.Goroutines, threads: stored.Threads,
 		inFlight: stored.InFlight, requests: stored.Requests, errors: stored.Errors,
 		latencyNanos: stored.LatencyNanos, gcCount: stored.GCCount,

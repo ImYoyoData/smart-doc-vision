@@ -2,8 +2,8 @@
 // rolling files under <workdir>/logs, and exposes two zerolog loggers.
 //
 // Logs are rotated when the file grows past 100MB or the date changes, then
-// compressed with zstd at its strongest level. Only the 30 newest archives in
-// each directory are kept.
+// compressed with zstd using a small memory footprint. Only the 30 newest
+// archives in each directory are kept.
 package logging
 
 import (

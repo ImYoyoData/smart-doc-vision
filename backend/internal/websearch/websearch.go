@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"smartdoc-vision/backend/internal/httpx"
 	"smartdoc-vision/backend/internal/media"
 )
 
@@ -29,6 +30,11 @@ var (
 	scriptPattern = regexp.MustCompile(`(?is)<(?:script|style|noscript)[^>]*>.*?</(?:script|style|noscript)>`)
 	spacePattern  = regexp.MustCompile(`\s+`)
 )
+
+// sharedTransport is reused by every search/fetch call. Clients built per call
+// would each own an idle connection pool and keep sockets and buffers alive
+// after the request finished.
+var sharedTransport = httpx.Transport()
 
 // Search uses Bing's RSS endpoint because it is stable, small, and does not
 // require an API key. Results are deliberately capped to keep tool output
@@ -52,7 +58,8 @@ func Search(ctx context.Context, query string, limit int) ([]Result, error) {
 	req.Header.Set("Accept", "application/rss+xml, application/xml, text/xml")
 	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
 	client := &http.Client{
-		Timeout: 20 * time.Second,
+		Timeout:   20 * time.Second,
+		Transport: sharedTransport,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= 4 {
 				return errors.New("搜索请求重定向次数过多")
@@ -124,7 +131,8 @@ func FetchText(ctx context.Context, rawURL string) (string, error) {
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,text/plain,application/json;q=0.8,*/*;q=0.5")
 	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
 	client := &http.Client{
-		Timeout: 20 * time.Second,
+		Timeout:   20 * time.Second,
+		Transport: sharedTransport,
 		CheckRedirect: func(next *http.Request, via []*http.Request) error {
 			if len(via) >= 4 {
 				return errors.New("网页跳转次数过多")

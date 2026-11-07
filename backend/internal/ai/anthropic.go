@@ -282,7 +282,7 @@ func (a *AnthropicAdapter) client() *http.Client {
 	if a.Client != nil {
 		return a.Client
 	}
-	return &http.Client{Timeout: 120 * time.Second}
+	return clientWithTimeout(120 * time.Second)
 }
 
 func anthropicEndpoint(base string) string {

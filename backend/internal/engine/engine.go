@@ -22,6 +22,7 @@ import (
 
 	"smartdoc-vision/backend/internal/ai"
 	"smartdoc-vision/backend/internal/config"
+	"smartdoc-vision/backend/internal/httpx"
 	"smartdoc-vision/backend/internal/media"
 	"smartdoc-vision/backend/internal/model"
 	"smartdoc-vision/backend/internal/notify"
@@ -209,6 +210,22 @@ func (e *Engine) releaseSlot(projectID uint64) {
 	}
 	e.schedMu.Unlock()
 	e.signal()
+}
+
+// Busy reports whether any audit task is queued or being processed. The idle
+// memory reclaimer uses it so it never frees the heap mid-run.
+func (e *Engine) Busy() bool {
+	e.schedMu.Lock()
+	defer e.schedMu.Unlock()
+	if e.pendingN > 0 {
+		return true
+	}
+	for _, active := range e.active {
+		if active > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func (e *Engine) QueueStats() []ProjectQueueStat {
@@ -676,7 +693,7 @@ func (e *Engine) runCallback(taskID uint64) {
 		return
 	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := httpx.Client(10 * time.Second)
 	var lastErr string
 	var lastStatus int
 	for attempt := 1; attempt <= 3; attempt++ {

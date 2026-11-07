@@ -13,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"smartdoc-vision/backend/internal/httpx"
 	"smartdoc-vision/backend/internal/model"
 	appversion "smartdoc-vision/backend/internal/version"
 )
@@ -25,7 +26,7 @@ const (
 	updateCacheTTL   = 6 * time.Hour
 )
 
-var updateHTTPClient = &http.Client{Timeout: 8 * time.Second}
+var updateHTTPClient = httpx.Client(8 * time.Second)
 
 type githubRelease struct {
 	TagName     string               `json:"tag_name"`

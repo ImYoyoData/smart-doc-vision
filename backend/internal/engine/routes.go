@@ -14,6 +14,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/redis/go-redis/v9"
 
+	"smartdoc-vision/backend/internal/httpx"
 	"smartdoc-vision/backend/internal/media"
 	"smartdoc-vision/backend/internal/model"
 	"smartdoc-vision/backend/internal/redisconn"
@@ -227,7 +228,7 @@ func (e *Engine) executeHTTPAction(render routeRender, action routeAction) error
 		req.Header.Set("Content-Type", "application/json")
 	}
 	req.Header.Set("User-Agent", "SmartDoc-Vision-Route/1.0")
-	client := &http.Client{Timeout: timeout}
+	client := httpx.Client(timeout)
 	resp, err := client.Do(req)
 	if err != nil {
 		return err

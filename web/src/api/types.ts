@@ -1022,6 +1022,7 @@ export interface MonitorPoint {
   heap_alloc_mb: number
   heap_sys_mb: number
   sys_mb: number
+  rss_mb: number
   goroutines: number
   threads: number
   in_flight: number
@@ -1042,9 +1043,12 @@ export interface MonitorCurrent {
   num_cpu: number
   heap_alloc_mb: number
   heap_inuse_mb: number
+  heap_idle_mb: number
+  heap_released_mb: number
   heap_sys_mb: number
   stack_inuse_mb: number
   sys_mb: number
+  rss_mb: number
   gc_count: number
   gc_pause_total_ms: number
   in_flight: number

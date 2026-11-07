@@ -302,7 +302,7 @@ func (a *OpenAIAdapter) client() *http.Client {
 	if a.Client != nil {
 		return a.Client
 	}
-	return &http.Client{Timeout: 90 * time.Second}
+	return clientWithTimeout(90 * time.Second)
 }
 
 func openAIEndpoint(base string) string {

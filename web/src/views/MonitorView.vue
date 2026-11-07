@@ -193,7 +193,7 @@ const memoryOption = computed<EChartsOption>(() => ({
     itemWidth: 8,
     itemHeight: 8,
     textStyle: { color: '#64748b', fontSize: 10 },
-    data: ['堆内存', '堆向系统申请', '进程总内存'],
+    data: ['堆内存', '堆向系统申请', '进程常驻内存'],
   },
   grid: { left: 4, right: 10, top: 34, bottom: 4, containLabel: true },
   xAxis: { type: 'category', data: labels.value, boundaryGap: false, ...axisStyle },
@@ -219,11 +219,11 @@ const memoryOption = computed<EChartsOption>(() => ({
       itemStyle: { color: '#2b6cf6' },
     },
     {
-      name: '进程总内存',
+      name: '进程常驻内存',
       type: 'line',
       smooth: true,
       symbol: 'none',
-      data: history.value.map((point) => point.sys_mb),
+      data: history.value.map((point) => point.rss_mb),
       lineStyle: { width: 1.5, color: '#94a3b8', type: 'dashed' },
       itemStyle: { color: '#94a3b8' },
     },
@@ -301,10 +301,10 @@ onBeforeUnmount(() => {
         <template #icon><TimeOutline /></template>
       </MetricCard>
       <MetricCard
-        label="堆内存占用"
-        :value="current?.heap_alloc_mb ?? '—'"
+        label="进程常驻内存"
+        :value="current?.rss_mb || current?.sys_mb || '—'"
         suffix="MB"
-        :hint="current ? `进程总内存 ${current.sys_mb} MB · GC ${current.gc_count} 次` : '加载中'"
+        :hint="current ? `堆 ${current.heap_alloc_mb} MB · 空闲 ${current.heap_idle_mb} MB · GC ${current.gc_count} 次` : '加载中'"
         tone="green"
         :loading="!current"
       >
@@ -372,7 +372,7 @@ onBeforeUnmount(() => {
       </section>
       <section class="panel">
         <div class="panel-head">
-          <div><h3 class="panel-title">内存占用</h3><p class="panel-subtitle">Go 堆内存、向系统申请的堆空间与进程总内存</p></div>
+          <div><h3 class="panel-title">内存占用</h3><p class="panel-subtitle">堆内存是正在使用的对象，堆向系统申请包含空闲页；进程常驻内存即任务管理器看到的数字</p></div>
         </div>
         <div class="panel-body"><EChart :option="memoryOption" height="260px" :loading="loading" /></div>
       </section>

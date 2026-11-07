@@ -15,6 +15,7 @@ import (
 
 	"smartdoc-vision/backend/internal/ai"
 	"smartdoc-vision/backend/internal/catalog"
+	"smartdoc-vision/backend/internal/httpx"
 	"smartdoc-vision/backend/internal/model"
 )
 
@@ -132,7 +133,7 @@ func fetchProviderModels(ctx context.Context, kind, baseURL, apiKey string, head
 		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
 	}
 	ai.ApplyCustomHeaders(httpReq, headers)
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := httpx.Client(30 * time.Second)
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("请求模型列表失败: %w", err)
